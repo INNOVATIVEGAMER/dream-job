@@ -1,0 +1,208 @@
+import { mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+
+/** Today as YYYY-MM-DD in local time, the form the tracker's date columns use. */
+export function today(at = new Date()): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`
+}
+
+/** Now as an ISO timestamp, for events and runs. */
+export const now = (): string => new Date().toISOString()
+
+/** A company name reduced for matching: "Fireflies.ai" and "fireflies ai" are the same company. */
+export function companyKey(company: string): string {
+  return company.toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
+type Migration = (db: DatabaseSync) => void
+
+function columns(db: DatabaseSync, table: string): Set<string> {
+  return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(row => String((row as { name: string }).name)))
+}
+
+function addColumns(db: DatabaseSync, table: string, wanted: Record<string, string>): void {
+  const have = columns(db, table)
+  for (const [name, type] of Object.entries(wanted)) {
+    if (!have.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`)
+  }
+}
+
+/**
+ * Each migration runs once, in order; `PRAGMA user_version` records how many
+ * have run. The first one also accepts the table the POC created, which
+ * already holds the 96 kept rows.
+ */
+const MIGRATIONS: Migration[] = [
+  db => {
+    db.exec(`CREATE TABLE IF NOT EXISTS opportunities (
+      id INTEGER PRIMARY KEY,
+      found TEXT NOT NULL,
+      company TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      role TEXT NOT NULL,
+      portal TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      applicants TEXT NOT NULL,
+      referral TEXT NOT NULL,
+      score INTEGER,
+      status TEXT NOT NULL,
+      last_touch TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      notes TEXT NOT NULL,
+      updated_at TEXT
+    )`)
+    addColumns(db, 'opportunities', {
+      link: 'TEXT',
+      posting_state: 'TEXT',
+      posting_checked: 'TEXT',
+      posting_note: 'TEXT',
+      pay: 'TEXT',
+      experience: 'TEXT',
+      apply_route: 'TEXT',
+      score_reasons: 'TEXT',
+      run_id: 'INTEGER',
+    })
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS opportunities_status ON opportunities (status);
+      CREATE INDEX IF NOT EXISTS opportunities_job ON opportunities (portal, job_id);
+
+      CREATE TABLE IF NOT EXISTS opportunity_events (
+        id INTEGER PRIMARY KEY,
+        opportunity_id INTEGER NOT NULL REFERENCES opportunities (id) ON DELETE CASCADE,
+        at TEXT NOT NULL,
+        text TEXT NOT NULL,
+        run_id INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS opportunity_events_row ON opportunity_events (opportunity_id);
+
+      CREATE TABLE IF NOT EXISTS discarded (
+        id INTEGER PRIMARY KEY,
+        at TEXT NOT NULL,
+        company TEXT NOT NULL,
+        role TEXT NOT NULL,
+        portal TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        link TEXT,
+        line TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        run_id INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS discarded_job ON discarded (portal, job_id);
+
+      CREATE TABLE IF NOT EXISTS never_show (
+        id INTEGER PRIMARY KEY,
+        company TEXT NOT NULL,
+        company_key TEXT NOT NULL UNIQUE,
+        why TEXT NOT NULL,
+        added TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS contacts (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        company TEXT NOT NULL,
+        profile_url TEXT NOT NULL UNIQUE,
+        sent TEXT NOT NULL,
+        state TEXT NOT NULL,
+        accepted_at TEXT,
+        messaged_at TEXT,
+        referred_at TEXT,
+        run_id INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS contacts_company ON contacts (company);
+
+      CREATE TABLE IF NOT EXISTS runs (
+        id INTEGER PRIMARY KEY,
+        flow TEXT NOT NULL,
+        title TEXT NOT NULL,
+        portal TEXT,
+        opportunity_id INTEGER,
+        started TEXT NOT NULL,
+        ended TEXT,
+        status TEXT NOT NULL,
+        result TEXT,
+        turns INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        ms INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS run_events (
+        id INTEGER PRIMARY KEY,
+        run_id INTEGER NOT NULL REFERENCES runs (id) ON DELETE CASCADE,
+        at TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS run_events_run ON run_events (run_id);
+
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS answers (
+        id INTEGER PRIMARY KEY,
+        question TEXT NOT NULL,
+        question_key TEXT NOT NULL UNIQUE,
+        answer TEXT NOT NULL,
+        updated TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS sites (
+        site TEXT PRIMARY KEY,
+        state TEXT NOT NULL,
+        checked TEXT
+      );
+    `)
+  },
+  db => {
+    addColumns(db, 'contacts', { thanked_at: 'TEXT' })
+  },
+  db => {
+    // The kind of role skipped is the user's own setting, not one fixed kind.
+    db.exec("UPDATE discarded SET reason = 'skipped-role' WHERE reason = 'backend-only'")
+  },
+]
+
+export const SCHEMA_VERSION = MIGRATIONS.length
+
+/**
+ * Opens the app's database and brings it up to date. Only the main process
+ * opens it, through Node's built-in SQLite.
+ */
+export function openDatabase(path: string): DatabaseSync {
+  mkdirSync(dirname(path), { recursive: true })
+  const db = new DatabaseSync(path)
+  db.exec('PRAGMA foreign_keys = ON')
+  const version = Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version)
+  for (let i = version; i < MIGRATIONS.length; i++) {
+    db.exec('BEGIN')
+    try {
+      MIGRATIONS[i]!(db)
+      db.exec(`PRAGMA user_version = ${i + 1}`)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  return db
+}
+
+/** A question reduced for matching, so "Notice period?" finds "notice period". */
+export function questionKey(question: string): string {
+  return question.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+/** Page arithmetic shared by every paged list. */
+export function paging(total: number, page: number, pageSize: number): { at: number; pages: number } {
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  const at = Math.min(Math.max(0, Math.trunc(page) || 0), pages - 1)
+  return { at, pages }
+}

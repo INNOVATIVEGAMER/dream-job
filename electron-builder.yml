@@ -1,0 +1,41 @@
+# How Job App is packaged for macOS. `pnpm dist:mac` builds a release:
+# signed with the Developer ID certificate in the keychain, and notarized
+# when Apple credentials are in the environment (see README, Packaging).
+# `pnpm dist:mac:local` builds one only for this Mac, signed ad hoc.
+
+appId: com.jobapp.desktop
+productName: Job App
+copyright: Copyright © 2026 Job App contributors
+
+directories:
+  output: release
+  buildResources: build
+
+# The build bundles every process with what it uses: the app needs only these.
+files:
+  - out/**/*
+  - package.json
+
+asar: true
+
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.png
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  minimumSystemVersion: '12.0'
+  # The zip; the dmg names its own below.
+  artifactName: Job-App-${version}-${arch}-mac.${ext}
+  extendInfo:
+    NSHumanReadableCopyright: Job App drives your own Google Chrome and your own Claude Code.
+
+dmg:
+  title: Job App ${version}
+  artifactName: Job-App-${version}-${arch}.${ext}

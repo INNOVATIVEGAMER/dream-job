@@ -17,15 +17,14 @@ const CHECK_TIMEOUT_MS = 45_000
  * Finds the user's own `claude`: on PATH first, then where the installer puts
  * it. The app never uses a copy of its own, so the sign-in is the user's.
  */
-export async function findClaude(): Promise<string | null> {
+/** Where installers put command-line tools: an app opened from Finder gets none of these on its PATH. */
+const toolDirs = (): string[] => {
   const home = homedir()
-  const dirs = [
-    ...(process.env['PATH'] ?? '').split(delimiter),
-    join(home, '.local', 'bin'),
-    join(home, '.claude', 'local'),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-  ]
+  return [join(home, '.local', 'bin'), join(home, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
+}
+
+export async function findClaude(): Promise<string | null> {
+  const dirs = [...(process.env['PATH'] ?? '').split(delimiter), ...toolDirs()]
   for (const dir of dirs) {
     if (!dir) continue
     const path = join(dir, 'claude')
@@ -46,7 +45,8 @@ export async function findClaude(): Promise<string | null> {
  * `env` replaces the whole environment, so PATH and HOME come along.
  */
 export function claudeEnv(): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'job-app/0.1.0' }
+  const path = [...new Set([...(process.env['PATH'] ?? '').split(delimiter), ...toolDirs(), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].filter(Boolean))]
+  const env: Record<string, string | undefined> = { ...process.env, PATH: path.join(delimiter), CLAUDE_AGENT_SDK_CLIENT_APP: 'job-app/0.1.0' }
   delete env['ANTHROPIC_API_KEY']
   delete env['ANTHROPIC_AUTH_TOKEN']
 

@@ -1,0 +1,13 @@
+/* Page basics the nxds tokens don't set on their own. */
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--nx-color-background);
+  color: var(--nx-color-foreground);
+  font-family: var(--nx-typography-family-font-sans);
+}

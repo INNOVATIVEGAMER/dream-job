@@ -1,4 +1,4 @@
-import type { JobAppApi } from '../../preload'
+import type { JobAppApi } from '../../shared/api'
 
 declare global {
   interface Window {

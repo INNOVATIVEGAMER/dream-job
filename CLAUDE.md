@@ -86,6 +86,12 @@ https://claude.ai/artifact/2jzHoWNXxeDz7JwwYnEHAm
 - `pnpm typecheck` and `pnpm build` are one-off checks and fine to run.
 - Electron 45 downloads its binary on first run; after a fresh install run
   `node node_modules/electron/install.js` once.
+- Packaging: `pnpm dist:mac:local` builds an ad-hoc signed app for this Mac;
+  `pnpm dist:mac` builds a signed, notarized release (README, Packaging). Every
+  process is bundled (`externalizeDeps: false`), so every package is a
+  devDependency and the app ships no node_modules. Keep it that way: the Agent
+  SDK's optional platform package is a 300 MB copy of Claude Code the app must
+  never ship, since it runs the user's own.
 
 ## The browser is real Chrome
 

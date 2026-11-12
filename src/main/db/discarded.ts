@@ -1,0 +1,107 @@
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
+
+import { DISCARD_REASONS } from '../../shared/types'
+import type { DiscardedPage, DiscardedPosting, DiscardedQuery, DiscardReason, NeverShowCompany } from '../../shared/types'
+import { companyKey, now, paging, today } from './database'
+
+export const DISCARDED_PAGE_SIZE = 15
+
+const COLUMNS = 'id, at, company, role, portal, job_id AS jobId, link, line, reason, run_id AS runId'
+
+export const isDiscardReason = (value: string): value is DiscardReason =>
+  (DISCARD_REASONS as readonly string[]).includes(value)
+
+export type NewDiscard = Omit<DiscardedPosting, 'id' | 'at' | 'runId'>
+
+/** Postings the hunt ruled out, each with the line that ruled it out. The company stays eligible. */
+export class Discarded {
+  constructor(private readonly db: DatabaseSync) {}
+
+  add(posting: NewDiscard, runId: number | null): number {
+    if (!posting.line.trim()) throw new Error('A discard needs the posting line that ruled it out.')
+    const result = this.db
+      .prepare(`INSERT INTO discarded (at, company, role, portal, job_id, link, line, reason, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(now(), posting.company, posting.role, posting.portal, posting.jobId, posting.link, posting.line.trim(), posting.reason, runId)
+    return Number(result.lastInsertRowid)
+  }
+
+  get(id: number): DiscardedPosting | null {
+    const row = this.db.prepare(`SELECT ${COLUMNS} FROM discarded WHERE id = ?`).get(id)
+    return row ? ({ ...row } as DiscardedPosting) : null
+  }
+
+  /** Whether this posting was already discarded: the hunt skips it rather than reading it again. */
+  has(portal: string, jobId: string): boolean {
+    if (!jobId) return false
+    return Boolean(this.db.prepare('SELECT 1 FROM discarded WHERE lower(portal) = lower(?) AND job_id = ? LIMIT 1').get(portal, jobId))
+  }
+
+  page(query: DiscardedQuery): DiscardedPage {
+    const where: string[] = []
+    const params: SQLInputValue[] = []
+    if (isDiscardReason(query.reason)) {
+      where.push('reason = ?')
+      params.push(query.reason)
+    }
+    const search = query.search.trim().toLowerCase()
+    if (search) {
+      where.push('(lower(company) LIKE ? OR lower(role) LIKE ?)')
+      params.push(`%${search}%`, `%${search}%`)
+    }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
+    const total = Number((this.db.prepare(`SELECT COUNT(*) AS n FROM discarded ${clause}`).get(...params) as { n: number }).n)
+    const { at, pages } = paging(total, query.page, DISCARDED_PAGE_SIZE)
+    const rows = this.db
+      .prepare(`SELECT ${COLUMNS} FROM discarded ${clause} ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`)
+      .all(...params, DISCARDED_PAGE_SIZE, at * DISCARDED_PAGE_SIZE)
+      .map(row => ({ ...row }) as DiscardedPosting)
+    return { rows, total, page: at, pages, pageSize: DISCARDED_PAGE_SIZE }
+  }
+
+  count(): number {
+    return Number((this.db.prepare('SELECT COUNT(*) AS n FROM discarded').get() as { n: number }).n)
+  }
+
+  remove(id: number): void {
+    this.db.prepare('DELETE FROM discarded WHERE id = ?').run(id)
+  }
+}
+
+/** Companies the hunt never shows again, whatever they post. A rejection does not put a company here. */
+export class NeverShow {
+  constructor(private readonly db: DatabaseSync) {}
+
+  list(): NeverShowCompany[] {
+    return this.db
+      .prepare('SELECT id, company, why, added FROM never_show ORDER BY company COLLATE NOCASE')
+      .all()
+      .map(row => ({ ...row }) as NeverShowCompany)
+  }
+
+  add(company: string, why: string): number {
+    const name = company.trim()
+    if (!name) throw new Error('Enter a company name.')
+    if (!why.trim()) throw new Error('Say why this company should never come back.')
+    const result = this.db
+      .prepare(
+        `INSERT INTO never_show (company, company_key, why, added) VALUES (?, ?, ?, ?)
+         ON CONFLICT (company_key) DO UPDATE SET why = excluded.why`,
+      )
+      .run(name, companyKey(name), why.trim(), today())
+    return Number(result.lastInsertRowid)
+  }
+
+  remove(id: number): void {
+    this.db.prepare('DELETE FROM never_show WHERE id = ?').run(id)
+  }
+
+  /** The entry that blocks this company, if any. */
+  match(company: string): NeverShowCompany | null {
+    const row = this.db.prepare('SELECT id, company, why, added FROM never_show WHERE company_key = ?').get(companyKey(company))
+    return row ? ({ ...row } as NeverShowCompany) : null
+  }
+
+  count(): number {
+    return Number((this.db.prepare('SELECT COUNT(*) AS n FROM never_show').get() as { n: number }).n)
+  }
+}

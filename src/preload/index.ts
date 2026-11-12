@@ -1,47 +1,85 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import type { BrowserInfo, BrowserState, ClaudeStatus, FlowState, TrackerPage } from '../shared/types'
+import type { JobAppApi } from '../shared/api'
+import type { AppStatus, DataTopic } from '../shared/types'
 
-/** The only door from the panel to the main process. */
-const api = {
-  openChrome: (mode: 'signin' | 'controlled'): Promise<void> => ipcRenderer.invoke('chrome:open', mode),
-  closeChrome: (): Promise<void> => ipcRenderer.invoke('chrome:close'),
-  navigate: (input: string): Promise<boolean> => ipcRenderer.invoke('browser:navigate', input),
-  back: (): Promise<void> => ipcRenderer.invoke('browser:back'),
-  forward: (): Promise<void> => ipcRenderer.invoke('browser:forward'),
-  reload: (): Promise<void> => ipcRenderer.invoke('browser:reload'),
-  requestState: (): Promise<void> => ipcRenderer.invoke('browser:state'),
-  info: (): Promise<BrowserInfo> => ipcRenderer.invoke('browser:info'),
-  onState: (listener: (state: BrowserState) => void): (() => void) => {
-    const handler = (_event: unknown, state: BrowserState): void => listener(state)
-    ipcRenderer.on('browser:state', handler)
-    return () => ipcRenderer.removeListener('browser:state', handler)
+// The main process checks every input and answers the types in JobAppApi; `never` lets each entry take its own signature.
+const call =
+  (channel: string) =>
+  (...args: unknown[]): Promise<never> =>
+    ipcRenderer.invoke(channel, ...args) as Promise<never>
+
+function listen<T>(channel: string, listener: (value: T) => void): () => void {
+  const handler = (_event: unknown, value: T): void => listener(value)
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.removeListener(channel, handler)
+}
+
+/** The only door from the screens to the main process. */
+const api: JobAppApi = {
+  status: call('status'),
+  onStatus: listener => listen<AppStatus>('push:status', listener),
+  onData: listener => listen<DataTopic[]>('push:data', listener),
+  checkClaude: call('checkClaude'),
+  chrome: {
+    open: call('chrome:open'),
+    close: call('chrome:close'),
+    front: call('chrome:front'),
+    openUrl: call('chrome:openUrl'),
+    signIn: call('chrome:signIn'),
+    info: call('chrome:info'),
   },
-  openTracker: (): Promise<void> => ipcRenderer.invoke('tracker:open'),
-  trackerPage: (filter: string, page: number): Promise<TrackerPage> => ipcRenderer.invoke('tracker:page', filter, page),
-  setStatus: (id: number, status: string): Promise<void> => ipcRenderer.invoke('tracker:set-status', id, status),
-  runHunt: (url: string): Promise<void> => ipcRenderer.invoke('flow:hunt', url),
-  runFormTest: (): Promise<void> => ipcRenderer.invoke('flow:form'),
-  runHandoverTest: (): Promise<void> => ipcRenderer.invoke('flow:handover-test'),
-  resume: (id: string): Promise<void> => ipcRenderer.invoke('flow:resume', id),
-  approve: (id: string, texts: string[]): Promise<void> => ipcRenderer.invoke('flow:approve', id, texts),
-  cancelApproval: (id: string): Promise<void> => ipcRenderer.invoke('flow:cancel', id),
-  stopFlow: (): Promise<void> => ipcRenderer.invoke('flow:stop'),
-  requestFlow: (): Promise<void> => ipcRenderer.invoke('flow:state'),
-  onFlow: (listener: (state: FlowState) => void): (() => void) => {
-    const handler = (_event: unknown, state: FlowState): void => listener(state)
-    ipcRenderer.on('flow:state', handler)
-    return () => ipcRenderer.removeListener('flow:state', handler)
+  home: call('home'),
+  tracker: {
+    page: call('tracker:page'),
+    get: call('tracker:get'),
+    setStatus: call('tracker:setStatus'),
+    setNotes: call('tracker:setNotes'),
+    add: call('tracker:add'),
   },
-  checkClaude: (): Promise<void> => ipcRenderer.invoke('claude:check'),
-  requestClaudeStatus: (): Promise<void> => ipcRenderer.invoke('claude:status'),
-  onClaudeStatus: (listener: (status: ClaudeStatus) => void): (() => void) => {
-    const handler = (_event: unknown, status: ClaudeStatus): void => listener(status)
-    ipcRenderer.on('claude:status', handler)
-    return () => ipcRenderer.removeListener('claude:status', handler)
+  discarded: {
+    page: call('discarded:page'),
+    restore: call('discarded:restore'),
+    neverShow: call('discarded:neverShow'),
+    addNeverShow: call('discarded:addNeverShow'),
+    removeNeverShow: call('discarded:removeNeverShow'),
+  },
+  contacts: {
+    page: call('contacts:page'),
+    ready: call('contacts:ready'),
+    applied: call('contacts:applied'),
+    get: call('contacts:get'),
+    markThanked: call('contacts:markThanked'),
+  },
+  runs: {
+    page: call('runs:page'),
+    get: call('runs:get'),
+    answer: call('runs:answer'),
+    stop: call('runs:stop'),
+  },
+  flows: {
+    hunt: call('flows:hunt'),
+    apply: call('flows:apply'),
+    connect: call('flows:connect'),
+    referral: call('flows:referral'),
+    checkAccepted: call('flows:checkAccepted'),
+  },
+  settings: {
+    get: call('settings:get'),
+    setPreferences: call('settings:setPreferences'),
+    setProfile: call('settings:setProfile'),
+    setReferral: call('settings:setReferral'),
+    setPortals: call('settings:setPortals'),
+    finishSetup: call('settings:finishSetup'),
+    answers: call('settings:answers'),
+    saveAnswer: call('settings:saveAnswer'),
+    removeAnswer: call('settings:removeAnswer'),
+    sites: call('settings:sites'),
+    chooseResume: call('settings:chooseResume'),
+    removeResume: call('settings:removeResume'),
+    openResume: call('settings:openResume'),
+    importResume: call('settings:importResume'),
   },
 }
 
 contextBridge.exposeInMainWorld('jobApp', api)
-
-export type JobAppApi = typeof api
