@@ -1,56 +1,57 @@
-import { useEffect, useRef, useState } from 'react'
-import type { JSX } from 'react'
+import { useRef, useState } from 'react'
+import type { JSX, ReactNode } from 'react'
 
 import {
+  ArrowSquareOutIcon,
   ArrowsClockwiseIcon,
   BrowserIcon,
+  BriefcaseIcon,
+  CaretDownIcon,
+  CaretUpIcon,
   CheckCircleIcon,
-  EyeIcon,
+  EnvelopeIcon,
+  FileArrowUpIcon,
   FilePdfIcon,
-  HandPalmIcon,
+  LinkedinLogoIcon,
+  MagnifyingGlassIcon,
   PencilSimpleIcon,
   PlusIcon,
-  RobotIcon,
-  ShieldCheckIcon,
+  RocketIcon,
   SignInIcon,
+  TerminalWindowIcon,
   TrashIcon,
   UploadSimpleIcon,
   WarningIcon,
   XIcon,
 } from '@phosphor-icons/react'
 
-import { PLAYBOOKS } from '../../../../shared/playbooks'
-import { GMAIL_TOOLS, PORTAL_NAMES, PORTAL_TOOL_GROUP_NAMES, PORTAL_TOOLS, PORTALS, SITE_NAMES } from '../../../../shared/types'
-import type {
-  FormAnswer,
-  Portal,
-  PortalSettings,
-  Preferences,
-  Profile,
-  ReferralMessage,
-  Settings as SettingsValue,
-  SignInSite,
-} from '../../../../shared/types'
+import { GMAIL_PLAYBOOK, PLAYBOOKS } from '../../../../shared/playbooks'
+import { yearsOfExperience } from '../../../../shared/profile'
+import { EMAIL_COUNTS, GMAIL_TOOLS, PORTAL_NAMES, PORTAL_TOOL_GROUP_NAMES, PORTAL_TOOLS, PORTALS, SIGN_IN_SITES, SITE_NAMES } from '../../../../shared/types'
+import type { EmailCount, EmailSettings, FormAnswer, Portal, PortalSetting, Preferences, Profile, Settings as SettingsValue, SignInSite, SiteState } from '../../../../shared/types'
 import { api } from '../../lib/api'
+import { useAutosaved } from '../../lib/autosave'
 import { useData } from '../../lib/data'
 import { day, when } from '../../lib/format'
 import { go } from '../../lib/router'
 import { useAppStatus } from '../../lib/status'
-import { attempt, CheckList, ChipsInput, ErrorNote, Hidden, Loading, Page } from '../../ui/common'
+import { attempt, ErrorNote, Group, Hidden, Loading, Page, Tip } from '../../ui/common'
+import { End, ListBox, ListRow, Rows, Segments, Tags } from '../../ui/fields'
 import {
-  Badge,
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+  Attachment,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentMedia,
+  AttachmentTitle,
   Button,
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-  DescriptionList,
-  DescriptionListDescription,
-  DescriptionListItem,
-  DescriptionListTerm,
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
   Dialog,
   DialogBody,
   DialogContent,
@@ -59,17 +60,12 @@ import {
   DialogHeader,
   DialogTitle,
   Field,
-  FieldDescription,
   FieldGroup,
   FieldLabel,
   Input,
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemMedia,
-  ItemTitle,
-  Separator,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
   Switch,
   Table,
   TableBody,
@@ -77,55 +73,103 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
   Textarea,
 } from '../../ui/nx'
-import { GmailSettings } from './GmailSettings'
 import { PreferencesForm } from './PreferencesForm'
-import { LinksEditor, ProjectsList, RolesList } from './ProfileParts'
+import { linkRows, ProjectsList, RolesList } from './ProfileParts'
 
-const TABS = [
-  ['preferences', 'Preferences'],
-  ['profile', 'Profile'],
-  ['answers', 'Form answers'],
-  ['resume', 'Resume'],
-  ['message', 'Referral message'],
-  ['portals', 'Portals'],
-  ['accounts', 'Accounts'],
-] as const
+type Key = 'profile' | 'resume' | 'answers' | 'preferences' | 'message' | 'accounts' | Portal | 'gmail'
 
-const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
+const NAV: { group: string; items: { key: Key; label: string; to: string }[] }[] = [
+  {
+    group: 'You',
+    items: [
+      { key: 'profile', label: 'Profile', to: '/settings/profile' },
+      { key: 'resume', label: 'Resume', to: '/settings/resume' },
+      { key: 'answers', label: 'Form answers', to: '/settings/answers' },
+    ],
+  },
+  {
+    group: 'Search',
+    items: [
+      { key: 'preferences', label: 'Preferences', to: '/settings/preferences' },
+      { key: 'message', label: 'Referral message', to: '/settings/message' },
+    ],
+  },
+  {
+    group: 'Connections',
+    items: [
+      { key: 'accounts', label: 'Accounts', to: '/settings/accounts' },
+      ...PORTALS.map(portal => ({ key: portal as Key, label: PORTAL_NAMES[portal], to: `/settings/portals/${portal}` })),
+      { key: 'gmail', label: 'Gmail', to: '/settings/portals/gmail' },
+    ],
+  },
+]
 
-function SaveBar({ isDirty, onSave, label }: { isDirty: boolean; onSave: () => void; label: string }): JSX.Element {
+const isPortal = (value: string | undefined): value is Portal => (PORTALS as readonly string[]).includes(value ?? '')
+
+/** The section a route names: `/settings/<tab>/<sub>`, with portals and Gmail under `portals`. */
+function keyOf(tab: string, sub?: string): Key {
+  if (tab === 'portals') return sub === 'gmail' ? 'gmail' : isPortal(sub) ? sub : 'linkedin'
+  return NAV.flatMap(group => group.items).some(item => item.key === tab) ? (tab as Key) : 'preferences'
+}
+
+function SettingsNav({ active }: { active: Key }): JSX.Element {
   return (
-    <div className="nx:flex nx:items-center nx:gap-3 nx:pt-6">
-      <Button disabled={!isDirty} onClick={onSave}>
-        {label}
-      </Button>
-      {isDirty && <span className="nx:typography-body-small nx:text-muted-foreground">Unsaved changes</span>}
+    <nav aria-label="Settings" className="nx:flex nx:flex-col nx:gap-0.5 nx:w-[200px] nx:shrink-0 nx:sticky nx:top-0">
+      {NAV.map(group => (
+        <div key={group.group} className="nx:flex nx:flex-col nx:gap-0.5">
+          <span className="nx:typography-label-caps nx:text-muted-foreground nx:px-2 nx:pt-3 nx:pb-1">{group.group}</span>
+          {group.items.map(item => (
+            <button
+              key={item.key}
+              type="button"
+              aria-current={item.key === active ? 'page' : undefined}
+              className={`nx:block nx:w-full nx:text-left nx:px-2 nx:py-1 nx:rounded-sm nx:border-0 nx:cursor-pointer nx:typography-body-small nx:text-foreground ${item.key === active ? 'nx:bg-muted' : 'nx:bg-transparent nx:hover:bg-muted'}`}
+              onClick={() => go(item.to)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ))}
+    </nav>
+  )
+}
+
+/** A section's title, with a short status beside it and an action on the right. */
+function Head({ title, meta, tip, action }: { title: string; meta?: ReactNode; tip?: string; action?: ReactNode }): JSX.Element {
+  return (
+    <div className="nx:flex nx:items-center nx:justify-between nx:gap-3 nx:min-h-9">
+      <div className="nx:flex nx:items-center nx:gap-2 nx:min-w-0">
+        <h1 className="nx:typography-heading-medium nx:m-0">{title}</h1>
+        {tip && <Tip text={tip} />}
+        {meta}
+      </div>
+      {action}
     </div>
   )
 }
 
-function PreferencesTab({ settings }: { settings: SettingsValue }): JSX.Element {
-  const [prefs, setPrefs] = useState<Preferences>(settings.preferences)
-  useEffect(() => setPrefs(settings.preferences), [settings.preferences])
-  return (
-    <div className="nx:pt-4">
-      <PreferencesForm value={prefs} onChange={setPrefs} />
-      <SaveBar isDirty={!same(prefs, settings.preferences)} label="Save preferences" onSave={() => void attempt(() => api.settings.setPreferences(prefs), 'Preferences saved')} />
-    </div>
-  )
-}
+const switchRow = (props: { id: string; label: string; tip?: string; checked: boolean; disabled?: boolean; onChange: (on: boolean) => void }): { label: string; id: string; tip?: string; control: JSX.Element } => ({
+  label: props.label,
+  id: props.id,
+  tip: props.tip,
+  control: (
+    <End>
+      <Switch id={props.id} checked={props.checked} disabled={props.disabled} onCheckedChange={props.onChange} />
+    </End>
+  ),
+})
 
-function ProfileTab({ settings }: { settings: SettingsValue }): JSX.Element {
-  const [profile, setProfile] = useState<Profile>(settings.profile)
+/* ------------------------------------------------------------------ */
+/* You                                                                 */
+/* ------------------------------------------------------------------ */
+
+function ProfileSection({ settings }: { settings: SettingsValue }): JSX.Element {
+  const [profile, setProfile] = useAutosaved(settings.profile, value => api.settings.setProfile(value))
   const [found, setFound] = useState<Profile | null>(null)
   const [isReading, setIsReading] = useState(false)
-  useEffect(() => setProfile(settings.profile), [settings.profile])
   const set = (patch: Partial<Profile>): void => setProfile(current => ({ ...current, ...patch }))
 
   const readResume = async (): Promise<void> => {
@@ -137,113 +181,57 @@ function ProfileTab({ settings }: { settings: SettingsValue }): JSX.Element {
   }
 
   return (
-    <div className="nx:pt-4">
-      <div className="nx:flex nx:flex-wrap nx:gap-6 nx:items-start">
-        <div className="nx:flex nx:flex-col nx:gap-5 nx:min-w-0" style={{ flex: '999 1 560px' }}>
-          <Card>
-            <CardHeader>
-              <CardTitle>About you</CardTitle>
-              <CardDescription>The source of truth. Written answers and the hunt's scoring draw on this profile and nothing else.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="nx:flex nx:flex-wrap nx:gap-3">
-                <div className="nx:min-w-0" style={{ flex: '1 1 200px' }}>
-                  <Field>
-                    <FieldLabel htmlFor="profile-name">Name</FieldLabel>
-                    <Input id="profile-name" value={profile.name} onChange={event => set({ name: event.target.value })} />
-                  </Field>
-                </div>
-                <div className="nx:min-w-0" style={{ flex: '2 1 300px' }}>
-                  <Field>
-                    <FieldLabel htmlFor="profile-headline">Headline</FieldLabel>
-                    <Input id="profile-headline" value={profile.headline} onChange={event => set({ headline: event.target.value })} />
-                  </Field>
-                </div>
-                <div className="nx:min-w-0" style={{ flex: '1 1 200px' }}>
-                  <Field>
-                    <FieldLabel htmlFor="profile-location">Lives in</FieldLabel>
-                    <Input id="profile-location" placeholder="City, country" value={profile.location} onChange={event => set({ location: event.target.value })} />
-                  </Field>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Experience</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <RolesList roles={profile.roles} skills={profile.skills} onChange={roles => set({ roles })} />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Projects</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ProjectsList projects={profile.projects} onChange={projects => set({ projects })} />
-            </CardContent>
-          </Card>
-        </div>
-        <div className="nx:flex nx:flex-col nx:gap-5 nx:min-w-0" style={{ flex: '1 1 300px' }}>
-          <Card>
-            <CardHeader>
-              <CardTitle>Skills</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ChipsInput values={profile.skills} onChange={skills => set({ skills })} placeholder="Add a skill" />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Links</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <LinksEditor links={profile.links} onChange={links => set({ links })} />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Never mention or link</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Field>
-                <Textarea aria-label="Never mention or link" rows={3} placeholder="One per line" value={profile.never} onChange={event => set({ never: event.target.value })} />
-                <FieldDescription>Claude never writes these into a form or a message.</FieldDescription>
-              </Field>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>From a resume</CardTitle>
-              <CardDescription>Claude reads it again and shows what it found, for you to accept.</CardDescription>
-            </CardHeader>
-            <CardFooter>
-              <Button variant="outline" size="sm" startIcon={<UploadSimpleIcon />} loading={isReading} onClick={() => void readResume()}>
-                {isReading ? 'Claude is reading it' : 'Update from your resume'}
-              </Button>
-            </CardFooter>
-          </Card>
-        </div>
-      </div>
-      <SaveBar isDirty={!same(profile, settings.profile)} label="Save profile" onSave={() => void attempt(() => api.settings.setProfile(profile), 'Profile saved')} />
+    <>
+      <Head
+        title="Profile"
+        tip="Every written answer and the hunt's scoring draw on this and nothing else"
+        action={
+          <Button variant="outline" size="sm" startIcon={<FileArrowUpIcon />} loading={isReading} onClick={() => void readResume()}>
+            {isReading ? 'Claude is reading it' : 'Update from your resume'}
+          </Button>
+        }
+      />
+      <Rows
+        items={[
+          { label: 'Name', id: 'profile-name', control: <Input id="profile-name" value={profile.name} onChange={event => set({ name: event.target.value })} /> },
+          { label: 'Headline', id: 'profile-headline', control: <Input id="profile-headline" value={profile.headline} onChange={event => set({ headline: event.target.value })} /> },
+          {
+            label: 'Lives in',
+            id: 'profile-location',
+            control: <Input id="profile-location" placeholder="City, country" value={profile.location} onChange={event => set({ location: event.target.value })} />,
+          },
+        ]}
+      />
+      <RolesList roles={profile.roles} skills={profile.skills} onChange={roles => set({ roles })} />
+      <ProjectsList projects={profile.projects} onChange={projects => set({ projects })} />
+      <Rows
+        title="More"
+        items={[
+          { label: 'Skills', id: 'profile-skills', control: <Tags id="profile-skills" ariaLabel="Skills" values={profile.skills} onChange={skills => set({ skills })} placeholder="Add a skill" /> },
+          ...linkRows(profile.links, links => set({ links })),
+          {
+            label: 'Never mention',
+            id: 'profile-never',
+            tip: 'Claude never writes these into a form or a message, and never links them',
+            control: <Textarea id="profile-never" rows={2} placeholder="One per line" value={profile.never} onChange={event => set({ never: event.target.value })} />,
+          },
+        ]}
+      />
       {found && (
         <Dialog open onOpenChange={open => !open && setFound(null)}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Claude read your resume</DialogTitle>
               <DialogDescription>
-                It found {found.roles.length} roles, {found.projects.length} projects and {found.skills.length} skills. Use them in place of what is here? Your name and headline stay unless you have none.
+                {found.roles.length} roles, {found.projects.length} projects and {found.skills.length} skills. Your name, headline and city stay unless you have none.
               </DialogDescription>
             </DialogHeader>
             <DialogBody>
-              <ul className="nx:typography-body-small nx:m-0 nx:pl-5 nx:flex nx:flex-col nx:gap-1">
+              <ListBox label="Roles found">
                 {found.roles.map(role => (
-                  <li key={role.id}>
-                    {role.title}, {role.company}
-                  </li>
+                  <ListRow key={role.id} title={role.title} detail={role.company} />
                 ))}
-              </ul>
+              </ListBox>
             </DialogBody>
             <DialogFooter>
               <Button variant="outline" onClick={() => setFound(null)}>
@@ -264,112 +252,206 @@ function ProfileTab({ settings }: { settings: SettingsValue }): JSX.Element {
                   setFound(null)
                 }}
               >
-                Use these, then save
+                Use these
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
-    </div>
+    </>
+  )
+}
+
+const TWO_MB = 2 * 1024 * 1024
+
+function ResumeSection({ settings }: { settings: SettingsValue }): JSX.Element {
+  const resume = settings.resume
+  const choose = (): Promise<unknown> => attempt(() => api.settings.chooseResume(), 'Resume saved')
+  return (
+    <>
+      <Head title="Resume" tip="Uploaded with every application, and attached to referral messages if you choose" />
+      {resume ? (
+        <Attachment>
+          <AttachmentMedia variant="icon">
+            <FilePdfIcon />
+          </AttachmentMedia>
+          <AttachmentContent>
+            <AttachmentTitle>{resume.fileName}</AttachmentTitle>
+            <AttachmentDescription>
+              {[resume.pages ? `${resume.pages} ${resume.pages === 1 ? 'page' : 'pages'}` : null, `${Math.round(resume.bytes / 1024)} KB`, `added ${day(resume.addedAt)}`].filter(Boolean).join(' · ')}
+            </AttachmentDescription>
+          </AttachmentContent>
+          <AttachmentActions>
+            <Button variant="ghost" size="sm" endIcon={<ArrowSquareOutIcon />} onClick={() => void attempt(() => api.settings.openResume())}>
+              Open
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => void choose()}>
+              Replace
+            </Button>
+            <Button variant="ghost" size="icon-sm" aria-label="Remove the resume" onClick={() => void attempt(() => api.settings.removeResume(), 'Resume removed')}>
+              <TrashIcon />
+            </Button>
+          </AttachmentActions>
+        </Attachment>
+      ) : (
+        <div className="nx:flex nx:flex-col nx:items-center nx:gap-3 nx:p-8 nx:rounded-md nx:text-center" style={{ border: '1px dashed var(--nx-color-border-default)' }}>
+          <UploadSimpleIcon size={24} />
+          <span className="nx:typography-label-default">Add your resume</span>
+          <Button variant="outline" size="sm" onClick={() => void choose()}>
+            Choose a PDF
+          </Button>
+        </div>
+      )}
+      {resume && resume.bytes > TWO_MB && (
+        <Alert variant="warning" layout="inline">
+          <AlertIcon>
+            <WarningIcon />
+          </AlertIcon>
+          <AlertContent>
+            <AlertDescription>Over 2 MB. Some forms refuse it.</AlertDescription>
+          </AlertContent>
+        </Alert>
+      )}
+      <Rows
+        items={[
+          switchRow({
+            id: 'resume-referral',
+            label: 'Attach to referral messages',
+            checked: settings.referral.attachResume,
+            onChange: attachResume => void attempt(() => api.settings.setReferral({ ...settings.referral, attachResume })),
+          }),
+        ]}
+      />
+    </>
   )
 }
 
 function AnswerRow({ answer }: { answer: FormAnswer }): JSX.Element {
-  const [isEditing, setIsEditing] = useState(false)
-  const [text, setText] = useState(answer.answer)
+  const [text, setText] = useState<string | null>(null)
+  const save = async (): Promise<void> => {
+    if (text === null) return
+    if (text.trim() && text.trim() !== answer.answer) await attempt(() => api.settings.saveAnswer(answer.question, text))
+    setText(null)
+  }
   return (
-    <TableRow>
-      <TableCell>{answer.question}</TableCell>
-      <TableCell>
-        {isEditing ? <Input aria-label={`Answer to ${answer.question}`} value={text} onChange={event => setText(event.target.value)} autoFocus /> : answer.answer}
-      </TableCell>
-      <TableCell className="nx:tabular-nums">{day(answer.updated)}</TableCell>
-      <TableCell className="nx:text-end nx:whitespace-nowrap">
-        {isEditing ? (
-          <>
-            <Button variant="secondary" size="sm" onClick={() => void attempt(() => api.settings.saveAnswer(answer.question, text), 'Answer saved').then(() => setIsEditing(false))}>
-              Save
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setIsEditing(false)}>
-              Cancel
-            </Button>
-          </>
+    <TableRow className="nx:group">
+      <TableCell className="nx:typography-label-default">{answer.question}</TableCell>
+      <TableCell className="nx:typography-body-small">
+        {text === null ? (
+          answer.answer
         ) : (
-          <>
-            <Button variant="ghost" size="sm" startIcon={<PencilSimpleIcon />} onClick={() => setIsEditing(true)}>
-              Edit
+          <Input
+            aria-label={`Answer to ${answer.question}`}
+            value={text}
+            autoFocus
+            onChange={event => setText(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') void save()
+              if (event.key === 'Escape') setText(null)
+            }}
+          />
+        )}
+      </TableCell>
+      <TableCell className="nx:text-end nx:whitespace-nowrap">
+        {text === null ? (
+          <div className="nx:flex nx:justify-end nx:gap-1 nx:opacity-0 nx:group-hover:opacity-100 nx:focus-within:opacity-100 nx:transition-opacity">
+            <Button variant="ghost" size="icon-sm" aria-label={`Edit ${answer.question}`} onClick={() => setText(answer.answer)}>
+              <PencilSimpleIcon />
             </Button>
             <Button variant="ghost" size="icon-sm" aria-label={`Delete ${answer.question}`} onClick={() => void attempt(() => api.settings.removeAnswer(answer.id))}>
               <TrashIcon />
             </Button>
-          </>
+          </div>
+        ) : (
+          <div className="nx:flex nx:justify-end nx:gap-1">
+            <Button size="sm" onClick={() => void save()}>
+              Save
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setText(null)}>
+              Cancel
+            </Button>
+          </div>
         )}
       </TableCell>
     </TableRow>
   )
 }
 
-function AnswersTab(): JSX.Element {
-  const answers = useData(() => api.settings.answers(), [], ['answers'])
+function AddAnswer({ onClose }: { onClose: () => void }): JSX.Element {
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
+  const add = async (): Promise<void> => {
+    await attempt(() => api.settings.saveAnswer(question, answer), 'Answer saved')
+    onClose()
+  }
+  return (
+    <Dialog open onOpenChange={open => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add answer</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="answer-question">Question</FieldLabel>
+              <Input id="answer-question" placeholder="Notice period" value={question} autoFocus onChange={event => setQuestion(event.target.value)} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="answer-text">Answer</FieldLabel>
+              <Input id="answer-text" value={answer} onChange={event => setAnswer(event.target.value)} />
+            </Field>
+          </FieldGroup>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!question.trim() || !answer.trim()} onClick={() => void add()}>
+            Add answer
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AnswersSection(): JSX.Element {
+  const answers = useData(() => api.settings.answers(), [], ['answers'])
   const [search, setSearch] = useState('')
-  const shown = (answers.data ?? []).filter(one => `${one.question} ${one.answer}`.toLowerCase().includes(search.toLowerCase()))
+  const [isAdding, setIsAdding] = useState(false)
+  const shown = (answers.data ?? []).filter(one => `${one.question} ${one.answer}`.toLowerCase().includes(search.trim().toLowerCase()))
 
   return (
-    <div className="nx:flex nx:flex-col nx:gap-4 nx:pt-4">
-      <p className="nx:typography-body-default nx:m-0 nx:text-muted-foreground">
-        Facts forms ask for, learned once and reused everywhere. A form that asks something new stops and asks you, then saves the answer here. Factual fields are always answered truthfully from these.
-      </p>
-      <Card>
-        <CardHeader>
-          <CardTitle>Add an answer</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="nx:flex nx:flex-wrap nx:gap-3 nx:items-end">
-            <div className="nx:min-w-0" style={{ flex: '2 1 280px' }}>
-              <Field>
-                <FieldLabel htmlFor="answer-question">Question</FieldLabel>
-                <Input id="answer-question" placeholder="For example: Notice period" value={question} onChange={event => setQuestion(event.target.value)} />
-              </Field>
-            </div>
-            <div className="nx:min-w-0" style={{ flex: '1 1 200px' }}>
-              <Field>
-                <FieldLabel htmlFor="answer-text">Answer</FieldLabel>
-                <Input id="answer-text" value={answer} onChange={event => setAnswer(event.target.value)} />
-              </Field>
-            </div>
-            <Button
-              variant="secondary"
-              startIcon={<PlusIcon />}
-              disabled={!question.trim() || !answer.trim()}
-              onClick={() =>
-                void attempt(() => api.settings.saveAnswer(question, answer), 'Answer saved').then(() => {
-                  setQuestion('')
-                  setAnswer('')
-                })
-              }
-            >
-              Add
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-      <div className="nx:flex nx:flex-wrap nx:gap-2 nx:items-center">
-        <div className="nx:min-w-0" style={{ flex: '1 1 240px' }}>
-          <Input type="search" aria-label="Search answers" placeholder="Search questions" value={search} onChange={event => setSearch(event.target.value)} />
-        </div>
-        <span className="nx:typography-body-small nx:text-muted-foreground">{answers.data?.length ?? 0} answers</span>
+    <>
+      <Head
+        title="Form answers"
+        tip="Facts forms ask for, learned once and reused. A form that asks something new stops and asks you, then saves the answer here."
+        action={
+          <Button variant="outline" size="sm" startIcon={<PlusIcon />} onClick={() => setIsAdding(true)}>
+            Add answer
+          </Button>
+        }
+      />
+      <div className="nx:flex nx:items-center nx:gap-3">
+        <InputGroup className="nx:max-w-[280px]">
+          <InputGroupAddon align="inline-start">
+            <MagnifyingGlassIcon />
+          </InputGroupAddon>
+          <InputGroupInput type="search" aria-label="Search answers" placeholder="Search answers" value={search} onChange={event => setSearch(event.target.value)} />
+        </InputGroup>
+        {answers.data && <span className="nx:typography-body-small nx:text-muted-foreground">{answers.data.length} saved</span>}
       </div>
+      {answers.error && <ErrorNote text={answers.error} />}
       {!answers.data ? (
         <Loading />
+      ) : shown.length === 0 ? (
+        <span className="nx:typography-body-small nx:text-muted-foreground">{search ? 'Nothing matches.' : 'No answers yet. Forms save them here as they ask.'}</span>
       ) : (
-        <Table aria-label="Form answers" density="compact">
+        <Table aria-label="Saved answers" density="compact">
           <TableHeader>
             <TableRow>
               <TableHead>Question</TableHead>
               <TableHead>Answer</TableHead>
-              <TableHead>Updated</TableHead>
               <TableHead>
                 <Hidden>Actions</Hidden>
               </TableHead>
@@ -379,525 +461,406 @@ function AnswersTab(): JSX.Element {
             {shown.map(one => (
               <AnswerRow key={`${one.id}-${one.updated}-${one.answer}`} answer={one} />
             ))}
-            {shown.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={4} className="nx:text-muted-foreground">
-                  No answers yet.
-                </TableCell>
-              </TableRow>
-            )}
           </TableBody>
         </Table>
       )}
-    </div>
+      {isAdding && <AddAnswer onClose={() => setIsAdding(false)} />}
+    </>
   )
 }
 
-function ResumeTab({ settings }: { settings: SettingsValue }): JSX.Element {
-  const resume = settings.resume
+/* ------------------------------------------------------------------ */
+/* Search                                                              */
+/* ------------------------------------------------------------------ */
+
+const isPreferencesValid = (value: Preferences): boolean =>
+  (value.ceilingYears === null || (Number.isInteger(value.ceilingYears) && value.ceilingYears >= 0 && value.ceilingYears <= 60)) && (value.floor === null || value.floor > 0)
+
+function PreferencesSection({ settings }: { settings: SettingsValue }): JSX.Element {
+  const [prefs, setPrefs] = useAutosaved(settings.preferences, value => api.settings.setPreferences(value), { isValid: isPreferencesValid })
   return (
-    <div className="nx:flex nx:flex-wrap nx:gap-6 nx:items-start nx:pt-4">
-      <div className="nx:flex nx:flex-col nx:gap-4 nx:min-w-0" style={{ flex: '999 1 560px' }}>
-        {resume ? (
-          <Item variant="outline">
-            <ItemMedia variant="icon">
-              <FilePdfIcon />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>{resume.fileName}</ItemTitle>
-              <ItemDescription>
-                {resume.pages ? `${resume.pages} ${resume.pages === 1 ? 'page' : 'pages'}, ` : ''}
-                {Math.round(resume.bytes / 1024)} KB, added {day(resume.addedAt)}. Kept in the app's data folder.
-              </ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Button variant="ghost" size="sm" startIcon={<EyeIcon />} onClick={() => void attempt(() => api.settings.openResume())}>
-                Open
-              </Button>
-              <Button variant="ghost" size="sm" startIcon={<TrashIcon />} onClick={() => void attempt(() => api.settings.removeResume(), 'Resume removed')}>
-                Remove
-              </Button>
-            </ItemActions>
-          </Item>
-        ) : (
-          <span className="nx:typography-body-default nx:text-muted-foreground">No resume yet.</span>
-        )}
-        <div className="nx:flex nx:flex-col nx:items-center nx:gap-3 nx:p-8 nx:rounded-md nx:text-center" style={{ border: '1px dashed var(--nx-color-border-default)' }}>
-          <UploadSimpleIcon size={24} />
-          <span className="nx:typography-label-default">{resume ? 'Replace with a new PDF' : 'Add your resume'}</span>
-          <span className="nx:typography-body-small nx:text-muted-foreground">It is copied into the app's data folder and used for every run after this.</span>
-          <Button variant="outline" size="sm" onClick={() => void attempt(() => api.settings.chooseResume(), 'Resume saved')}>
-            Choose a PDF
-          </Button>
-        </div>
-      </div>
-      <div className="nx:flex nx:flex-col nx:gap-6 nx:min-w-0" style={{ flex: '1 1 300px' }}>
-        {resume && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Checked when added</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <CheckList
-                items={[
-                  { state: 'ok', text: `A PDF${resume.pages ? `, ${resume.pages} ${resume.pages === 1 ? 'page' : 'pages'}` : ''}` },
-                  { state: resume.bytes <= 2 * 1024 * 1024 ? 'ok' : 'warn', text: resume.bytes <= 2 * 1024 * 1024 ? 'Under the 2 MB most forms allow' : 'Over 2 MB: some forms refuse it' },
-                ]}
-              />
-            </CardContent>
-          </Card>
-        )}
-        <Card>
-          <CardHeader>
-            <CardTitle>Where it goes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="nx:typography-body-small nx:m-0 nx:pl-5 nx:flex nx:flex-col nx:gap-2">
-              <li>Uploaded with every application</li>
-              <li>Attached to every referral message, unless you turn that off</li>
-              <li>A form that wants a cover letter as a file is handed to you</li>
-            </ul>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+    <>
+      <Head title="Preferences" tip="What the hunt searches for and scores against. The kind of company is never a cut." />
+      <PreferencesForm value={prefs} onChange={setPrefs} years={yearsOfExperience(settings.profile)} />
+    </>
   )
 }
 
 const SLOTS = ['{name}', '{role}', '{company}', '{job link}'] as const
 
-function MessageTab({ settings }: { settings: SettingsValue }): JSX.Element {
-  const [message, setMessage] = useState<ReferralMessage>(settings.referral)
+/** The main process refuses anything in braces but the four slots. */
+const isTemplateValid = (template: string): boolean => (template.match(/\{[^}]*\}/g) ?? []).every(slot => (SLOTS as readonly string[]).includes(slot))
+
+function MessageSection({ settings }: { settings: SettingsValue }): JSX.Element {
+  const status = useAppStatus()
+  const referral = settings.referral
+  const [template, setTemplate] = useAutosaved(referral.template, value => api.settings.setReferral({ ...referral, template: value }), { isValid: isTemplateValid })
   const box = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => setMessage(settings.referral), [settings.referral])
+  const isSending = status?.run?.flow === 'referral' && (status.run.status === 'running' || status.run.status === 'waiting')
 
   const insert = (slot: string): void => {
     const el = box.current
-    const at = el ? el.selectionStart : message.template.length
+    const at = el ? el.selectionStart : template.length
     const end = el ? el.selectionEnd : at
-    const template = message.template.slice(0, at) + slot + message.template.slice(end)
-    setMessage(current => ({ ...current, template }))
+    setTemplate(template.slice(0, at) + slot + template.slice(end))
     requestAnimationFrame(() => {
       el?.focus()
       el?.setSelectionRange(at + slot.length, at + slot.length)
     })
   }
-  const preview = message.template.replace(/\{name\}|\{role\}|\{company\}|\{job link\}/g, slot => `[${slot.slice(1, -1)}]`)
+  const preview = template.replace(/\{name\}|\{role\}|\{company\}|\{job link\}/g, slot => `[${slot.slice(1, -1)}]`)
 
   return (
-    <div className="nx:flex nx:flex-wrap nx:gap-6 nx:items-start nx:pt-4">
-      <div className="nx:flex nx:flex-col nx:gap-4 nx:min-w-0" style={{ flex: '999 1 520px' }}>
-        <Card>
-          <CardHeader>
-            <CardTitle>Your approved wording</CardTitle>
-            <CardDescription>Sent word for word. Saving a change here approves the new wording for every later message.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="message-body">Message</FieldLabel>
-                <Textarea id="message-body" ref={box} rows={10} value={message.template} onChange={event => setMessage(current => ({ ...current, template: event.target.value }))} />
-                <FieldDescription>Only these four slots may appear. Anything else in braces is refused on save.</FieldDescription>
-              </Field>
-              <div className="nx:flex nx:flex-wrap nx:gap-2 nx:items-center">
-                <span className="nx:typography-body-small nx:text-muted-foreground">Insert</span>
-                {SLOTS.map(slot => (
-                  <Button key={slot} variant="outline" size="sm" onClick={() => insert(slot)}>
-                    {slot}
-                  </Button>
-                ))}
-              </div>
-              <Field orientation="horizontal">
-                <Switch id="message-resume" checked={message.attachResume} onCheckedChange={attachResume => setMessage(current => ({ ...current, attachResume }))} />
-                <FieldLabel htmlFor="message-resume">Attach your resume</FieldLabel>
-              </Field>
-            </FieldGroup>
-          </CardContent>
-          <CardFooter>
-            <Button disabled={same(message, settings.referral)} onClick={() => void attempt(() => api.settings.setReferral(message), 'Message saved')}>
-              Save message
+    <>
+      <Head title="Referral message" tip="Your approved wording. A change here approves the new wording for every later message." />
+      <div className="nx:flex nx:flex-col nx:gap-3">
+        <Textarea
+          ref={box}
+          rows={8}
+          aria-label="Your referral message"
+          readOnly={isSending}
+          placeholder="Hi {name}, I applied for the {role} role at {company}..."
+          value={template}
+          onChange={event => setTemplate(event.target.value)}
+        />
+        {!isTemplateValid(template) && (
+          <span className="nx:typography-body-small nx:text-error-subtle-foreground">Only the four slots below can be in braces. Not saved until then.</span>
+        )}
+        {isSending && <span className="nx:typography-body-small nx:text-muted-foreground">Locked while referral messages are going out.</span>}
+        <div className="nx:flex nx:flex-wrap nx:items-center nx:gap-2">
+          <span className="nx:typography-body-small nx:text-muted-foreground">Insert</span>
+          {SLOTS.map(slot => (
+            <Button key={slot} variant="outline" size="sm" disabled={isSending} onClick={() => insert(slot)}>
+              {slot}
             </Button>
-          </CardFooter>
-        </Card>
-      </div>
-      <div className="nx:flex nx:flex-col nx:gap-6 nx:min-w-0" style={{ flex: '1 1 320px' }}>
-        <Card>
-          <CardHeader>
-            <CardTitle>Preview</CardTitle>
-            <CardDescription>The slots in brackets are filled for each person.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="nx:typography-body-small nx:p-3 nx:rounded-md nx:bg-muted nx:text-foreground nx:whitespace-pre-wrap">{preview || 'Nothing yet.'}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Where the details come from</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <DescriptionList>
-              <DescriptionListItem>
-                <DescriptionListTerm>{'{name}'}</DescriptionListTerm>
-                <DescriptionListDescription>The person's first name, from their profile</DescriptionListDescription>
-              </DescriptionListItem>
-              <DescriptionListItem>
-                <DescriptionListTerm>{'{role}, {company}'}</DescriptionListTerm>
-                <DescriptionListDescription>The applied row at their company</DescriptionListDescription>
-              </DescriptionListItem>
-              <DescriptionListItem>
-                <DescriptionListTerm>{'{job link}'}</DescriptionListTerm>
-                <DescriptionListDescription>That row's posting link</DescriptionListDescription>
-              </DescriptionListItem>
-            </DescriptionList>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  )
-}
-
-function PortalsTab({ settings, initial }: { settings: SettingsValue; initial: Portal | 'gmail' }): JSX.Element {
-  const [selected, setSelected] = useState<Portal | 'gmail'>(initial)
-  // The portal shown when a portal is picked; Gmail has its own panel.
-  const portal: Portal = selected === 'gmail' ? 'linkedin' : selected
-  const sites = useData(() => api.settings.sites(), [], ['sites'])
-  const portals = settings.portals
-  const save = (next: PortalSettings): void => void attempt(() => api.settings.setPortals(next))
-  const setting = portals[portal]
-  const tools = PORTAL_TOOLS[portal]
-  const groups = [...new Set(tools.map(tool => tool.group))]
-  const site = sites.data?.find(one => one.site === portal)
-
-  return (
-    <div className="nx:flex nx:flex-wrap nx:gap-6 nx:items-start nx:pt-4">
-      <nav aria-label="Portals" className="nx:flex nx:flex-col nx:gap-1 nx:min-w-0" style={{ flex: '1 1 220px' }}>
-        {PORTALS.map(portal => {
-          const on = Object.values(portals[portal].tools).filter(Boolean).length
-          return (
-            <button
-              key={portal}
-              type="button"
-              className={`nx:flex nx:flex-col nx:gap-1 nx:p-3 nx:rounded-md nx:text-left nx:border-0 nx:cursor-pointer ${selected === portal ? 'nx:bg-muted' : 'nx:bg-transparent'}`}
-              onClick={() => setSelected(portal)}
-            >
-              <span className="nx:typography-label-default nx:text-foreground">{PORTAL_NAMES[portal]}</span>
-              <span className="nx:typography-body-small nx:text-muted-foreground">
-                {portals[portal].enabled ? `On, ${on} of ${PORTAL_TOOLS[portal].length} tools` : 'Off'}
-              </span>
-            </button>
-          )
-        })}
-        <button
-          type="button"
-          className={`nx:flex nx:flex-col nx:gap-1 nx:p-3 nx:rounded-md nx:text-left nx:border-0 nx:cursor-pointer ${selected === 'gmail' ? 'nx:bg-muted' : 'nx:bg-transparent'}`}
-          onClick={() => setSelected('gmail')}
-        >
-          <span className="nx:typography-label-default nx:text-foreground">Gmail</span>
-          <span className="nx:typography-body-small nx:text-muted-foreground">
-            {settings.email.enabled ? `On, ${Object.values(settings.email.tools).filter(Boolean).length} of ${GMAIL_TOOLS.length} tools: updates the tracker` : 'Off'}
-          </span>
-        </button>
-      </nav>
-      {selected === 'gmail' ? (
-        <GmailSettings settings={settings} />
-      ) : (
-        <div className="nx:flex nx:flex-col nx:gap-5 nx:min-w-0" style={{ flex: '999 1 560px' }}>
-          <div className="nx:flex nx:flex-wrap nx:items-center nx:justify-between nx:gap-3">
-            <div className="nx:flex nx:flex-col nx:gap-1">
-              <h2 className="nx:typography-heading-medium nx:m-0">{PORTAL_NAMES[portal]}</h2>
-              <span className="nx:typography-body-small nx:text-muted-foreground">
-                {site?.state === 'signed-in' ? `Signed in. Checked ${when(site.checked)}.` : site?.state === 'signed-out' ? 'Signed out. Sign in from Accounts.' : 'Sign-in not checked yet.'}
-              </span>
-            </div>
-            <Field orientation="horizontal">
-              <Switch id={`use-${portal}`} checked={setting.enabled} onCheckedChange={enabled => save({ ...portals, [portal]: { ...setting, enabled } })} />
-              <FieldLabel htmlFor={`use-${portal}`}>Use {PORTAL_NAMES[portal]}</FieldLabel>
-            </Field>
-          </div>
-          <Card>
-            <CardHeader>
-              <CardTitle>What Claude may do here</CardTitle>
-              <CardDescription>Turn a tool off and the step that needs it is handed to you in Chrome.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="nx:flex nx:flex-col nx:gap-5">
-                {groups.map((group, i) => (
-                  <div key={group} className="nx:flex nx:flex-col nx:gap-3">
-                    {i > 0 && <Separator />}
-                    <span className="nx:typography-label-caps nx:text-muted-foreground">{PORTAL_TOOL_GROUP_NAMES[group]}</span>
-                    {tools
-                      .filter(tool => tool.group === group)
-                      .map(tool => (
-                        <div key={tool.name} className="nx:flex nx:items-center nx:justify-between nx:gap-3">
-                          <div className="nx:flex nx:flex-col nx:gap-1">
-                            <span className="nx:typography-label-default">{tool.label}</span>
-                            <span className="nx:typography-body-small nx:text-muted-foreground">
-                              <code className="nx:typography-code-inline">{tool.name}</code> {tool.detail}
-                            </span>
-                            {tool.asksFirst && (
-                              <div>
-                                <Badge variant="warning" fill="light" isCaps={false} leftIcon={tool.name.includes('referral') ? <ShieldCheckIcon /> : <HandPalmIcon />}>
-                                  {tool.asksFirst}
-                                </Badge>
-                              </div>
-                            )}
-                          </div>
-                          <Switch
-                            aria-label={tool.label}
-                            checked={setting.tools[tool.name] !== false}
-                            disabled={!setting.enabled}
-                            onCheckedChange={on => save({ ...portals, [portal]: { ...setting, tools: { ...setting.tools, [tool.name]: on } } })}
-                          />
-                        </div>
-                      ))}
-                  </div>
-                ))}
-                <Separator />
-                <span className="nx:typography-label-caps nx:text-muted-foreground">Anything else</span>
-                <div className="nx:flex nx:items-center nx:justify-between nx:gap-3">
-                  <div className="nx:flex nx:flex-col nx:gap-1">
-                    <span className="nx:typography-label-default">Free browsing on {PORTAL_NAMES[portal]}</span>
-                    <span className="nx:typography-body-small nx:text-muted-foreground">
-                      Open, read, click and type on pages the tools above don't cover. Off: Claude uses only the tools above.
-                    </span>
-                  </div>
-                  <Switch
-                    aria-label={`Free browsing on ${PORTAL_NAMES[portal]}`}
-                    checked={setting.freeBrowsing}
-                    disabled={!setting.enabled}
-                    onCheckedChange={freeBrowsing => save({ ...portals, [portal]: { ...setting, freeBrowsing } })}
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Playbook</CardTitle>
-              <CardDescription>The short notes Claude gets for {PORTAL_NAMES[portal]}, beyond what the tools do. Part of the app, updated with each release.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ul className="nx:typography-body-small nx:m-0 nx:py-3 nx:pr-3 nx:pl-8 nx:rounded-md nx:bg-muted nx:flex nx:flex-col nx:gap-2">
-                {PLAYBOOKS[portal].map(line => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
+          ))}
         </div>
-      )}
-    </div>
+      </div>
+      <Rows
+        items={[
+          switchRow({
+            id: 'message-resume',
+            label: 'Attach your resume',
+            checked: referral.attachResume,
+            onChange: attachResume => void attempt(() => api.settings.setReferral({ ...referral, template: isTemplateValid(template) ? template : referral.template, attachResume })),
+          }),
+        ]}
+      />
+      <Group title="Preview">
+        <div className="nx:rounded-md nx:bg-muted nx:p-4 nx:typography-body-small nx:whitespace-pre-wrap">{preview || 'Nothing yet.'}</div>
+        <span className="nx:typography-body-small nx:text-muted-foreground">Sent word for word. Only the slots change for each person.</span>
+      </Group>
+    </>
   )
 }
 
-function AccountsTab(): JSX.Element {
+/* ------------------------------------------------------------------ */
+/* Connections                                                         */
+/* ------------------------------------------------------------------ */
+
+const SITE_ICON: Record<SignInSite, JSX.Element> = {
+  google: <EnvelopeIcon size={18} />,
+  linkedin: <LinkedinLogoIcon size={18} />,
+  wellfound: <RocketIcon size={18} />,
+  instahyre: <BriefcaseIcon size={18} />,
+}
+
+function StateMark({ ok }: { ok: boolean }): JSX.Element {
+  return ok ? <CheckCircleIcon size={16} className="nx:text-success-subtle-foreground" /> : <WarningIcon size={16} className="nx:text-warning-subtle-foreground" />
+}
+
+const signInText = (site: SiteState | undefined): string =>
+  site?.state === 'signed-in' ? `Signed in${site.checked ? `, checked ${when(site.checked)}` : ''}` : site?.state === 'signed-out' ? 'Signed out' : 'Not checked yet'
+
+function AccountsSection(): JSX.Element {
   const status = useAppStatus()
   const sites = useData(() => api.settings.sites(), [], ['sites'])
   const info = useData(() => api.chrome.info(), [], [])
   const claude = status?.claude
   const browser = status?.browser
+  const isClaudeReady = claude?.state === 'ok' || claude?.state === 'api-key' || claude?.state === 'other-provider'
 
   return (
-    <div className="nx:flex nx:flex-col nx:gap-6 nx:pt-4">
-      <div className="nx:flex nx:flex-wrap nx:gap-6 nx:items-stretch">
-        <div className="nx:flex nx:min-w-0" style={{ flex: '1 1 360px' }}>
-          <Card className="nx:w-full">
-            <CardHeader>
-              <CardTitle>Claude</CardTitle>
-              <CardDescription>Your own installed Claude Code, signed in with your own Claude account. Runs use your plan. The app never sees your password or token.</CardDescription>
-              <CardAction>
-                <Badge variant={claude?.state === 'ok' ? 'success' : 'warning'} fill="light" isCaps={false} leftIcon={claude?.state === 'ok' ? <CheckCircleIcon /> : <WarningIcon />}>
-                  {claude?.state === 'ok' ? 'Signed in' : claude?.state === 'checking' ? 'Checking' : 'Needs attention'}
-                </Badge>
-              </CardAction>
-            </CardHeader>
-            <CardContent>
-              <DescriptionList>
-                <DescriptionListItem>
-                  <DescriptionListTerm>Status</DescriptionListTerm>
-                  <DescriptionListDescription>{claude?.message}</DescriptionListDescription>
-                </DescriptionListItem>
-                {claude?.account?.subscriptionType && (
-                  <DescriptionListItem>
-                    <DescriptionListTerm>Plan</DescriptionListTerm>
-                    <DescriptionListDescription>{claude.account.subscriptionType}</DescriptionListDescription>
-                  </DescriptionListItem>
-                )}
-                {claude?.path && (
-                  <DescriptionListItem>
-                    <DescriptionListTerm>Claude Code</DescriptionListTerm>
-                    <DescriptionListDescription>
-                      {claude.version ? `${claude.version}, ` : ''}
-                      {claude.path}
-                    </DescriptionListDescription>
-                  </DescriptionListItem>
-                )}
-              </DescriptionList>
-            </CardContent>
-            <CardFooter>
-              <div className="nx:flex nx:flex-col nx:gap-2">
-                <div>
-                  <Button variant="outline" size="sm" startIcon={<ArrowsClockwiseIcon />} onClick={() => void attempt(() => api.checkClaude())}>
-                    Check again
+    <>
+      <Head title="Accounts" tip="Signing in is always yours: the app opens the page in its Chrome and you type. Claude never types a password or a code." />
+      <ListBox label="Accounts">
+        <ListRow
+          media={<TerminalWindowIcon size={18} />}
+          title="Claude Code"
+          detail={claude?.message ?? 'Checking'}
+          actions={
+            <>
+              {claude && claude.state !== 'checking' && <StateMark ok={isClaudeReady} />}
+              {claude && !isClaudeReady && claude.state !== 'checking' && <Tip text="Signed out? Run claude auth login in a terminal, then check again." />}
+              <Button variant="ghost" size="sm" startIcon={<ArrowsClockwiseIcon />} onClick={() => void attempt(() => api.checkClaude())}>
+                Check again
+              </Button>
+            </>
+          }
+        />
+        <ListRow
+          media={<BrowserIcon size={18} />}
+          title="Chrome"
+          detail={
+            browser?.error ??
+            (info.data && !info.data.chromePath
+              ? 'Not found: install Google Chrome'
+              : browser?.mode === 'controlled'
+                ? "The app's own profile, controlled by the app"
+                : browser?.mode === 'signin'
+                  ? 'Open for signing in, with no control link'
+                  : 'Closed')
+          }
+          actions={
+            browser?.mode === 'closed' || !browser ? (
+              <>
+                <Button variant="outline" size="sm" startIcon={<SignInIcon />} onClick={() => void attempt(() => api.chrome.open('signin'))}>
+                  Open to sign in
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => void attempt(() => api.chrome.open('controlled'))}>
+                  Open controlled
+                </Button>
+              </>
+            ) : (
+              <Button variant="ghost" size="sm" startIcon={<XIcon />} onClick={() => void attempt(() => api.chrome.close())}>
+                Close Chrome
+              </Button>
+            )
+          }
+        />
+        {SIGN_IN_SITES.map(name => {
+          const site = sites.data?.find(one => one.site === name)
+          const isOut = site?.state !== 'signed-in'
+          return (
+            <ListRow
+              key={name}
+              media={SITE_ICON[name]}
+              title={name === 'google' ? 'Google, for Gmail' : SITE_NAMES[name]}
+              detail={signInText(site)}
+              actions={
+                <>
+                  {site && site.state !== 'unknown' && <StateMark ok={!isOut} />}
+                  <Button variant={isOut ? 'outline' : 'ghost'} size="sm" startIcon={isOut ? <SignInIcon /> : undefined} onClick={() => void attempt(() => api.chrome.signIn(name))}>
+                    {isOut ? 'Sign in' : 'Open'}
                   </Button>
-                </div>
-                <span className="nx:typography-body-small nx:text-muted-foreground">Signed out? Run claude auth login in a terminal, then check again.</span>
-              </div>
-            </CardFooter>
-          </Card>
-        </div>
-        <div className="nx:flex nx:min-w-0" style={{ flex: '1 1 360px' }}>
-          <Card className="nx:w-full">
-            <CardHeader>
-              <CardTitle>Chrome</CardTitle>
-              <CardDescription>Your installed Google Chrome, with the app's own profile, opened beside the app.</CardDescription>
-              <CardAction>
-                <Badge variant={browser?.mode === 'controlled' ? 'information' : 'secondary'} fill="light" isCaps={false} leftIcon={<BrowserIcon />}>
-                  {browser?.mode === 'controlled' ? 'Controlled' : browser?.mode === 'signin' ? 'Open to sign in' : 'Closed'}
-                </Badge>
-              </CardAction>
-            </CardHeader>
-            <CardContent>
-              <DescriptionList>
-                <DescriptionListItem>
-                  <DescriptionListTerm>Chrome</DescriptionListTerm>
-                  <DescriptionListDescription>{info.data ? info.data.chromePath ?? 'Not found: install Google Chrome in Applications' : ''}</DescriptionListDescription>
-                </DescriptionListItem>
-                <DescriptionListItem>
-                  <DescriptionListTerm>Controlled</DescriptionListTerm>
-                  <DescriptionListDescription>The app drives it through a private pipe. Flows run in this mode.</DescriptionListDescription>
-                </DescriptionListItem>
-                <DescriptionListItem>
-                  <DescriptionListTerm>For signing in</DescriptionListTerm>
-                  <DescriptionListDescription>No control link at all, so Google accepts the sign-in.</DescriptionListDescription>
-                </DescriptionListItem>
-                <DescriptionListItem>
-                  <DescriptionListTerm>Profile</DescriptionListTerm>
-                  <DescriptionListDescription>{info.data?.profileDir}</DescriptionListDescription>
-                </DescriptionListItem>
-              </DescriptionList>
-              {browser?.error && <p className="nx:typography-body-small nx:text-error-subtle-foreground nx:mt-3 nx:mb-0">{browser.error}</p>}
-            </CardContent>
-            <CardFooter>
-              <div className="nx:flex nx:flex-wrap nx:gap-2">
-                {browser?.mode === 'closed' ? (
-                  <>
-                    <Button variant="outline" size="sm" startIcon={<SignInIcon />} onClick={() => void attempt(() => api.chrome.open('signin'))}>
-                      Open to sign in
-                    </Button>
-                    <Button variant="ghost" size="sm" startIcon={<BrowserIcon />} onClick={() => void attempt(() => api.chrome.open('controlled'))}>
-                      Open controlled
-                    </Button>
-                  </>
-                ) : (
-                  <Button variant="ghost" size="sm" startIcon={<XIcon />} onClick={() => void attempt(() => api.chrome.close())}>
-                    Close Chrome
-                  </Button>
-                )}
-              </div>
-            </CardFooter>
-          </Card>
-        </div>
-      </div>
-      <section className="nx:flex nx:flex-col nx:gap-3">
-        <h2 className="nx:typography-heading-small nx:m-0">Sites</h2>
-        <Table aria-label="Site sign-ins" density="compact">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Site</TableHead>
-              <TableHead>Sign-in</TableHead>
-              <TableHead>Last checked</TableHead>
-              <TableHead>
-                <Hidden>Actions</Hidden>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {(sites.data ?? []).map(site => (
-              <TableRow key={site.site}>
-                <TableCell>
-                  <span className="nx:typography-label-default">{SITE_NAMES[site.site as SignInSite] ?? site.site}</span>
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    variant={site.state === 'signed-in' ? 'success' : site.state === 'signed-out' ? 'warning' : 'secondary'}
-                    fill="light"
-                    isCaps={false}
-                    leftIcon={site.state === 'signed-in' ? <CheckCircleIcon /> : site.state === 'signed-out' ? <WarningIcon /> : undefined}
-                  >
-                    {site.state === 'signed-in' ? 'Signed in' : site.state === 'signed-out' ? 'Signed out' : 'Not checked yet'}
-                  </Badge>
-                </TableCell>
-                <TableCell className="nx:tabular-nums">{when(site.checked)}</TableCell>
-                <TableCell className="nx:text-end">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    startIcon={<SignInIcon />}
-                    onClick={() => void attempt(() => api.chrome.signIn(site.site as SignInSite))}
-                  >
-                    Sign in
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        <span className="nx:typography-body-small nx:text-muted-foreground">
-          Signing in is always yours: the app opens the page in Chrome, and you type. Claude never types a password or a code. Sign in to Google only in "Open to sign in" mode.
-        </span>
-      </section>
-      <div>
-        <Button variant="ghost" size="sm" startIcon={<RobotIcon />} onClick={() => go('/settings/portals')}>
-          What Claude may do on each portal
-        </Button>
-      </div>
-    </div>
+                </>
+              }
+            />
+          )
+        })}
+      </ListBox>
+      {info.data && <span className="nx:typography-body-small nx:text-muted-foreground nx:truncate">Chrome profile: {info.data.profileDir}</span>}
+    </>
   )
 }
 
-/** Settings: entered once, used by every flow. */
-export function Settings({ tab, sub }: { tab: string; sub?: string }): JSX.Element {
-  const settings = useData(() => api.settings.get(), [], ['settings'])
-  const current = TABS.some(([value]) => value === tab) ? tab : 'preferences'
+/** The notes Claude gets for a site, folded away. */
+function Playbook({ name, lines }: { name: string; lines: readonly string[] }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger asChild>
+        <Button variant="ghost" size="sm" endIcon={open ? <CaretUpIcon /> : <CaretDownIcon />}>
+          Playbook: {lines.length} notes Claude gets for {name}
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ul className="nx:mt-2 nx:mb-0 nx:py-3 nx:pr-3 nx:pl-8 nx:rounded-md nx:bg-muted nx:typography-body-small nx:flex nx:flex-col nx:gap-2">
+          {lines.map(line => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function PortalSection({ settings, portal }: { settings: SettingsValue; portal: Portal }): JSX.Element {
+  const sites = useData(() => api.settings.sites(), [], ['sites'])
+  const site = sites.data?.find(one => one.site === portal)
+  const name = PORTAL_NAMES[portal]
+  const setting = settings.portals[portal]
+  const save = (next: PortalSetting): void => void attempt(() => api.settings.setPortals({ ...settings.portals, [portal]: next }))
+  const tools = PORTAL_TOOLS[portal]
+  const groups = [...new Set(tools.map(tool => tool.group))]
 
   return (
-    <Page title="Settings" description="Entered once, used by every flow. Claude writes only from what is here.">
-      {settings.error && <ErrorNote text={settings.error} />}
-      {!settings.data ? (
-        <Loading />
-      ) : (
-        <Tabs value={current} onValueChange={value => go(`/settings/${value}`)}>
-          <TabsList variant="underline">
-            {TABS.map(([value, label]) => (
-              <TabsTrigger key={value} value={value}>
-                {label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-          <TabsContent value="preferences">
-            <PreferencesTab settings={settings.data} />
-          </TabsContent>
-          <TabsContent value="profile">
-            <ProfileTab settings={settings.data} />
-          </TabsContent>
-          <TabsContent value="answers">
-            <AnswersTab />
-          </TabsContent>
-          <TabsContent value="resume">
-            <ResumeTab settings={settings.data} />
-          </TabsContent>
-          <TabsContent value="message">
-            <MessageTab settings={settings.data} />
-          </TabsContent>
-          <TabsContent value="portals">
-            <PortalsTab settings={settings.data} initial={sub === 'gmail' ? 'gmail' : 'linkedin'} />
-          </TabsContent>
-          <TabsContent value="accounts">
-            <AccountsTab />
-          </TabsContent>
-        </Tabs>
-      )}
+    <>
+      <Head
+        title={name}
+        meta={<span className="nx:typography-body-small nx:text-muted-foreground">{signInText(site)}</span>}
+        action={
+          site?.state !== 'signed-in' ? (
+            <Button variant="outline" size="sm" startIcon={<SignInIcon />} onClick={() => void attempt(() => api.chrome.signIn(portal))}>
+              Sign in
+            </Button>
+          ) : undefined
+        }
+      />
+      <Rows
+        items={[
+          switchRow({
+            id: `use-${portal}`,
+            label: `Use ${name}`,
+            tip: 'Off: hunts, applies and the referral track skip it',
+            checked: setting.enabled,
+            onChange: enabled => save({ ...setting, enabled }),
+          }),
+        ]}
+      />
+      {groups.map(group => (
+        <Rows
+          key={group}
+          title={PORTAL_TOOL_GROUP_NAMES[group]}
+          items={tools
+            .filter(tool => tool.group === group)
+            .map(tool =>
+              switchRow({
+                id: `tool-${portal}-${tool.name}`,
+                label: tool.label,
+                tip: [tool.detail, tool.asksFirst].filter(Boolean).join('. '),
+                checked: setting.tools[tool.name] !== false,
+                disabled: !setting.enabled,
+                onChange: on => save({ ...setting, tools: { ...setting.tools, [tool.name]: on } }),
+              }),
+            )}
+        />
+      ))}
+      <Rows
+        items={[
+          switchRow({
+            id: `free-${portal}`,
+            label: 'Free browsing',
+            tip: `Open, read, click and type on ${name} pages the tools above don't cover. Off: only the tools above.`,
+            checked: setting.freeBrowsing,
+            disabled: !setting.enabled,
+            onChange: freeBrowsing => save({ ...setting, freeBrowsing }),
+          }),
+        ]}
+      />
+      <Playbook name={name} lines={PLAYBOOKS[portal]} />
+    </>
+  )
+}
+
+function GmailSection({ settings }: { settings: SettingsValue }): JSX.Element {
+  const sites = useData(() => api.settings.sites(), [], ['sites'])
+  const google = sites.data?.find(site => site.site === 'google')
+  const email = settings.email
+  const save = (next: EmailSettings): void => void attempt(() => api.settings.setEmail(next))
+
+  return (
+    <>
+      <Head
+        title="Gmail"
+        meta={<span className="nx:typography-body-small nx:text-muted-foreground">{google ? `Google: ${signInText(google).toLowerCase()}` : ''}</span>}
+        action={
+          google?.state !== 'signed-in' ? (
+            <Button variant="outline" size="sm" startIcon={<SignInIcon />} onClick={() => void attempt(() => api.chrome.signIn('google'))}>
+              Sign in
+            </Button>
+          ) : undefined
+        }
+      />
+      <Rows
+        items={[
+          switchRow({
+            id: 'use-gmail',
+            label: 'Use Gmail',
+            tip: 'For the email check. Reads only: never replies, sends, deletes, archives or labels.',
+            checked: email.enabled,
+            onChange: enabled => save({ ...email, enabled }),
+          }),
+          {
+            label: 'Emails to read',
+            tip: 'Your newest, from every inbox tab except Promotions. Emails an earlier check read are skipped.',
+            control: (
+              <End>
+                <Segments
+                  ariaLabel="Emails to read"
+                  value={String(email.count)}
+                  disabled={!email.enabled}
+                  options={EMAIL_COUNTS.map(count => ({ value: String(count), label: String(count) }))}
+                  onChange={count => save({ ...email, count: Number(count) as EmailCount })}
+                />
+              </End>
+            ),
+          },
+          switchRow({
+            id: 'gmail-on-open',
+            label: 'Check when the app opens',
+            tip: 'At most once a day',
+            checked: email.checkOnOpen,
+            disabled: !email.enabled,
+            onChange: checkOnOpen => save({ ...email, checkOnOpen }),
+          }),
+        ]}
+      />
+      <Rows
+        title="Tools"
+        items={GMAIL_TOOLS.map(tool =>
+          switchRow({
+            id: `tool-gmail-${tool.name}`,
+            label: tool.label,
+            tip: `${tool.detail}. Off: the email check can't run.`,
+            checked: email.tools[tool.name] !== false,
+            disabled: !email.enabled,
+            onChange: on => save({ ...email, tools: { ...email.tools, [tool.name]: on } }),
+          }),
+        )}
+      />
+      <Rows
+        items={[
+          switchRow({
+            id: 'free-gmail',
+            label: 'Free browsing',
+            tip: "Open, read and click Gmail pages the tools above don't cover. Off: only the tools above.",
+            checked: email.freeBrowsing,
+            disabled: !email.enabled,
+            onChange: freeBrowsing => save({ ...email, freeBrowsing }),
+          }),
+        ]}
+      />
+      <Playbook name="Gmail" lines={GMAIL_PLAYBOOK} />
+    </>
+  )
+}
+
+function Section({ active, settings }: { active: Key; settings: SettingsValue }): JSX.Element {
+  switch (active) {
+    case 'profile':
+      return <ProfileSection settings={settings} />
+    case 'resume':
+      return <ResumeSection settings={settings} />
+    case 'answers':
+      return <AnswersSection />
+    case 'message':
+      return <MessageSection settings={settings} />
+    case 'accounts':
+      return <AccountsSection />
+    case 'gmail':
+      return <GmailSection settings={settings} />
+    case 'preferences':
+      return <PreferencesSection settings={settings} />
+    default:
+      return <PortalSection settings={settings} portal={active} />
+  }
+}
+
+/** Settings: a section list on the left, one section on the right. Everything saves as it changes. */
+export function Settings({ tab, sub }: { tab: string; sub?: string }): JSX.Element {
+  const settings = useData(() => api.settings.get(), [], ['settings'])
+  const active = keyOf(tab, sub)
+
+  return (
+    <Page title="Settings" meta="Changes save as you go" layout="bare">
+      <div className="nx:flex nx:items-start nx:gap-10 nx:px-10 nx:py-8">
+        <SettingsNav active={active} />
+        <div className="nx:flex nx:flex-col nx:gap-6 nx:flex-1 nx:min-w-0 nx:max-w-[720px]">
+          {settings.error && <ErrorNote text={settings.error} />}
+          {settings.data ? <Section key={active} active={active} settings={settings.data} /> : <Loading />}
+        </div>
+      </div>
     </Page>
   )
 }

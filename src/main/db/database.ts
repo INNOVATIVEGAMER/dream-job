@@ -212,6 +212,79 @@ const MIGRATIONS: Migration[] = [
       );
     `)
   },
+  db => {
+    // Companies as records of their own: every job, contact, discarded posting
+    // and email belongs to one, by id, with the name kept beside it.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS companies (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        key TEXT NOT NULL UNIQUE,
+        stage TEXT NOT NULL DEFAULT 'scaleup',
+        linkedin_url TEXT,
+        website TEXT,
+        headcount TEXT,
+        notes TEXT NOT NULL DEFAULT '',
+        never_show INTEGER NOT NULL DEFAULT 0,
+        never_why TEXT,
+        never_since TEXT,
+        added TEXT NOT NULL,
+        updated TEXT
+      );
+    `)
+    const tables = ['opportunities', 'contacts', 'discarded', 'email_waiting'] as const
+    for (const table of tables) {
+      addColumns(db, table, { company_id: 'INTEGER' })
+      db.exec(`CREATE INDEX IF NOT EXISTS ${table}_company ON ${table} (company_id)`)
+    }
+
+    // One company per name already recorded: the newest spelling, and the stage of its newest job.
+    type Seed = { name: string; stage: string; added: string }
+    const seeds = new Map<string, Seed>()
+    const plant = (name: string, stage: string, added: string): void => {
+      const key = companyKey(name)
+      if (key && !seeds.has(key)) seeds.set(key, { name: name.trim(), stage, added })
+    }
+    for (const row of db.prepare('SELECT company, stage, found FROM opportunities ORDER BY last_touch DESC, id DESC').all()) {
+      const { company, stage, found } = row as { company: string; stage: string; found: string }
+      plant(company, stage, found)
+    }
+    for (const row of db.prepare('SELECT company, sent AS added FROM contacts ORDER BY sent DESC').all()) {
+      const { company, added } = row as { company: string; added: string }
+      plant(company, 'scaleup', added)
+    }
+    for (const table of ['discarded', 'email_waiting'] as const) {
+      for (const row of db.prepare(`SELECT company, substr(at, 1, 10) AS added FROM ${table} ORDER BY at DESC`).all()) {
+        const { company, added } = row as { company: string; added: string }
+        plant(company, 'scaleup', added)
+      }
+    }
+    for (const row of db.prepare('SELECT company, added FROM never_show').all()) {
+      const { company, added } = row as { company: string; added: string }
+      plant(company, 'scaleup', added)
+    }
+    const insert = db.prepare("INSERT INTO companies (name, key, stage, notes, added) VALUES (?, ?, ?, '', ?)")
+    for (const [key, seed] of seeds) insert.run(seed.name, key, seed.stage || 'scaleup', seed.added || today())
+
+    for (const row of db.prepare('SELECT company_key, why, added FROM never_show').all()) {
+      const { company_key: key, why, added } = row as { company_key: string; why: string; added: string }
+      db.prepare('UPDATE companies SET never_show = 1, never_why = ?, never_since = ? WHERE key = ?').run(why, added, key)
+    }
+
+    const ids = new Map<string, number>()
+    for (const row of db.prepare('SELECT id, key FROM companies').all()) {
+      const { id, key } = row as { id: number; key: string }
+      ids.set(key, Number(id))
+    }
+    for (const table of tables) {
+      const link = db.prepare(`UPDATE ${table} SET company_id = ? WHERE id = ?`)
+      for (const row of db.prepare(`SELECT id, company FROM ${table}`).all()) {
+        const { id, company } = row as { id: number; company: string }
+        const companyId = ids.get(companyKey(company))
+        if (companyId) link.run(companyId, id)
+      }
+    }
+  },
 ]
 
 export const SCHEMA_VERSION = MIGRATIONS.length

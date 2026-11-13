@@ -101,6 +101,8 @@ export type TrackerRow = {
   jobId: string
   link: string | null
   postingState: string | null
+  /** The company it belongs to. */
+  companyId?: number | null
 }
 
 /** Everything about one opportunity, for its own screen. */
@@ -142,6 +144,76 @@ export type TrackerPage = {
   pages: number
   pageSize: number
 }
+
+/* ------------------------------------------------------------------ */
+/* Companies: what every job, contact and email belongs to             */
+/* ------------------------------------------------------------------ */
+
+/** The tracker's views, each a set of job statuses. */
+export const TRACKER_VIEWS = ['found', 'applied', 'interviewing', 'closed', 'all'] as const
+export type TrackerView = (typeof TRACKER_VIEWS)[number]
+
+export const VIEW_STATUSES: Record<TrackerView, readonly Status[] | null> = {
+  found: ['found'],
+  applied: ['applied', 'outreach', 'replied'],
+  interviewing: ['screen', 'onsite', 'offer'],
+  closed: ['rejected', 'dead'],
+  all: null,
+}
+
+export const TRACKER_VIEW_NAMES: Record<TrackerView, string> = {
+  found: 'Found',
+  applied: 'Applied',
+  interviewing: 'Interviewing',
+  closed: 'Closed',
+  all: 'All',
+}
+
+export type Company = {
+  id: number
+  name: string
+  stage: string
+  linkedinUrl: string | null
+  website: string | null
+  headcount: string | null
+  notes: string
+  /** Hunts skip every job here; the company stays in the tracker. */
+  neverShow: boolean
+  neverWhy: string | null
+  neverSince: string | null
+  added: string
+}
+
+/** One company as the tracker lists it, with the jobs the view shows. */
+export type CompanyRow = {
+  id: number
+  name: string
+  stage: string
+  /** The status of its job furthest along; a closed job counts only when all are closed. */
+  status: string
+  bestScore: number | null
+  updated: string
+  /** All its jobs, whatever the view. */
+  jobCount: number
+  referral: Record<ContactState, number>
+  neverShow: boolean
+  jobs: TrackerRow[]
+}
+
+export type CompanyQuery = { view: TrackerView; stage: string; portal: string; search: string }
+
+export type CompanyList = {
+  companies: CompanyRow[]
+  /** Companies in each view. */
+  counts: Record<TrackerView, number>
+  totalCompanies: number
+  totalJobs: number
+}
+
+/** One line of a company's history: from one of its jobs, or its people. */
+export type CompanyEvent = { key: string; at: string; kind: 'job' | 'contact'; text: string; jobId: number | null; runId: number | null }
+
+export type CompanyDetail = { company: Company; jobs: TrackerRow[]; contacts: Contact[]; events: CompanyEvent[] }
 
 /** A row the user adds by hand, such as a recruiter who called. */
 export type NewOpportunity = {
@@ -208,7 +280,25 @@ export type Contact = {
   acceptedAt: string | null
   messagedAt: string | null
   referredAt: string | null
+  thankedAt?: string | null
 }
+
+/** Contacts, company first: the views over people. */
+export const CONTACT_VIEWS = ['ready', 'pending', 'accepted', 'messaged', 'referred', 'all'] as const
+export type ContactView = (typeof CONTACT_VIEWS)[number]
+
+/** One company as Contacts lists it: the job applied for, where its people stand, and the people in the view. */
+export type ContactCompany = {
+  id: number
+  name: string
+  jobId: number | null
+  role: string | null
+  counts: Record<ContactState, number>
+  isReady: boolean
+  people: Contact[]
+}
+
+export type ContactCompanies = { companies: ContactCompany[]; counts: Record<ContactView, number>; people: number; companyCount: number }
 
 export type ContactQuery = { state: string; company: string; search: string; page: number }
 
@@ -604,6 +694,8 @@ export type NeedsYou = {
 
 export type HomeSummary = {
   counts: Record<string, number>
+  /** Companies in the tracker. */
+  companyCount: number
   nextFound: TrackerRow | null
   foundCount: number
   contactCounts: Record<ContactState, number>

@@ -1,205 +1,145 @@
-import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 
-import { ArrowSquareOutIcon, PaperPlaneTiltIcon, UserPlusIcon } from '@phosphor-icons/react'
+import { ArrowRightIcon, ArrowSquareOutIcon, CheckIcon, DotsThreeIcon, PaperPlaneTiltIcon } from '@phosphor-icons/react'
 
 import { STATUSES } from '../../../shared/types'
 import { api } from '../lib/api'
+import { useAutosave } from '../lib/autosave'
 import { useData } from '../lib/data'
-import { capitalize, day, portalName, when } from '../lib/format'
+import { capitalize, day, portalName } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
-import { attempt, Columns, ErrorNote, Loading, Page, StatusBadge } from '../ui/common'
-import {
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-  DescriptionList,
-  DescriptionListDescription,
-  DescriptionListItem,
-  DescriptionListTerm,
-  Field,
-  FieldDescription,
-  FieldLabel,
-  NativeSelect,
-  NativeSelectOption,
-  Textarea,
-} from '../ui/nx'
+import { attempt, DetailLayout, ErrorNote, Group, Loading, Numbers, Page, Props } from '../ui/common'
+import { Choice } from '../ui/fields'
+import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Separator, Textarea } from '../ui/nx'
+import { Timeline } from './Company'
 
-function Fact({ term, value }: { term: string; value: string | null | undefined }): JSX.Element | null {
-  if (!value) return null
-  return (
-    <DescriptionListItem>
-      <DescriptionListTerm>{term}</DescriptionListTerm>
-      <DescriptionListDescription>{value}</DescriptionListDescription>
-    </DescriptionListItem>
-  )
-}
+const STATUS_OPTIONS = STATUSES.map(status => ({ value: status, label: capitalize(status) }))
 
-/** One opportunity: the posting, why it scored, notes, status, referral path and history. */
+/** One job: the role and why it fits, what was sent, notes and history, with its status and company beside them. */
 export function Opportunity({ id }: { id: number }): JSX.Element {
   const status = useAppStatus()
   const detail = useData(() => api.tracker.get(id), [id], ['opportunities', 'contacts'])
-  const [notes, setNotes] = useState('')
   const row = detail.data?.opportunity
+  const [notes, setNotes] = useAutosave(row?.notes, value => api.tracker.setNotes(id, value))
   const isBusy = status?.run?.status === 'running' || status?.run?.status === 'waiting'
 
-  useEffect(() => {
-    if (row) setNotes(row.notes)
-  }, [row?.id, row?.notes])
+  const crumbs = [{ label: 'Tracker', to: '/tracker' }]
+  if (detail.error) return <Page title="Job" crumbs={crumbs}><ErrorNote text={detail.error} /></Page>
+  if (!detail.data || !row) {
+    return (
+      <Page title="Job" crumbs={crumbs}>
+        {detail.isLoading ? <Loading /> : <ErrorNote text="This job is no longer in the tracker." />}
+      </Page>
+    )
+  }
 
-  if (detail.error) return <Page title="Opportunity"><ErrorNote text={detail.error} /></Page>
-  if (!detail.data) return <Page title="Opportunity"><Loading /></Page>
-  if (!row) return <Page title="Opportunity" back={{ label: 'Tracker', to: '/tracker' }}><ErrorNote text="This row is no longer in the tracker." /></Page>
-
+  const company = detail.data.company
   const contacts = detail.data.contacts
+  const companyTo = company ? `/company/${company.id}` : null
+  const accepted = contacts.filter(contact => contact.state === 'accepted').length
+  const pending = contacts.filter(contact => contact.state === 'pending').length
   const apply = async (): Promise<void> => {
     if (await attempt(() => api.flows.apply([row.id]))) go('/run')
   }
 
   return (
     <Page
-      back={{ label: 'Tracker', to: '/tracker' }}
-      meta={`${portalName(row.portal) || 'Added by you'}, found ${day(row.found)}`}
-      title={row.company}
-      badge={<StatusBadge status={row.status} />}
-      description={row.role}
+      title={row.role}
+      crumbs={company ? [...crumbs, { label: company.name, to: companyTo! }] : crumbs}
+      layout="bare"
       actions={
         <>
           {row.link && (
-            <Button variant="outline" startIcon={<ArrowSquareOutIcon />} onClick={() => void attempt(() => api.chrome.openUrl(row.link!))}>
-              Open posting
+            <Button variant="ghost" size="sm" endIcon={<ArrowSquareOutIcon />} onClick={() => void attempt(() => api.chrome.openUrl(row.link!))}>
+              Posting
             </Button>
           )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="More for this job">
+                <DotsThreeIcon />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {companyTo && <DropdownMenuItem onSelect={() => go(companyTo)}>Open company</DropdownMenuItem>}
+              <DropdownMenuItem onSelect={() => go(`/contacts/connect/${encodeURIComponent(row.company)}`)}>Send connection requests</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {row.status === 'found' && (
-            <Button startIcon={<PaperPlaneTiltIcon />} disabled={isBusy} onClick={() => void apply()}>
+            <Button size="sm" startIcon={<PaperPlaneTiltIcon />} disabled={isBusy} onClick={() => void apply()}>
               Apply
             </Button>
           )}
         </>
       }
     >
-      <Columns
+      <DetailLayout
         main={
           <>
-            <Card>
-              <CardHeader>
-                <CardTitle>Posting</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <DescriptionList>
-                  <Fact term="Stage" value={capitalize(row.stage)} />
-                  <Fact term="Work mode" value={row.mode} />
-                  <Fact term="Experience asked" value={row.experience} />
-                  <Fact term="Pay" value={row.pay ?? 'Not shown'} />
-                  <Fact term="Applicants" value={row.applicants} />
-                  <Fact term="Posting" value={row.postingState ? `${capitalize(row.postingState)}${row.postingChecked ? `, checked ${when(row.postingChecked)}` : ''}` : null} />
-                  <Fact term="Apply route" value={row.applyRoute} />
-                </DescriptionList>
-              </CardContent>
-            </Card>
+            <div className="nx:flex nx:flex-col nx:gap-2">
+              <h1 className="nx:typography-heading-large nx:m-0">{row.role}</h1>
+              <Numbers
+                items={[
+                  companyTo ? (
+                    <button key="company" type="button" className="nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:typography-label-default nx:text-foreground" onClick={() => go(companyTo)}>
+                      {row.company}
+                    </button>
+                  ) : (
+                    row.company
+                  ),
+                  ...[row.mode, row.applicants, row.experience, row.pay ?? 'Pay not shown'].filter(Boolean),
+                ]}
+              />
+            </div>
             {row.scoreReasons.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Why it scored {row.score}</CardTitle>
-                  <CardDescription>Scored by the hunt against your preferences.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ul className="nx:typography-body-default nx:m-0 nx:pl-5 nx:flex nx:flex-col nx:gap-2">
-                    {row.scoreReasons.map(reason => (
-                      <li key={reason}>{reason}</li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
-            )}
-            <Card>
-              <CardHeader>
-                <CardTitle>Notes</CardTitle>
-                <CardDescription>Your own notes, and what each run recorded, such as what an application sent.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Textarea aria-label="Notes" rows={8} value={notes} onChange={event => setNotes(event.target.value)} />
-              </CardContent>
-              <CardFooter>
-                <Button variant="secondary" size="sm" disabled={notes === row.notes} onClick={() => void attempt(() => api.tracker.setNotes(row.id, notes), 'Notes saved')}>
-                  Save notes
-                </Button>
-              </CardFooter>
-            </Card>
-          </>
-        }
-        side={
-          <>
-            <Card>
-              <CardHeader>
-                <CardTitle>Status</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Field>
-                  <FieldLabel htmlFor="opp-status">Status</FieldLabel>
-                  <NativeSelect id="opp-status" value={row.status} onChange={event => void attempt(() => api.tracker.setStatus(row.id, event.target.value), 'Status saved')}>
-                    {STATUSES.map(one => (
-                      <NativeSelectOption key={one} value={one}>
-                        {capitalize(one)}
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                  <FieldDescription>Rejected closes the row. No follow-up is sent, and the company stays eligible.</FieldDescription>
-                </Field>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>Referral path</CardTitle>
-                <CardDescription>
-                  {contacts.length === 0
-                    ? `No contacts at ${row.company} yet. Connection requests are the next step.`
-                    : `${contacts.length} ${contacts.length === 1 ? 'person' : 'people'} at ${row.company}.`}
-                </CardDescription>
-              </CardHeader>
-              {contacts.length > 0 && (
-                <CardContent>
-                  <ul className="nx:typography-body-small nx:m-0 nx:p-0 nx:list-none nx:flex nx:flex-col nx:gap-2">
-                    {contacts.slice(0, 8).map(contact => (
-                      <li key={contact.id} className="nx:flex nx:justify-between nx:gap-2">
-                        <span>
-                          {contact.name}, {contact.role}
-                        </span>
-                        <span className="nx:text-muted-foreground">{capitalize(contact.state)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              )}
-              {row.status !== 'found' && (
-                <CardFooter>
-                  <Button variant="outline" size="sm" startIcon={<UserPlusIcon />} disabled={isBusy} onClick={() => go('/contacts/connect')}>
-                    {contacts.length ? 'Send more requests' : 'Send connection requests'}
-                  </Button>
-                </CardFooter>
-              )}
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>History</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ol className="nx:m-0 nx:p-0 nx:list-none nx:flex nx:flex-col nx:gap-3">
-                  {detail.data.events.map(event => (
-                    <li key={event.id} className="nx:flex nx:flex-col nx:gap-1">
-                      <span className="nx:typography-body-small">{event.text}</span>
-                      <span className="nx:typography-body-small nx:text-muted-foreground">{when(event.at)}</span>
+              <Group title={`Why it scored ${row.score ?? ''}`}>
+                <ul className="nx:m-0 nx:p-0 nx:list-none nx:flex nx:flex-col">
+                  {row.scoreReasons.map(reason => (
+                    <li key={reason} className="nx:flex nx:items-center nx:gap-2 nx:min-h-7 nx:typography-body-small">
+                      <CheckIcon size={14} className="nx:text-success-subtle-foreground" />
+                      {reason}
                     </li>
                   ))}
-                  {detail.data.events.length === 0 && <span className="nx:typography-body-small nx:text-muted-foreground">Kept from before the app.</span>}
-                </ol>
-              </CardContent>
-            </Card>
+                </ul>
+              </Group>
+            )}
+            <Group title="Notes">
+              <Textarea aria-label="Notes" rows={Math.min(14, Math.max(3, notes.split('\n').length + 1))} placeholder="Add a note" value={notes} onChange={event => setNotes(event.target.value)} />
+            </Group>
+            <Group title="Activity">
+              <Timeline events={detail.data.events.map(event => ({ key: String(event.id), at: event.at, text: event.text }))} />
+            </Group>
+          </>
+        }
+        panel={
+          <>
+            <Props
+              items={[
+                ['Status', <Choice key="status" value={row.status} options={STATUS_OPTIONS} size="sm" variant="borderless" ariaLabel="Status" onChange={next => void attempt(() => api.tracker.setStatus(row.id, next))} />],
+                ['Score', row.score ?? '–'],
+                ['Portal', portalName(row.portal) || row.portal],
+                ['Apply via', row.applyRoute ?? '–'],
+                ['Pay', row.pay ?? 'Not shown'],
+                ['Found', day(row.found)],
+              ]}
+            />
+            {company && (
+              <>
+                <Separator />
+                <Group title="Company">
+                  <button type="button" className="nx:flex nx:items-center nx:gap-2 nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:text-left" onClick={() => go(companyTo!)}>
+                    <span className="nx:typography-label-default nx:text-foreground">{company.name}</span>
+                    <span className="nx:typography-body-small nx:text-muted-foreground">{capitalize(company.stage)}</span>
+                    <ArrowRightIcon size={12} />
+                  </button>
+                  <span className="nx:typography-body-small nx:text-muted-foreground">
+                    {detail.data.companyJobs} {detail.data.companyJobs === 1 ? 'job' : 'jobs'}
+                    {contacts.length ? ` · ${accepted} accepted, ${pending} pending` : ' · no contacts yet'}
+                  </span>
+                </Group>
+              </>
+            )}
           </>
         }
       />

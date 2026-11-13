@@ -1,92 +1,142 @@
-import { useState } from 'react'
+import { Fragment } from 'react'
 import type { JSX, ReactNode } from 'react'
 
-import { CaretLeftIcon, CheckCircleIcon, CircleIcon, WarningIcon, XIcon } from '@phosphor-icons/react'
+import { InfoIcon, WarningIcon } from '@phosphor-icons/react'
 
-import type { RunEvent, RunStatus } from '../../../shared/types'
+import type { RunStatus } from '../../../shared/types'
 import { messageOf } from '../lib/api'
 import { go } from '../lib/router'
-import { time } from '../lib/format'
 import {
   Alert,
   AlertContent,
   AlertDescription,
   AlertIcon,
   Badge,
-  Button,
-  Input,
-  PageHeader,
-  PageHeaderActions,
-  PageHeaderContent,
-  PageHeaderDescription,
-  PageHeaderMeta,
-  PageHeaderTitle,
-  PageHeaderTitleRow,
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+  SidebarTrigger,
   Spinner,
   toast,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from './nx'
 
-/** One screen's frame: an optional way back, the page header, then the content. */
-export function Page(props: {
-  title: ReactNode
-  meta?: ReactNode
-  description?: ReactNode
-  badge?: ReactNode
-  actions?: ReactNode
-  back?: { label: string; to: string }
-  narrow?: boolean
-  children: ReactNode
-}): JSX.Element {
+export type Crumb = { label: string; to: string }
+
+/** The slim bar every screen starts with: the sidebar toggle, where you are, and the screen's actions. */
+export function TopBar({ left, right }: { left: ReactNode; right?: ReactNode }): JSX.Element {
   return (
-    <main
-      className={`nx:box-border nx:w-full nx:mx-auto nx:px-6 nx:py-6 nx:flex nx:flex-col nx:gap-6 ${props.narrow ? 'nx:max-w-[820px]' : 'nx:max-w-[1120px]'}`}
-    >
-      {props.back && (
-        <div>
-          <Button variant="ghost" size="sm" startIcon={<CaretLeftIcon />} onClick={() => go(props.back!.to)}>
-            {props.back.label}
-          </Button>
-        </div>
-      )}
-      <PageHeader>
-        <PageHeaderContent>
-          {props.meta && <PageHeaderMeta>{props.meta}</PageHeaderMeta>}
-          {props.badge ? (
-            <PageHeaderTitleRow>
-              <PageHeaderTitle className="nx:typography-heading-large">{props.title}</PageHeaderTitle>
-              {props.badge}
-            </PageHeaderTitleRow>
-          ) : (
-            <PageHeaderTitle className="nx:typography-heading-large">{props.title}</PageHeaderTitle>
-          )}
-          {props.description && <PageHeaderDescription>{props.description}</PageHeaderDescription>}
-        </PageHeaderContent>
-        {props.actions && <PageHeaderActions>{props.actions}</PageHeaderActions>}
-      </PageHeader>
-      {props.children}
-    </main>
+    <header className="nx:flex nx:items-center nx:gap-2 nx:min-h-12 nx:box-border nx:px-4 nx:py-2 nx:border-b-default nx:border-border-default">
+      <SidebarTrigger aria-label="Show or hide the sidebar" />
+      <div className="nx:flex nx:flex-1 nx:min-w-0 nx:items-center nx:gap-2">{left}</div>
+      {right && <div className="nx:flex nx:items-center nx:gap-2">{right}</div>}
+    </header>
   )
 }
 
-/** Two columns that stack on a narrow window: the main column, then a side column. */
-export function Columns({ main, side }: { main: ReactNode; side: ReactNode }): JSX.Element {
+/** Where a screen sits, as a trail of links ending in the screen itself. */
+export function Trail({ crumbs, current }: { crumbs: Crumb[]; current: ReactNode }): JSX.Element {
   return (
-    <div className="nx:flex nx:flex-wrap nx:gap-6 nx:items-start">
-      <div className="nx:flex nx:flex-col nx:gap-6 nx:min-w-0" style={{ flex: '999 1 560px' }}>
-        {main}
+    <Breadcrumb>
+      <BreadcrumbList>
+        {crumbs.map(crumb => (
+          <Fragment key={crumb.to}>
+            <BreadcrumbItem>
+              <BreadcrumbLink
+                href={`#${crumb.to}`}
+                onClick={event => {
+                  event.preventDefault()
+                  go(crumb.to)
+                }}
+              >
+                <span>{crumb.label}</span>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+          </Fragment>
+        ))}
+        <BreadcrumbItem>
+          <BreadcrumbPage>
+            <span>{current}</span>
+          </BreadcrumbPage>
+        </BreadcrumbItem>
+      </BreadcrumbList>
+    </Breadcrumb>
+  )
+}
+
+/**
+ * One screen: its top bar, then the content. A title and at most a short
+ * meta line, never a description. `layout` is `page` for padded content,
+ * `list` for a list that runs edge to edge, `bare` for a screen that lays
+ * itself out (a detail page, a run).
+ */
+export function Page(props: {
+  title: ReactNode
+  meta?: ReactNode
+  badge?: ReactNode
+  actions?: ReactNode
+  crumbs?: Crumb[]
+  /** Older screens name the screen they came from; shown as a one-step trail. */
+  back?: Crumb
+  narrow?: boolean
+  layout?: 'page' | 'list' | 'bare'
+  children: ReactNode
+}): JSX.Element {
+  const crumbs = props.crumbs ?? (props.back ? [props.back] : [])
+  const left = crumbs.length ? (
+    <>
+      <Trail crumbs={crumbs} current={props.title} />
+      {props.badge}
+      {props.meta && <span className="nx:typography-body-small nx:text-muted-foreground nx:truncate">{props.meta}</span>}
+    </>
+  ) : (
+    <>
+      {props.badge}
+      <span className="nx:typography-label-default nx:truncate">{props.title}</span>
+      {props.meta && <span className="nx:typography-body-small nx:text-muted-foreground nx:truncate">{props.meta}</span>}
+    </>
+  )
+  const layout = props.layout ?? 'page'
+  return (
+    <>
+      <TopBar left={left} right={props.actions} />
+      {layout === 'page' ? (
+        <main className="nx:box-border nx:w-full nx:px-10 nx:py-8">
+          <div className={`nx:mx-auto nx:flex nx:flex-col nx:gap-8 ${props.narrow ? 'nx:max-w-[760px]' : 'nx:max-w-[1120px]'}`}>{props.children}</div>
+        </main>
+      ) : (
+        <main className="nx:box-border nx:w-full nx:flex nx:flex-col nx:flex-1 nx:min-h-0">{props.children}</main>
+      )}
+    </>
+  )
+}
+
+/** A detail screen: the main column, and a properties panel on the right. */
+export function DetailLayout({ main, panel }: { main: ReactNode; panel: ReactNode }): JSX.Element {
+  return (
+    <div className="nx:flex nx:flex-1 nx:items-stretch nx:min-h-0">
+      <div className="nx:flex-1 nx:min-w-0 nx:px-10 nx:py-8">
+        <div className="nx:max-w-[720px] nx:flex nx:flex-col nx:gap-8">{main}</div>
       </div>
-      <div className="nx:flex nx:flex-col nx:gap-6 nx:min-w-0" style={{ flex: '1 1 300px' }}>
-        {side}
-      </div>
+      <aside aria-label="Properties" className="nx:w-[300px] nx:shrink-0 nx:box-border nx:px-5 nx:py-6 nx:border-l-default nx:border-border-default nx:flex nx:flex-col nx:gap-6">
+        {panel}
+      </aside>
     </div>
   )
 }
 
-export function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }): JSX.Element {
+/** A quiet section: a small caps label, an optional action on the right, then its content. */
+export function Group({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }): JSX.Element {
   return (
-    <section className="nx:flex nx:flex-col nx:gap-3">
-      <div className="nx:flex nx:items-center nx:justify-between nx:gap-2">
-        <h2 className="nx:typography-heading-small nx:m-0">{title}</h2>
+    <section className="nx:flex nx:flex-col nx:gap-2">
+      <div className="nx:flex nx:items-center nx:justify-between nx:gap-2 nx:min-h-8">
+        <span className="nx:typography-label-caps nx:text-muted-foreground">{title}</span>
         {action}
       </div>
       {children}
@@ -94,65 +144,45 @@ export function Section({ title, action, children }: { title: string; action?: R
   )
 }
 
-export function StatTile({ value, label, onClick }: { value: ReactNode; label: string; onClick?: () => void }): JSX.Element {
-  const body = (
-    <>
-      <span className="nx:typography-heading-medium">{value}</span>
-      <span className="nx:typography-body-small nx:text-muted-foreground">{label}</span>
-    </>
-  )
-  const className =
-    'nx:flex nx:flex-col nx:gap-1 nx:p-3 nx:text-left nx:rounded-md nx:border-default nx:border-border-default nx:bg-container nx:text-container-foreground'
-  return onClick ? (
-    <button type="button" className={`${className} nx:cursor-pointer`} onClick={onClick}>
-      {body}
-    </button>
-  ) : (
-    <div className={className}>{body}</div>
-  )
-}
-
-export function Tiles({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="nx:grid nx:gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>{children}</div>
-}
-
-const EVENT_COLOR: Record<RunEvent['kind'], string> = {
-  step: '',
-  claude: 'nx:text-muted-foreground',
-  tool: '',
-  good: 'nx:text-success-subtle-foreground',
-  warn: 'nx:text-warning-subtle-foreground',
-  error: 'nx:text-error-subtle-foreground',
-}
-
-/** A run's activity, oldest first, newest at the bottom. */
-export function Activity({ events, limit = 40 }: { events: RunEvent[]; limit?: number }): JSX.Element {
-  const shown = events.slice(-limit)
-  if (shown.length === 0) return <p className="nx:typography-body-small nx:text-muted-foreground nx:m-0">Nothing yet.</p>
+/** Properties as label and value, one per line. */
+export function Props({ items }: { items: [string, ReactNode][] }): JSX.Element {
   return (
-    <ol className="nx:typography-body-small nx:m-0 nx:p-0 nx:list-none nx:flex nx:flex-col nx:gap-2">
-      {shown.map(event => (
-        <li key={event.id} className="nx:flex nx:gap-2">
-          <span className="nx:text-muted-foreground nx:tabular-nums nx:shrink-0">{time(event.at)}</span>
-          <span className={EVENT_COLOR[event.kind]}>{event.text}</span>
-        </li>
+    <div className="nx:flex nx:flex-col nx:gap-1">
+      {items.map(([label, value]) => (
+        <div key={label} className="nx:grid nx:items-center nx:gap-2 nx:min-h-8" style={{ gridTemplateColumns: '96px minmax(0, 1fr)' }}>
+          <span className="nx:typography-body-small nx:text-muted-foreground">{label}</span>
+          <div className="nx:min-w-0 nx:typography-body-small">{value}</div>
+        </div>
       ))}
-    </ol>
+    </div>
   )
 }
 
-export type Check = { state: 'ok' | 'warn' | 'todo'; text: ReactNode }
-
-export function CheckList({ items }: { items: Check[] }): JSX.Element {
+/** An (i) that explains a choice in a tooltip, in place of a sentence on the screen. */
+export function Tip({ text }: { text: string }): JSX.Element {
   return (
-    <ul className="nx:typography-body-small nx:m-0 nx:p-0 nx:list-none nx:flex nx:flex-col nx:gap-2">
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} aria-label={text} className="nx:inline-flex nx:text-muted-foreground nx:cursor-help">
+          <InfoIcon size={14} />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{text}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** Small numbers in a line: "8 added · 30 discarded". */
+export function Numbers({ items }: { items: ReactNode[] }): JSX.Element {
+  return (
+    <div className="nx:flex nx:flex-wrap nx:items-center nx:gap-2 nx:typography-body-small nx:text-muted-foreground">
       {items.map((item, i) => (
-        <li key={i} className="nx:flex nx:gap-2 nx:items-center">
-          {item.state === 'ok' ? <CheckCircleIcon size={16} /> : item.state === 'warn' ? <WarningIcon size={16} /> : <CircleIcon size={16} />}
-          <span>{item.text}</span>
-        </li>
+        <Fragment key={i}>
+          {i > 0 && <span>·</span>}
+          <span>{item}</span>
+        </Fragment>
       ))}
-    </ul>
+    </div>
   )
 }
 
@@ -194,60 +224,6 @@ export function RunStatusBadge({ status }: { status: RunStatus }): JSX.Element {
   )
 }
 
-/** Values shown as removable chips. */
-export function Chips({ values, onRemove }: { values: string[]; onRemove?: (value: string) => void }): JSX.Element | null {
-  if (values.length === 0) return null
-  return (
-    <div className="nx:flex nx:flex-wrap nx:gap-2">
-      {values.map(value => (
-        <Badge
-          key={value}
-          variant="secondary"
-          fill="outline"
-          isCaps={false}
-          rightIcon={
-            onRemove ? (
-              <button type="button" aria-label={`Remove ${value}`} className="nx:inline-flex nx:cursor-pointer nx:bg-transparent nx:border-0 nx:p-0" onClick={() => onRemove(value)}>
-                <XIcon size={12} />
-              </button>
-            ) : undefined
-          }
-        >
-          {value}
-        </Badge>
-      ))}
-    </div>
-  )
-}
-
-/** A list edited as chips: type and press Enter to add. */
-export function ChipsInput(props: { id?: string; values: string[]; onChange: (values: string[]) => void; placeholder: string }): JSX.Element {
-  const [draft, setDraft] = useState('')
-  const add = (): void => {
-    const value = draft.trim()
-    if (value && !props.values.some(one => one.toLowerCase() === value.toLowerCase())) props.onChange([...props.values, value])
-    setDraft('')
-  }
-  return (
-    <div className="nx:flex nx:flex-col nx:gap-2">
-      <Chips values={props.values} onRemove={value => props.onChange(props.values.filter(one => one !== value))} />
-      <Input
-        id={props.id}
-        value={draft}
-        placeholder={props.placeholder}
-        onChange={event => setDraft(event.target.value)}
-        onKeyDown={event => {
-          if (event.key === 'Enter' || event.key === ',') {
-            event.preventDefault()
-            add()
-          }
-        }}
-        onBlur={add}
-      />
-    </div>
-  )
-}
-
 export function Loading({ label = 'Loading...' }: { label?: string }): JSX.Element {
   return (
     <div className="nx:flex nx:items-center nx:gap-2 nx:text-muted-foreground nx:typography-body-small">
@@ -267,10 +243,6 @@ export function ErrorNote({ text }: { text: string }): JSX.Element {
       </AlertContent>
     </Alert>
   )
-}
-
-export function Muted({ children }: { children: ReactNode }): JSX.Element {
-  return <span className="nx:typography-body-small nx:text-muted-foreground">{children}</span>
 }
 
 /** Runs an action, toasting its failure in plain words, and its success when one is given. */

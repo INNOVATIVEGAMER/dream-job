@@ -1,153 +1,185 @@
 import { useState } from 'react'
-import type { JSX } from 'react'
+import type { JSX, ReactNode } from 'react'
 
-import { ArrowRightIcon, CaretLeftIcon, CaretRightIcon } from '@phosphor-icons/react'
+import {
+  CaretLeftIcon,
+  CaretRightIcon,
+  ChatCircleIcon,
+  CheckCircleIcon,
+  DotOutlineIcon,
+  EnvelopeIcon,
+  MagnifyingGlassIcon,
+  PaperPlaneTiltIcon,
+  UserPlusIcon,
+  WarningIcon,
+  XCircleIcon,
+} from '@phosphor-icons/react'
 
-import { FLOW_NAMES, FLOWS, PORTAL_NAMES, PORTALS } from '../../../shared/types'
-import type { RunQuery } from '../../../shared/types'
+import { FLOW_NAMES, FLOWS } from '../../../shared/types'
+import type { RunEvent, RunQuery } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
-import { duration, portalName, tokens, when } from '../lib/format'
+import { duration, tokens, when } from '../lib/format'
 import { go } from '../lib/router'
-import { Activity, ErrorNote, Loading, Page, RunStatusBadge } from '../ui/common'
-import {
-  Button,
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  NativeSelect,
-  NativeSelectOption,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../ui/nx'
+import { ErrorNote, Group, Hidden, Loading, Numbers, Page, RunStatusBadge } from '../ui/common'
+import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs, TabsList, TabsTrigger } from '../ui/nx'
 
-function RunDetailCard({ id }: { id: number }): JSX.Element {
+const FLOW_ICON: Record<string, ReactNode> = {
+  hunt: <MagnifyingGlassIcon size={14} />,
+  apply: <PaperPlaneTiltIcon size={14} />,
+  connect: <UserPlusIcon size={14} />,
+  referral: <ChatCircleIcon size={14} />,
+  email: <EnvelopeIcon size={14} />,
+}
+
+const STEP: Record<RunEvent['kind'], ReactNode> = {
+  good: <CheckCircleIcon size={14} className="nx:text-success-subtle-foreground" />,
+  warn: <WarningIcon size={14} className="nx:text-warning-subtle-foreground" />,
+  error: <XCircleIcon size={14} className="nx:text-error-subtle-foreground" />,
+  step: <DotOutlineIcon size={14} className="nx:text-muted-foreground" />,
+  tool: <DotOutlineIcon size={14} className="nx:text-muted-foreground" />,
+  claude: <DotOutlineIcon size={14} className="nx:text-muted-foreground" />,
+}
+
+/** One past run: what it did and what it came to. */
+function RunPage({ id }: { id: number }): JSX.Element {
   const detail = useData(() => api.runs.get(id), [id], ['runs'])
-  if (detail.error) return <ErrorNote text={detail.error} />
-  if (!detail.data) return <Loading />
+  const crumbs = [{ label: 'Run history', to: '/runs' }]
+  if (detail.error) return <Page title={`Run ${id}`} crumbs={crumbs}><ErrorNote text={detail.error} /></Page>
+  if (!detail.data) return <Page title={`Run ${id}`} crumbs={crumbs}><Loading /></Page>
   const { summary, events } = detail.data
+  const steps = events.filter(event => event.kind !== 'claude' && event.kind !== 'tool')
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          Run {summary.id}: {summary.title}
-        </CardTitle>
-        <CardDescription>{summary.result ?? 'The full activity of the run.'}</CardDescription>
-        {summary.opportunityId && (
-          <CardAction>
-            <Button variant="ghost" size="sm" endIcon={<ArrowRightIcon />} onClick={() => go(`/opportunity/${summary.opportunityId}`)}>
-              Open the row
+    <Page
+      title={summary.title}
+      crumbs={crumbs}
+      badge={<RunStatusBadge status={summary.status} />}
+      meta={`Run ${summary.id}`}
+      narrow
+      actions={
+        <>
+          {summary.flow === 'email' && (
+            <Button size="sm" onClick={() => go(`/email/${summary.id}`)}>
+              See what changed
             </Button>
-          </CardAction>
+          )}
+          {summary.opportunityId && (
+            <Button variant="outline" size="sm" onClick={() => go(`/opportunity/${summary.opportunityId}`)}>
+              Open job
+            </Button>
+          )}
+        </>
+      }
+    >
+      {summary.result && <span className="nx:typography-body-default">{summary.result}</span>}
+      <Numbers
+        items={[
+          when(summary.started),
+          ...(summary.usage.ms ? [duration(summary.usage.ms)] : []),
+          `${summary.usage.turns} turns`,
+          ...(summary.usage.inputTokens ? [`${tokens(summary.usage.inputTokens)} tokens`] : []),
+        ]}
+      />
+      <Group title="Steps">
+        {(steps.length ? steps : events).length === 0 ? (
+          <span className="nx:typography-body-small nx:text-muted-foreground">Nothing was recorded.</span>
+        ) : (
+          <ol className="nx:m-0 nx:p-0 nx:list-none nx:flex nx:flex-col">
+            {(steps.length ? steps : events).map(event => (
+              <li key={event.id} className="nx:flex nx:items-center nx:gap-2 nx:min-h-7">
+                <span className="nx:inline-flex nx:shrink-0">{STEP[event.kind]}</span>
+                <span className="nx:typography-body-small nx:flex-1 nx:min-w-0">{event.text}</span>
+                <span className="nx:typography-body-small nx:text-muted-foreground nx:tabular-nums">{new Date(event.at).toTimeString().slice(0, 5)}</span>
+              </li>
+            ))}
+          </ol>
         )}
-      </CardHeader>
-      <CardContent>
-        <Activity events={events} limit={500} />
-      </CardContent>
-    </Card>
+      </Group>
+    </Page>
   )
 }
 
-/** Every flow run: what it did, how long it took, and the Claude usage it took. */
+/** Every run: what it was, what it came to, how long it took. */
 export function Runs({ selected }: { selected: number | null }): JSX.Element {
   const [query, setQuery] = useState<RunQuery>({ flow: 'all', portal: 'all', page: 0 })
   const page = useData(() => api.runs.page(query), [JSON.stringify(query)], ['runs'])
+
+  if (selected) return <RunPage id={selected} />
   const data = page.data
-  const shown = selected ?? data?.rows[0]?.id ?? null
 
   return (
-    <Page title="Run history" description="Every flow run, with what it did, how long it took and the Claude usage it took.">
-      <div className="nx:flex nx:flex-wrap nx:gap-2 nx:items-center">
-        <NativeSelect aria-label="Flow" value={query.flow} onChange={event => setQuery(current => ({ ...current, flow: event.target.value, page: 0 }))}>
-          <NativeSelectOption value="all">All flows</NativeSelectOption>
-          {FLOWS.map(flow => (
-            <NativeSelectOption key={flow} value={flow}>
-              {FLOW_NAMES[flow]}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-        <NativeSelect aria-label="Portal" value={query.portal} onChange={event => setQuery(current => ({ ...current, portal: event.target.value, page: 0 }))}>
-          <NativeSelectOption value="all">All portals</NativeSelectOption>
-          {PORTALS.map(portal => (
-            <NativeSelectOption key={portal} value={portal}>
-              {PORTAL_NAMES[portal]}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
+    <Page title="Run history" meta={data ? `${data.total} runs` : undefined} layout="list">
+      <div className="nx:flex nx:items-center nx:px-4 nx:py-2 nx:border-b-default nx:border-border-default">
+        <Tabs value={query.flow} onValueChange={flow => setQuery({ flow, portal: 'all', page: 0 })}>
+          <TabsList variant="underline" size="sm">
+            <TabsTrigger value="all">All</TabsTrigger>
+            {FLOWS.map(flow => (
+              <TabsTrigger key={flow} value={flow}>
+                {FLOW_NAMES[flow]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       </div>
-      {page.error && <ErrorNote text={page.error} />}
-      {!data ? (
-        <Loading />
-      ) : (
-        <>
-          <Table aria-label="Runs" density="compact">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Run</TableHead>
-                <TableHead>Started</TableHead>
-                <TableHead className="nx:text-end">Took</TableHead>
-                <TableHead className="nx:text-end">Turns</TableHead>
-                <TableHead className="nx:text-end">Tokens in, out</TableHead>
-                <TableHead>Result</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.rows.map(run => (
-                <TableRow key={run.id} className="nx:cursor-pointer" data-state={run.id === shown ? 'selected' : undefined} onClick={() => go(`/runs/${run.id}`)}>
-                  <TableCell>
-                    <div className="nx:flex nx:flex-col">
-                      <span className="nx:typography-label-default">
-                        {run.id} {run.title}
-                      </span>
-                      <span className="nx:typography-body-small nx:text-muted-foreground">{portalName(run.portal) || FLOW_NAMES[run.flow]}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="nx:tabular-nums">{when(run.started)}</TableCell>
-                  <TableCell className="nx:text-end nx:tabular-nums">{run.usage.ms ? duration(run.usage.ms) : ''}</TableCell>
-                  <TableCell className="nx:text-end nx:tabular-nums">{run.usage.turns || ''}</TableCell>
-                  <TableCell className="nx:text-end nx:tabular-nums">
-                    {run.usage.inputTokens ? `${tokens(run.usage.inputTokens)}, ${tokens(run.usage.outputTokens)}` : ''}
-                  </TableCell>
-                  <TableCell>
-                    <div className="nx:flex nx:flex-col nx:gap-1">
-                      <RunStatusBadge status={run.status} />
-                      {run.result && <span className="nx:typography-body-small nx:text-muted-foreground">{run.result}</span>}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {data.rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="nx:text-muted-foreground">
-                    No runs yet.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-          <div className="nx:flex nx:flex-wrap nx:items-center nx:justify-between nx:gap-2">
-            <span className="nx:typography-body-small nx:text-muted-foreground">
-              {data.total} runs, page {data.page + 1} of {data.pages}
-            </span>
-            <div className="nx:flex nx:gap-2">
-              <Button variant="outline" size="sm" startIcon={<CaretLeftIcon />} disabled={data.page === 0} onClick={() => setQuery(current => ({ ...current, page: data.page - 1 }))}>
-                Previous
-              </Button>
-              <Button variant="outline" size="sm" endIcon={<CaretRightIcon />} disabled={data.page >= data.pages - 1} onClick={() => setQuery(current => ({ ...current, page: data.page + 1 }))}>
-                Next
-              </Button>
-            </div>
+      <div className="nx:px-2">
+        {page.error && <ErrorNote text={page.error} />}
+        {!data ? (
+          <div className="nx:p-4">
+            <Loading />
           </div>
-          {shown && <RunDetailCard id={shown} />}
-        </>
-      )}
+        ) : data.rows.length === 0 ? (
+          <span className="nx:block nx:p-6 nx:typography-body-small nx:text-muted-foreground">No runs yet.</span>
+        ) : (
+          <>
+            <Table aria-label="Runs" density="compact">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Run</TableHead>
+                  <TableHead>Result</TableHead>
+                  <TableHead>
+                    <Hidden>Status</Hidden>
+                  </TableHead>
+                  <TableHead>Started</TableHead>
+                  <TableHead className="nx:text-end">Took</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.rows.map(run => (
+                  <TableRow key={run.id} className="nx:cursor-pointer" onClick={() => go(`/runs/${run.id}`)}>
+                    <TableCell>
+                      <span className="nx:flex nx:items-center nx:gap-2">
+                        <span className="nx:inline-flex nx:text-muted-foreground">{FLOW_ICON[run.flow]}</span>
+                        <span className="nx:typography-label-default nx:whitespace-nowrap">{run.title}</span>
+                      </span>
+                    </TableCell>
+                    <TableCell className="nx:typography-body-small">
+                      <span className="nx:line-clamp-1">{run.result ?? ''}</span>
+                    </TableCell>
+                    <TableCell>
+                      <RunStatusBadge status={run.status} />
+                    </TableCell>
+                    <TableCell className="nx:typography-body-small nx:text-muted-foreground nx:whitespace-nowrap">{when(run.started)}</TableCell>
+                    <TableCell className="nx:text-end nx:typography-body-small nx:text-muted-foreground nx:tabular-nums">{run.usage.ms ? duration(run.usage.ms) : ''}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {data.pages > 1 && (
+              <div className="nx:flex nx:items-center nx:justify-end nx:gap-1 nx:px-2 nx:py-3">
+                <span className="nx:typography-body-small nx:text-muted-foreground nx:mr-2">
+                  {data.page + 1} of {data.pages}
+                </span>
+                <Button variant="ghost" size="icon-sm" aria-label="Previous page" disabled={data.page === 0} onClick={() => setQuery(current => ({ ...current, page: current.page - 1 }))}>
+                  <CaretLeftIcon />
+                </Button>
+                <Button variant="ghost" size="icon-sm" aria-label="Next page" disabled={data.page >= data.pages - 1} onClick={() => setQuery(current => ({ ...current, page: current.page + 1 }))}>
+                  <CaretRightIcon />
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </Page>
   )
 }

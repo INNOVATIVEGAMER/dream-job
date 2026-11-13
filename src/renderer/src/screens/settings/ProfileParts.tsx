@@ -1,31 +1,27 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { JSX } from 'react'
 
-import { PencilSimpleIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react'
+import { GithubLogoIcon, GlobeIcon, LinkedinLogoIcon, LinkIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react'
 
 import type { Profile, ProfileLinks, Project, Role } from '../../../../shared/types'
-import { ChipsInput } from '../../ui/common'
+import { Group } from '../../ui/common'
+import { ListBox, ListRow, MonthPicker, Tags } from '../../ui/fields'
 import {
   Button,
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
   Field,
   FieldDescription,
   FieldGroup,
   FieldLabel,
   Input,
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemSeparator,
-  ItemTitle,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
   Switch,
   Textarea,
 } from '../../ui/nx'
@@ -34,129 +30,120 @@ const newId = (): string => crypto.randomUUID()
 
 const EMPTY_ROLE = (): Role => ({ id: newId(), title: '', company: '', start: '', end: null, isCurrent: false, built: '', skills: [] })
 
-function RoleDialog(props: { role: Role | null; skills: string[]; onClose: () => void; onSave: (role: Role) => void; onDelete: (id: string) => void }): JSX.Element {
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** YYYY-MM as "Mar 2024". */
+const monthLabel = (value: string | null): string => {
+  if (!value) return ''
+  const [year, month] = value.split('-')
+  return `${MONTHS[Number(month) - 1] ?? ''} ${year}`.trim()
+}
+
+const roleDates = (role: Role): string => `${monthLabel(role.start) || 'Start unknown'} to ${role.isCurrent ? 'now' : monthLabel(role.end) || 'unknown'}`
+
+/** The panel a role is edited in, from the right. */
+function RoleSheet(props: { role: Role | null; skills: string[]; onClose: () => void; onSave: (role: Role) => void; onDelete: (id: string) => void }): JSX.Element {
   const [role, setRole] = useState<Role>(props.role ?? EMPTY_ROLE())
-  useEffect(() => setRole(props.role ?? EMPTY_ROLE()), [props.role])
   const set = (patch: Partial<Role>): void => setRole(current => ({ ...current, ...patch }))
   const isNew = !props.role
 
   return (
-    <Dialog open onOpenChange={open => !open && props.onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{isNew ? 'Add a role' : 'Edit role'}</DialogTitle>
-          <DialogDescription>Claude uses this role exactly as written here, in written answers and in scoring postings. It never adds to it.</DialogDescription>
-        </DialogHeader>
-        <DialogBody>
+    <Sheet open onOpenChange={open => !open && props.onClose()}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>{isNew ? 'Add role' : 'Edit role'}</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
           <FieldGroup>
-            <div className="nx:flex nx:flex-wrap nx:gap-3">
-              <div className="nx:min-w-0" style={{ flex: '1 1 180px' }}>
-                <Field>
-                  <FieldLabel htmlFor="role-title">Job title</FieldLabel>
-                  <Input id="role-title" value={role.title} onChange={event => set({ title: event.target.value })} />
-                </Field>
-              </div>
-              <div className="nx:min-w-0" style={{ flex: '1 1 180px' }}>
-                <Field>
-                  <FieldLabel htmlFor="role-company">Company</FieldLabel>
-                  <Input id="role-company" value={role.company} onChange={event => set({ company: event.target.value })} />
-                </Field>
-              </div>
-            </div>
-            <div className="nx:flex nx:flex-wrap nx:gap-3 nx:items-end">
-              <div className="nx:min-w-0" style={{ flex: '1 1 140px' }}>
-                <Field>
-                  <FieldLabel htmlFor="role-start">Started</FieldLabel>
-                  <Input id="role-start" type="month" value={role.start} onChange={event => set({ start: event.target.value })} />
-                </Field>
-              </div>
-              <div className="nx:min-w-0" style={{ flex: '1 1 140px' }}>
-                <Field>
-                  <FieldLabel htmlFor="role-end">Ended</FieldLabel>
-                  <Input id="role-end" type="month" disabled={role.isCurrent} value={role.end ?? ''} onChange={event => set({ end: event.target.value || null })} />
-                </Field>
-              </div>
-              <Field orientation="horizontal">
-                <Switch id="role-current" checked={role.isCurrent} onCheckedChange={isCurrent => set({ isCurrent, end: isCurrent ? null : role.end })} />
-                <FieldLabel htmlFor="role-current">I work here now</FieldLabel>
-              </Field>
-            </div>
             <Field>
-              <FieldLabel htmlFor="role-built">What you built there</FieldLabel>
-              <Textarea id="role-built" rows={6} value={role.built} onChange={event => set({ built: event.target.value })} />
-              <FieldDescription>One point per line: what you built, the problem it solved, and the technology you used.</FieldDescription>
+              <FieldLabel htmlFor="role-title">Title</FieldLabel>
+              <Input id="role-title" value={role.title} onChange={event => set({ title: event.target.value })} />
             </Field>
             <Field>
-              <FieldLabel htmlFor="role-skills">Skills used in this role</FieldLabel>
-              <ChipsInput id="role-skills" values={role.skills} onChange={skills => set({ skills })} placeholder={props.skills.length ? `Such as ${props.skills.slice(0, 2).join(', ')}` : 'Add a skill'} />
-              <FieldDescription>Years with each skill on forms are worked out from the roles that list it.</FieldDescription>
+              <FieldLabel htmlFor="role-company">Company</FieldLabel>
+              <Input id="role-company" value={role.company} onChange={event => set({ company: event.target.value })} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="role-start">Started</FieldLabel>
+              <MonthPicker id="role-start" ariaLabel="Started" value={role.start} onChange={start => set({ start })} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="role-end">Ended</FieldLabel>
+              <MonthPicker id="role-end" ariaLabel="Ended" disabled={role.isCurrent} value={role.end ?? ''} onChange={end => set({ end: end || null })} />
+            </Field>
+            <Field orientation="horizontal">
+              <Switch id="role-current" checked={role.isCurrent} onCheckedChange={isCurrent => set({ isCurrent, end: isCurrent ? null : role.end })} />
+              <FieldLabel htmlFor="role-current">I work here now</FieldLabel>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="role-built">What you built</FieldLabel>
+              <Textarea id="role-built" rows={6} value={role.built} onChange={event => set({ built: event.target.value })} />
+              <FieldDescription>One point per line. Claude uses it as written and never adds to it.</FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="role-skills">Skills here</FieldLabel>
+              <Tags id="role-skills" ariaLabel="Skills here" values={role.skills} suggestions={props.skills} onChange={skills => set({ skills })} placeholder="Add a skill" />
             </Field>
           </FieldGroup>
-        </DialogBody>
-        <DialogFooter>
-          {!isNew && (
-            <div className="nx:flex-1">
+        </SheetBody>
+        <SheetFooter>
+          <div className="nx:flex nx:items-center nx:justify-between nx:gap-2 nx:w-full">
+            {isNew ? (
+              <span />
+            ) : (
               <Button variant="ghost" startIcon={<TrashIcon />} onClick={() => props.onDelete(role.id)}>
                 Delete role
               </Button>
+            )}
+            <div className="nx:flex nx:gap-2">
+              <Button variant="outline" onClick={props.onClose}>
+                Cancel
+              </Button>
+              <Button disabled={!role.title.trim() || !role.company.trim()} onClick={() => props.onSave(role)}>
+                Save role
+              </Button>
             </div>
-          )}
-          <Button variant="outline" onClick={props.onClose}>
-            Cancel
-          </Button>
-          <Button disabled={!role.title.trim() || !role.company.trim()} onClick={() => props.onSave(role)}>
-            Save role
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </div>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   )
 }
 
-const roleDates = (role: Role): string => {
-  const start = role.start || 'Unknown start'
-  return `${start} to ${role.isCurrent ? 'present' : role.end || 'unknown'}`
-}
-
-/** The roles in a profile, each edited in its own dialog. */
+/** The roles in a profile, newest first, each edited in a sheet. */
 export function RolesList({ roles, skills, onChange }: { roles: Role[]; skills: string[]; onChange: (roles: Role[]) => void }): JSX.Element {
-  const [editing, setEditing] = useState<Role | null | 'new'>(null)
+  const [editing, setEditing] = useState<Role | 'new' | null>(null)
   const sorted = [...roles].sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0) || (b.start || '').localeCompare(a.start || ''))
   return (
-    <div className="nx:flex nx:flex-col nx:gap-2">
+    <Group
+      title="Experience"
+      action={
+        <Button variant="ghost" size="sm" startIcon={<PlusIcon />} onClick={() => setEditing('new')}>
+          Add role
+        </Button>
+      }
+    >
       {sorted.length === 0 ? (
         <span className="nx:typography-body-small nx:text-muted-foreground">No roles yet.</span>
       ) : (
-        <ItemGroup>
-          {sorted.map((role, i) => (
-            <div key={role.id}>
-              {i > 0 && <ItemSeparator />}
-              <Item size="sm">
-                <ItemContent>
-                  <ItemTitle>
-                    {role.title}, {role.company}
-                  </ItemTitle>
-                  <ItemDescription>
-                    {roleDates(role)}. {role.built.split('\n')[0]}
-                  </ItemDescription>
-                </ItemContent>
-                <ItemActions>
-                  <Button variant="ghost" size="sm" startIcon={<PencilSimpleIcon />} onClick={() => setEditing(role)}>
-                    Edit
-                  </Button>
-                </ItemActions>
-              </Item>
-            </div>
+        <ListBox label="Experience">
+          {sorted.map(role => (
+            <ListRow
+              key={role.id}
+              title={role.title || 'Untitled role'}
+              detail={`${role.company} · ${roleDates(role)}`}
+              onClick={() => setEditing(role)}
+              actions={
+                <Button variant="ghost" size="sm" onClick={() => setEditing(role)}>
+                  Edit
+                </Button>
+              }
+            />
           ))}
-        </ItemGroup>
+        </ListBox>
       )}
-      <div>
-        <Button variant="ghost" size="sm" startIcon={<PlusIcon />} onClick={() => setEditing('new')}>
-          Add a role
-        </Button>
-      </div>
       {editing && (
-        <RoleDialog
+        <RoleSheet
           role={editing === 'new' ? null : editing}
           skills={skills}
           onClose={() => setEditing(null)}
@@ -170,21 +157,20 @@ export function RolesList({ roles, skills, onChange }: { roles: Role[]; skills: 
           }}
         />
       )}
-    </div>
+    </Group>
   )
 }
 
-function ProjectDialog(props: { project: Project | null; onClose: () => void; onSave: (project: Project) => void; onDelete: (id: string) => void }): JSX.Element {
+function ProjectSheet(props: { project: Project | null; onClose: () => void; onSave: (project: Project) => void; onDelete: (id: string) => void }): JSX.Element {
   const [project, setProject] = useState<Project>(props.project ?? { id: newId(), name: '', link: '', about: '' })
   const set = (patch: Partial<Project>): void => setProject(current => ({ ...current, ...patch }))
   return (
-    <Dialog open onOpenChange={open => !open && props.onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{props.project ? 'Edit project' : 'Add a project'}</DialogTitle>
-          <DialogDescription>Used as written, like your roles.</DialogDescription>
-        </DialogHeader>
-        <DialogBody>
+    <Sheet open onOpenChange={open => !open && props.onClose()}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>{props.project ? 'Edit project' : 'Add project'}</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="project-name">Name</FieldLabel>
@@ -192,64 +178,70 @@ function ProjectDialog(props: { project: Project | null; onClose: () => void; on
             </Field>
             <Field>
               <FieldLabel htmlFor="project-link">Public link</FieldLabel>
-              <Input id="project-link" type="url" value={project.link} onChange={event => set({ link: event.target.value })} />
+              <Input id="project-link" type="url" placeholder="https://" value={project.link} onChange={event => set({ link: event.target.value })} />
             </Field>
             <Field>
               <FieldLabel htmlFor="project-about">What it is, and what you built</FieldLabel>
-              <Textarea id="project-about" rows={5} value={project.about} onChange={event => set({ about: event.target.value })} />
+              <Textarea id="project-about" rows={6} value={project.about} onChange={event => set({ about: event.target.value })} />
             </Field>
           </FieldGroup>
-        </DialogBody>
-        <DialogFooter>
-          {props.project && (
-            <div className="nx:flex-1">
+        </SheetBody>
+        <SheetFooter>
+          <div className="nx:flex nx:items-center nx:justify-between nx:gap-2 nx:w-full">
+            {props.project ? (
               <Button variant="ghost" startIcon={<TrashIcon />} onClick={() => props.onDelete(project.id)}>
                 Delete project
               </Button>
+            ) : (
+              <span />
+            )}
+            <div className="nx:flex nx:gap-2">
+              <Button variant="outline" onClick={props.onClose}>
+                Cancel
+              </Button>
+              <Button disabled={!project.name.trim()} onClick={() => props.onSave(project)}>
+                Save project
+              </Button>
             </div>
-          )}
-          <Button variant="outline" onClick={props.onClose}>
-            Cancel
-          </Button>
-          <Button disabled={!project.name.trim()} onClick={() => props.onSave(project)}>
-            Save project
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </div>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   )
 }
 
 export function ProjectsList({ projects, onChange }: { projects: Project[]; onChange: (projects: Project[]) => void }): JSX.Element {
-  const [editing, setEditing] = useState<Project | null | 'new'>(null)
+  const [editing, setEditing] = useState<Project | 'new' | null>(null)
   return (
-    <div className="nx:flex nx:flex-col nx:gap-2">
+    <Group
+      title="Projects"
+      action={
+        <Button variant="ghost" size="sm" startIcon={<PlusIcon />} onClick={() => setEditing('new')}>
+          Add project
+        </Button>
+      }
+    >
       {projects.length === 0 ? (
         <span className="nx:typography-body-small nx:text-muted-foreground">No projects yet.</span>
       ) : (
-        <ItemGroup>
+        <ListBox label="Projects">
           {projects.map(project => (
-            <Item key={project.id} size="sm">
-              <ItemContent>
-                <ItemTitle>{project.name}</ItemTitle>
-                <ItemDescription>{[project.about.split('\n')[0], project.link].filter(Boolean).join(' ')}</ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <Button variant="ghost" size="sm" startIcon={<PencilSimpleIcon />} onClick={() => setEditing(project)}>
+            <ListRow
+              key={project.id}
+              title={project.name}
+              detail={project.link || project.about.split('\n')[0]}
+              onClick={() => setEditing(project)}
+              actions={
+                <Button variant="ghost" size="sm" onClick={() => setEditing(project)}>
                   Edit
                 </Button>
-              </ItemActions>
-            </Item>
+              }
+            />
           ))}
-        </ItemGroup>
+        </ListBox>
       )}
-      <div>
-        <Button variant="ghost" size="sm" startIcon={<PlusIcon />} onClick={() => setEditing('new')}>
-          Add a project
-        </Button>
-      </div>
       {editing && (
-        <ProjectDialog
+        <ProjectSheet
           project={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSave={project => {
@@ -262,62 +254,54 @@ export function ProjectsList({ projects, onChange }: { projects: Project[]; onCh
           }}
         />
       )}
-    </div>
+    </Group>
   )
 }
 
-/** One input per platform, plus any other links by name. */
-export function LinksEditor({ links, onChange }: { links: ProfileLinks; onChange: (links: ProfileLinks) => void }): JSX.Element {
-  const set = (patch: Partial<ProfileLinks>): void => onChange({ ...links, ...patch })
+function LinkInput(props: { id: string; icon: JSX.Element; value: string; placeholder: string; onChange: (value: string) => void }): JSX.Element {
   return (
-    <FieldGroup>
-      <Field>
-        <FieldLabel htmlFor="link-linkedin">LinkedIn</FieldLabel>
-        <Input id="link-linkedin" type="url" placeholder="https://www.linkedin.com/in/" value={links.linkedin} onChange={event => set({ linkedin: event.target.value })} />
-      </Field>
-      <Field>
-        <FieldLabel htmlFor="link-github">GitHub</FieldLabel>
-        <Input id="link-github" type="url" placeholder="https://github.com/" value={links.github} onChange={event => set({ github: event.target.value })} />
-      </Field>
-      <Field>
-        <FieldLabel htmlFor="link-site">Portfolio or website</FieldLabel>
-        <Input id="link-site" type="url" placeholder="https://" value={links.site} onChange={event => set({ site: event.target.value })} />
-      </Field>
-      {links.other.map((link, i) => (
-        <Field key={i}>
-          <FieldLabel htmlFor={`link-other-${i}`}>{link.name || 'Another link'}</FieldLabel>
-          <div className="nx:flex nx:flex-wrap nx:gap-2 nx:items-center">
-            <div className="nx:min-w-0" style={{ flex: '1 1 100px' }}>
-              <Input
-                aria-label="Name"
-                placeholder="Name, such as Behance"
-                value={link.name}
-                onChange={event => set({ other: links.other.map((one, j) => (j === i ? { ...one, name: event.target.value } : one)) })}
-              />
+    <InputGroup>
+      <InputGroupAddon align="inline-start">{props.icon}</InputGroupAddon>
+      <InputGroupInput id={props.id} type="url" placeholder={props.placeholder} value={props.value} onChange={event => props.onChange(event.target.value)} />
+    </InputGroup>
+  )
+}
+
+/** The profile links as settings rows: one per platform, then any others by name. */
+export function linkRows(links: ProfileLinks, onChange: (links: ProfileLinks) => void): { label: string; id?: string; tip?: string; control: JSX.Element }[] {
+  const set = (patch: Partial<ProfileLinks>): void => onChange({ ...links, ...patch })
+  const setOther = (i: number, patch: Partial<ProfileLinks['other'][number]>): void => set({ other: links.other.map((one, j) => (j === i ? { ...one, ...patch } : one)) })
+  return [
+    {
+      label: 'LinkedIn',
+      id: 'link-linkedin',
+      control: <LinkInput id="link-linkedin" icon={<LinkedinLogoIcon />} placeholder="linkedin.com/in/" value={links.linkedin} onChange={linkedin => set({ linkedin })} />,
+    },
+    { label: 'GitHub', id: 'link-github', control: <LinkInput id="link-github" icon={<GithubLogoIcon />} placeholder="github.com/" value={links.github} onChange={github => set({ github })} /> },
+    { label: 'Website', id: 'link-site', control: <LinkInput id="link-site" icon={<GlobeIcon />} placeholder="https://" value={links.site} onChange={site => set({ site })} /> },
+    {
+      label: 'Other links',
+      tip: 'A form that asks for a link gets the one it names',
+      control: (
+        <div className="nx:flex nx:flex-col nx:gap-2">
+          {links.other.map((link, i) => (
+            <div key={i} className="nx:grid nx:gap-2 nx:items-center" style={{ gridTemplateColumns: '120px minmax(0, 1fr) auto' }}>
+              <Input aria-label="Link name" placeholder="Name" value={link.name} onChange={event => setOther(i, { name: event.target.value })} />
+              <LinkInput id={`link-other-${i}`} icon={<LinkIcon />} placeholder="https://" value={link.url} onChange={url => setOther(i, { url })} />
+              <Button variant="ghost" size="icon-sm" aria-label={`Remove ${link.name || 'this link'}`} onClick={() => set({ other: links.other.filter((_, j) => j !== i) })}>
+                <TrashIcon />
+              </Button>
             </div>
-            <div className="nx:min-w-0" style={{ flex: '2 1 160px' }}>
-              <Input
-                id={`link-other-${i}`}
-                type="url"
-                placeholder="https://"
-                value={link.url}
-                onChange={event => set({ other: links.other.map((one, j) => (j === i ? { ...one, url: event.target.value } : one)) })}
-              />
-            </div>
-            <Button variant="ghost" size="icon-sm" aria-label="Remove this link" onClick={() => set({ other: links.other.filter((_, j) => j !== i) })}>
-              <TrashIcon />
+          ))}
+          <div>
+            <Button variant="ghost" size="sm" startIcon={<PlusIcon />} disabled={links.other.length >= 10} onClick={() => set({ other: [...links.other, { name: '', url: '' }] })}>
+              Add link
             </Button>
           </div>
-        </Field>
-      ))}
-      <div>
-        <Button variant="ghost" size="sm" startIcon={<PlusIcon />} disabled={links.other.length >= 10} onClick={() => set({ other: [...links.other, { name: '', url: '' }] })}>
-          Add another link
-        </Button>
-      </div>
-      <FieldDescription>A form that asks for a profile link gets the one it names.</FieldDescription>
-    </FieldGroup>
-  )
+        </div>
+      ),
+    },
+  ]
 }
 
 /** The editable parts of a profile, shared by onboarding and Settings. */

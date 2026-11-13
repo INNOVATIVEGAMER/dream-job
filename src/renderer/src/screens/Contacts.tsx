@@ -1,231 +1,304 @@
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 
-import {
-  ArrowSquareOutIcon,
-  BuildingsIcon,
-  CaretLeftIcon,
-  CaretRightIcon,
-  CheckCircleIcon,
-  ClockIcon,
-  PaperPlaneTiltIcon,
-  PencilSimpleIcon,
-  UserCheckIcon,
-  UserPlusIcon,
-} from '@phosphor-icons/react'
+import { ArrowSquareOutIcon, ArrowsClockwiseIcon, CaretDownIcon, CaretRightIcon, ChatCircleIcon, CopyIcon, MagnifyingGlassIcon, PencilSimpleIcon, UserPlusIcon } from '@phosphor-icons/react'
 
-import { CONTACT_STATES } from '../../../shared/types'
-import type { ContactQuery, ContactState } from '../../../shared/types'
+import { CONTACT_VIEWS } from '../../../shared/types'
+import type { Contact, ContactCompany, ContactView } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
-import { capitalize, day } from '../lib/format'
+import { day } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
-import { attempt, ErrorNote, Hidden, Loading, Page, StatTile, Tiles } from '../ui/common'
+import { attempt, ErrorNote, Hidden, Loading, Page, StatusBadge } from '../ui/common'
 import {
+  Avatar,
+  AvatarFallback,
   Badge,
   Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Input,
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-  NativeSelect,
-  NativeSelectOption,
+  EmptyState,
+  EmptyStateDescription,
+  EmptyStateHeader,
+  EmptyStateTitle,
+  Field,
+  FieldLabel,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  Textarea,
+  toast,
 } from '../ui/nx'
 
-const STATE_BADGE: Record<ContactState, { variant: 'information' | 'success' | 'default' | 'secondary'; icon: JSX.Element }> = {
-  pending: { variant: 'secondary', icon: <ClockIcon /> },
-  accepted: { variant: 'information', icon: <UserCheckIcon /> },
-  messaged: { variant: 'default', icon: <PaperPlaneTiltIcon /> },
-  referred: { variant: 'success', icon: <CheckCircleIcon /> },
+const HOVER = 'nx:opacity-0 nx:group-hover:opacity-100 nx:focus-within:opacity-100 nx:transition-opacity'
+const VIEW_NAMES: Record<ContactView, string> = { ready: 'Ready', pending: 'Pending', accepted: 'Accepted', messaged: 'Messaged', referred: 'Referred', all: 'All' }
+
+const initials = (name: string): string =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]!.toUpperCase())
+    .join('')
+
+function summaryOf(company: ContactCompany): string {
+  const parts = (['referred', 'accepted', 'messaged', 'pending'] as const).filter(state => company.counts[state] > 0).map(state => `${company.counts[state]} ${state}`)
+  return parts.slice(0, 2).join(' · ')
 }
 
-/** Everyone a connection request went to, where each stands, and the companies ready for the referral message. */
-export function Contacts(): JSX.Element {
+/** A thank-you to someone who referred the user: drafted here, sent by the user. */
+function ThanksSheet({ person, onClose }: { person: Contact | null; onClose: () => void }): JSX.Element {
+  const [text, setText] = useState('')
+  useEffect(() => {
+    if (!person) return
+    const first = person.name.split(' ')[0] ?? person.name
+    setText(`Hi ${first}, thank you for referring me at ${person.company}. I really appreciate you taking the time.`)
+  }, [person?.id])
+
+  return (
+    <Sheet open={!!person} onOpenChange={on => !on && onClose()}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Thank {person?.name}</SheetTitle>
+          <SheetDescription>Referred you at {person?.company}.</SheetDescription>
+        </SheetHeader>
+        <SheetBody>
+          <Field>
+            <FieldLabel htmlFor="thanks-body">Draft</FieldLabel>
+            <Textarea id="thanks-body" rows={5} value={text} onChange={event => setText(event.target.value)} />
+          </Field>
+          <span className="nx:typography-body-small nx:text-muted-foreground">You send it. The app never does.</span>
+        </SheetBody>
+        <SheetFooter>
+          <div className="nx:flex nx:flex-wrap nx:gap-2">
+            <Button
+              startIcon={<CopyIcon />}
+              onClick={() => void navigator.clipboard.writeText(text).then(() => toast.success('Copied'), () => toast.error('Could not copy. Select the text and copy it.'))}
+            >
+              Copy
+            </Button>
+            {person && (
+              <Button variant="outline" endIcon={<ArrowSquareOutIcon />} onClick={() => void attempt(() => api.chrome.openUrl(person.profileUrl))}>
+                Open in LinkedIn
+              </Button>
+            )}
+            {person && (
+              <Button variant="ghost" onClick={() => void attempt(() => api.contacts.markThanked(person.id), 'Marked as thanked').then(onClose)}>
+                Mark as thanked
+              </Button>
+            )}
+          </div>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+/** Contacts, company first: each company you applied to with the people there and where each stands. */
+export function Contacts({ thanksId = null }: { thanksId?: number | null }): JSX.Element {
   const status = useAppStatus()
-  const [query, setQuery] = useState<ContactQuery>({ state: 'all', company: 'all', search: '', page: 0 })
+  const [view, setView] = useState<ContactView>('all')
   const [search, setSearch] = useState('')
-  const page = useData(() => api.contacts.page(query), [JSON.stringify(query)], ['contacts'])
-  const ready = useData(() => api.contacts.ready(), [], ['contacts'])
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState<Set<number>>(new Set())
+  const [shut, setShut] = useState<Set<number>>(new Set())
+  const list = useData(() => api.contacts.byCompany(view, query), [view, query], ['contacts', 'opportunities'])
+  const thanking = useData(() => (thanksId ? api.contacts.get(thanksId) : Promise.resolve(null)), [thanksId], ['contacts'])
   const isBusy = status?.run?.status === 'running' || status?.run?.status === 'waiting'
 
   useEffect(() => {
-    const timer = setTimeout(() => setQuery(current => (current.search === search ? current : { ...current, search, page: 0 })), 250)
+    const timer = setTimeout(() => setQuery(search), 200)
     return () => clearTimeout(timer)
   }, [search])
 
-  const set = (patch: Partial<ContactQuery>): void => setQuery(current => ({ ...current, ...patch, page: patch.page ?? 0 }))
-  const data = page.data
-  const total = data ? Object.values(data.counts).reduce((sum, n) => sum + n, 0) : 0
+  const data = list.data
+  // Ready companies and searches open by themselves; the caret overrides either way.
+  const isOpen = (company: ContactCompany): boolean => open.has(company.id) || ((company.isReady || !!query) && !shut.has(company.id))
+  const toggle = (company: ContactCompany): void => {
+    const was = isOpen(company)
+    setOpen(current => {
+      const next = new Set(current)
+      if (was) next.delete(company.id)
+      else next.add(company.id)
+      return next
+    })
+    setShut(current => {
+      const next = new Set(current)
+      if (was) next.add(company.id)
+      else next.delete(company.id)
+      return next
+    })
+  }
+
+  const checkAccepted = async (): Promise<void> => {
+    if (await attempt(() => api.flows.checkAccepted())) go('/run')
+  }
 
   return (
     <Page
       title="Contacts"
-      description="Everyone a connection request went to, and where each one stands. Requests go out blank, with no note."
+      meta={data ? `${data.people} people at ${data.companyCount} companies` : undefined}
+      layout="list"
       actions={
         <>
-          <Button variant="outline" startIcon={<UserPlusIcon />} disabled={isBusy} onClick={() => go('/contacts/connect')}>
-            Send connection requests
+          <Button variant="ghost" size="sm" startIcon={<ArrowsClockwiseIcon />} disabled={isBusy || !data?.counts.pending} onClick={() => void checkAccepted()}>
+            Check who accepted
           </Button>
-          <Button startIcon={<PaperPlaneTiltIcon />} disabled={isBusy} onClick={() => go('/contacts/message')}>
+          <Button variant="outline" size="sm" startIcon={<UserPlusIcon />} onClick={() => go('/contacts/connect')}>
+            Send requests
+          </Button>
+          <Button size="sm" startIcon={<ChatCircleIcon />} onClick={() => go('/contacts/message')}>
             Message accepted
           </Button>
         </>
       }
     >
-      {page.error && <ErrorNote text={page.error} />}
-      {data && (
-        <Tiles>
-          <StatTile value={data.counts.pending} label="Pending" onClick={() => set({ state: 'pending' })} />
-          <StatTile value={data.counts.accepted} label="Accepted, not yet messaged" onClick={() => set({ state: 'accepted' })} />
-          <StatTile value={data.counts.messaged} label="Messaged" onClick={() => set({ state: 'messaged' })} />
-          <StatTile value={data.counts.referred} label="Referred you" onClick={() => set({ state: 'referred' })} />
-        </Tiles>
-      )}
-
-      {ready.data && ready.data.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Ready for your message</CardTitle>
-            <CardDescription>Companies with accepted connections. Each gets your approved message, word for word, with your resume.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ItemGroup>
-              {ready.data.map(company => (
-                <Item key={company.company} size="sm">
-                  <ItemMedia variant="icon">
-                    <BuildingsIcon />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>{company.company}</ItemTitle>
-                    <ItemDescription>
-                      {company.accepted} accepted{company.pending ? `, ${company.pending} pending` : ''}.{' '}
-                      {company.role ? `Applied ${day(company.appliedOn)} to ${company.role}.` : 'No applied role to point the message at yet.'}
-                      {!company.isReady && ' Waits for a bigger batch.'}
-                    </ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Button variant={company.isReady ? 'secondary' : 'ghost'} size="sm" disabled={isBusy} onClick={() => go('/contacts/message')}>
-                      {company.isReady ? `Send ${company.accepted} ${company.accepted === 1 ? 'message' : 'messages'}` : 'Send now anyway'}
-                    </Button>
-                  </ItemActions>
-                </Item>
-              ))}
-            </ItemGroup>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="nx:flex nx:flex-wrap nx:gap-2 nx:items-center">
-        <div className="nx:min-w-0" style={{ flex: '1 1 240px' }}>
-          <Input type="search" aria-label="Search people" placeholder="Search name or company" value={search} onChange={event => setSearch(event.target.value)} />
+      <div className="nx:flex nx:flex-wrap nx:items-center nx:justify-between nx:gap-3 nx:px-4 nx:py-2 nx:border-b-default nx:border-border-default">
+        <Tabs value={view} onValueChange={next => setView(next as ContactView)}>
+          <TabsList variant="underline" size="sm">
+            {CONTACT_VIEWS.map(one => (
+              <TabsTrigger key={one} value={one}>
+                {VIEW_NAMES[one]}
+                <span className="nx:ml-1 nx:text-muted-foreground">{data?.counts[one] ?? ''}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <div className="nx:w-60">
+          <InputGroup>
+            <InputGroupAddon align="inline-start">
+              <MagnifyingGlassIcon />
+            </InputGroupAddon>
+            <InputGroupInput type="search" aria-label="Search people and companies" placeholder="Search people and companies" value={search} onChange={event => setSearch(event.target.value)} />
+          </InputGroup>
         </div>
-        <NativeSelect aria-label="State" value={query.state} onChange={event => set({ state: event.target.value })}>
-          <NativeSelectOption value="all">All states ({total})</NativeSelectOption>
-          {CONTACT_STATES.map(state => (
-            <NativeSelectOption key={state} value={state}>
-              {state === 'referred' ? 'Referred you' : capitalize(state)} ({data?.counts[state] ?? 0})
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-        <NativeSelect aria-label="Company" value={query.company} onChange={event => set({ company: event.target.value })}>
-          <NativeSelectOption value="all">All companies</NativeSelectOption>
-          {data?.companies.map(company => (
-            <NativeSelectOption key={company} value={company}>
-              {company}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
       </div>
 
-      {!data ? (
-        <Loading />
-      ) : (
-        <>
-          <Table aria-label="Contacts" density="compact">
+      <div className="nx:px-2 nx:pb-12">
+        {list.error && <ErrorNote text={list.error} />}
+        {!data ? (
+          <div className="nx:p-4">
+            <Loading />
+          </div>
+        ) : data.companies.length === 0 ? (
+          <div className="nx:p-8">
+            <EmptyState>
+              <EmptyStateHeader>
+                <EmptyStateTitle>{query ? 'Nothing matches' : view === 'ready' ? 'No company is ready yet' : 'No one here yet'}</EmptyStateTitle>
+                <EmptyStateDescription>{view === 'ready' ? 'A company is ready once 3 accept, or nobody there is still pending.' : 'Connection requests add people here.'}</EmptyStateDescription>
+              </EmptyStateHeader>
+            </EmptyState>
+          </div>
+        ) : (
+          <Table aria-label="People by company" density="compact">
             <TableHeader>
               <TableRow>
-                <TableHead>Person</TableHead>
                 <TableHead>Company</TableHead>
-                <TableHead>Request sent</TableHead>
-                <TableHead>State</TableHead>
+                <TableHead>Applied for</TableHead>
+                <TableHead>People</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead>
                   <Hidden>Actions</Hidden>
                 </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.rows.map(contact => (
-                <TableRow key={contact.id}>
-                  <TableCell>
-                    <div className="nx:flex nx:flex-col">
-                      <span className="nx:typography-label-default">{contact.name}</span>
-                      <span className="nx:typography-body-small nx:text-muted-foreground">{contact.role}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>{contact.company}</TableCell>
-                  <TableCell className="nx:tabular-nums">{day(contact.sent)}</TableCell>
-                  <TableCell>
-                    <Badge variant={STATE_BADGE[contact.state].variant} fill="light" isCaps={false} leftIcon={STATE_BADGE[contact.state].icon}>
-                      {contact.state === 'referred'
-                        ? `Referred you, ${day(contact.referredAt)}`
-                        : contact.state === 'messaged'
-                          ? `Messaged ${day(contact.messagedAt)}`
-                          : capitalize(contact.state)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="nx:text-end">
-                    {contact.state === 'referred' ? (
-                      <Button variant="outline" size="sm" startIcon={<PencilSimpleIcon />} onClick={() => go(`/contacts/${contact.id}/thanks`)}>
-                        Draft thanks
-                      </Button>
-                    ) : (
-                      <Button variant="ghost" size="sm" endIcon={<ArrowSquareOutIcon />} onClick={() => void attempt(() => api.chrome.openUrl(contact.profileUrl))}>
-                        Profile
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {data.rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={5} className="nx:text-muted-foreground">
-                    No one here yet. Send connection requests to people at companies you applied to.
-                  </TableCell>
-                </TableRow>
-              )}
+              {data.companies.map(company => {
+                const expanded = isOpen(company)
+                return [
+                  <TableRow key={`c-${company.id}`} className="nx:group">
+                    <TableCell>
+                      <div className="nx:flex nx:items-center nx:gap-1 nx:min-w-0">
+                        <Button variant="ghost" size="icon-sm" aria-label={expanded ? `Hide people at ${company.name}` : `Show people at ${company.name}`} onClick={() => toggle(company)}>
+                          {expanded ? <CaretDownIcon /> : <CaretRightIcon />}
+                        </Button>
+                        <button type="button" className="nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:typography-label-default nx:text-foreground nx:whitespace-nowrap" onClick={() => go(`/company/${company.id}`)}>
+                          {company.name}
+                        </button>
+                        <span className="nx:typography-body-small nx:text-muted-foreground nx:whitespace-nowrap">
+                          {company.people.length} {company.people.length === 1 ? 'person' : 'people'}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="nx:typography-body-small nx:text-muted-foreground">
+                      {company.jobId ? (
+                        <button type="button" className="nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:text-muted-foreground nx:typography-body-small nx:text-left nx:line-clamp-1" onClick={() => go(`/opportunity/${company.jobId}`)}>
+                          {company.role}
+                        </button>
+                      ) : (
+                        '–'
+                      )}
+                    </TableCell>
+                    <TableCell className="nx:typography-body-small nx:whitespace-nowrap">{summaryOf(company)}</TableCell>
+                    <TableCell>
+                      {company.isReady && (
+                        <Badge variant="success" fill="light" isCaps={false}>
+                          Ready
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="nx:text-end">
+                      {company.isReady && (
+                        <Button variant="outline" size="sm" startIcon={<ChatCircleIcon />} disabled={isBusy} onClick={() => go(`/contacts/message/${encodeURIComponent(company.name)}`)}>
+                          Message {company.counts.accepted}
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>,
+                  ...(expanded
+                    ? company.people.map(person => (
+                        <TableRow key={`p-${person.id}`} className="nx:group">
+                          <TableCell>
+                            <div className="nx:flex nx:items-center nx:gap-2 nx:pl-9 nx:min-w-0">
+                              <Avatar size="xs">
+                                <AvatarFallback>{initials(person.name)}</AvatarFallback>
+                              </Avatar>
+                              <span className="nx:typography-label-default nx:whitespace-nowrap">{person.name}</span>
+                              <span className="nx:typography-body-small nx:text-muted-foreground nx:truncate">{person.role}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell />
+                          <TableCell className="nx:typography-body-small nx:text-muted-foreground nx:tabular-nums">Sent {day(person.sent)}</TableCell>
+                          <TableCell>
+                            <StatusBadge status={person.state} />
+                          </TableCell>
+                          <TableCell className="nx:text-end">
+                            <div className={`nx:flex nx:items-center nx:justify-end nx:gap-1 ${HOVER}`}>
+                              {person.state === 'referred' && !person.thankedAt && (
+                                <Button variant="outline" size="sm" startIcon={<PencilSimpleIcon />} onClick={() => go(`/contacts/${person.id}/thanks`)}>
+                                  Draft thanks
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="icon-sm" aria-label={`${person.name} on LinkedIn`} onClick={() => void attempt(() => api.chrome.openUrl(person.profileUrl))}>
+                                <ArrowSquareOutIcon />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    : []),
+                ]
+              })}
             </TableBody>
           </Table>
-          <div className="nx:flex nx:flex-wrap nx:items-center nx:justify-between nx:gap-2">
-            <span className="nx:typography-body-small nx:text-muted-foreground">
-              Page {data.page + 1} of {data.pages}. Only your approved message goes out on its own; anything else, such as a thank-you, is drafted for you to send.
-            </span>
-            <div className="nx:flex nx:gap-2">
-              <Button variant="outline" size="sm" startIcon={<CaretLeftIcon />} disabled={data.page === 0} onClick={() => set({ page: data.page - 1 })}>
-                Previous
-              </Button>
-              <Button variant="outline" size="sm" endIcon={<CaretRightIcon />} disabled={data.page >= data.pages - 1} onClick={() => set({ page: data.page + 1 })}>
-                Next
-              </Button>
-            </div>
-          </div>
-        </>
-      )}
+        )}
+      </div>
+      <ThanksSheet person={thanksId ? (thanking.data ?? null) : null} onClose={() => go('/contacts')} />
     </Page>
   )
 }

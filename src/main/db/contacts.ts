@@ -2,6 +2,7 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
 import { CONTACT_STATES } from '../../shared/types'
 import type { Contact, ContactPage, ContactQuery, ContactState, ReadyCompany } from '../../shared/types'
+import type { Companies } from './companies'
 import { companyKey, now, paging, today } from './database'
 
 export const CONTACTS_PAGE_SIZE = 15
@@ -10,7 +11,7 @@ export const CONTACTS_PAGE_SIZE = 15
 export const BATCH_SIZE = 3
 
 const COLUMNS = `id, name, role, company, profile_url AS profileUrl, sent, state,
-  accepted_at AS acceptedAt, messaged_at AS messagedAt, referred_at AS referredAt`
+  accepted_at AS acceptedAt, messaged_at AS messagedAt, referred_at AS referredAt, thanked_at AS thankedAt, company_id AS companyId`
 
 export const isContactState = (value: string): value is ContactState =>
   (CONTACT_STATES as readonly string[]).includes(value)
@@ -31,7 +32,10 @@ export type NewContact = { name: string; role: string; company: string; profileU
 
 /** Everyone a blank connection request went to, and where each one stands. */
 export class Contacts {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly companies: Companies,
+  ) {}
 
   /** Records a sent request. A person already recorded is left as they are. */
   addPending(contact: NewContact, runId: number | null): { id: number; isNew: boolean } {
@@ -41,7 +45,9 @@ export class Contacts {
     const result = this.db
       .prepare(`INSERT INTO contacts (name, role, company, profile_url, sent, state, run_id) VALUES (?, ?, ?, ?, ?, 'pending', ?)`)
       .run(contact.name.trim(), contact.role.trim(), contact.company.trim(), url, today(), runId)
-    return { id: Number(result.lastInsertRowid), isNew: true }
+    const id = Number(result.lastInsertRowid)
+    this.companies.attach('contacts', id, contact.company)
+    return { id, isNew: true }
   }
 
   /** Records someone already connected with the user, ready for the referral message. */
@@ -150,6 +156,14 @@ export class Contacts {
   /** Records that the user thanked someone who referred them; the draft is theirs to send. */
   markThanked(id: number): void {
     this.db.prepare('UPDATE contacts SET thanked_at = ? WHERE id = ?').run(today(), id)
+  }
+
+  /** Everyone, newest request first. */
+  all(): Contact[] {
+    return this.db
+      .prepare(`SELECT ${COLUMNS} FROM contacts ORDER BY CASE state WHEN 'referred' THEN 0 WHEN 'accepted' THEN 1 WHEN 'messaged' THEN 2 ELSE 3 END, sent DESC, id DESC`)
+      .all()
+      .map(row => ({ ...row }) as Contact)
   }
 
   /** Everyone still pending: the referral run checks these for acceptance. */

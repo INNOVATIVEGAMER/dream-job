@@ -1,8 +1,11 @@
 import type { JSX } from 'react'
 
+import { TRACKER_VIEWS } from '../../shared/types'
+import type { TrackerView } from '../../shared/types'
 import { api } from './lib/api'
 import { useData } from './lib/data'
 import { useRoute } from './lib/router'
+import { CompanyScreen } from './screens/Company'
 import { ConnectStart } from './screens/ConnectStart'
 import { Contacts } from './screens/Contacts'
 import { Discarded } from './screens/Discarded'
@@ -16,9 +19,7 @@ import { ReferralStart } from './screens/ReferralStart'
 import { RunScreen } from './screens/run/RunScreen'
 import { Runs } from './screens/Runs'
 import { Settings } from './screens/settings/Settings'
-import { Thanks } from './screens/Thanks'
 import { Tracker } from './screens/Tracker'
-import { TrackerAdd } from './screens/TrackerAdd'
 import { ErrorNote, Loading } from './ui/common'
 import { Shell } from './ui/Shell'
 
@@ -26,9 +27,11 @@ function Screen({ route }: { route: string[] }): JSX.Element {
   const [section = 'home', first, second] = route
   switch (section) {
     case 'tracker':
-      return first === 'new' ? <TrackerAdd /> : <Tracker />
+      return <Tracker adding={first === 'new'} view={(TRACKER_VIEWS as readonly string[]).includes(first ?? '') ? (first as TrackerView) : 'all'} />
     case 'opportunity':
       return <Opportunity id={Number(first)} />
+    case 'company':
+      return <CompanyScreen id={Number(first)} />
     case 'hunt':
       return <HuntStart />
     case 'email':
@@ -38,10 +41,9 @@ function Screen({ route }: { route: string[] }): JSX.Element {
     case 'runs':
       return <Runs selected={first ? Number(first) : null} />
     case 'contacts':
-      if (first === 'connect') return <ConnectStart />
-      if (first === 'message') return <ReferralStart />
-      if (first && second === 'thanks') return <Thanks id={Number(first)} />
-      return <Contacts />
+      if (first === 'connect') return <ConnectStart company={second ? decodeURIComponent(second) : undefined} />
+      if (first === 'message') return <ReferralStart company={second ? decodeURIComponent(second) : undefined} />
+      return <Contacts thanksId={first && second === 'thanks' ? Number(first) : null} />
     case 'discarded':
       return <Discarded tab={first === 'never' ? 'never' : 'discarded'} />
     case 'settings':
@@ -73,7 +75,7 @@ export function App(): JSX.Element {
   if (!settings.data.isSetUp) return <Onboarding settings={settings.data} />
 
   return (
-    <Shell section={route[0] ?? 'home'} name={settings.data.profile.name}>
+    <Shell section={route[0] ?? 'home'}>
       <Screen route={route} />
     </Shell>
   )

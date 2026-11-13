@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 
 import type { EmailRef, EmailWaiting } from '../../shared/types'
+import type { Companies } from './companies'
 import { now } from './database'
 
 /** A change as stored, before the screens join it to its row or contact. */
@@ -55,7 +56,10 @@ const waitingOf = (row: Row): EmailWaiting => ({
  * email that the tracker does not have yet.
  */
 export class EmailStore {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly companies: Companies,
+  ) {}
 
   /** An email as the check knows it: its thread and the date of its newest message, so a reply counts as new. */
   static keyOf(threadId: string, date: string): string {
@@ -111,7 +115,9 @@ export class EmailStore {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(job.runId, now(), job.company, job.role, job.summary, job.email.subject, job.email.from, job.email.date, job.email.link)
-    return Number(result.lastInsertRowid)
+    const id = Number(result.lastInsertRowid)
+    this.companies.attach('email_waiting', id, job.company)
+    return id
   }
 
   waitingById(id: number): EmailWaiting | null {

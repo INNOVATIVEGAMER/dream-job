@@ -75,8 +75,8 @@ pnpm typecheck
 pnpm build
 ```
 
-`CLAUDE.md` explains how the app is put together. For a signed, notarized
-release you need a Developer ID Application certificate:
+For a signed, notarized release you need a Developer ID Application
+certificate:
 
 ```
 xcrun notarytool store-credentials dream-job-notary --apple-id <your Apple ID> --team-id <your team ID>

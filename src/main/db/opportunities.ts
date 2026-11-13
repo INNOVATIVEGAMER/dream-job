@@ -9,12 +9,13 @@ import type {
   TrackerQuery,
   TrackerRow,
 } from '../../shared/types'
+import type { Companies } from './companies'
 import { companyKey, now, paging, today } from './database'
 
 export const PAGE_SIZE = 15
 
 const ROW = `id, company, role, stage, score, status, last_touch AS lastTouch,
-  next_action AS nextAction, portal, job_id AS jobId, link, posting_state AS postingState`
+  next_action AS nextAction, portal, job_id AS jobId, link, posting_state AS postingState, company_id AS companyId`
 
 const FULL = `${ROW}, found, mode, applicants, referral, notes, pay, experience,
   apply_route AS applyRoute, score_reasons AS scoreReasons,
@@ -52,7 +53,10 @@ function parseReasons(value: unknown): string[] {
 
 /** The opportunities: every posting from the hunt onward, the tracker's rows. */
 export class Opportunities {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly companies: Companies,
+  ) {}
 
   page(query: TrackerQuery): TrackerPage {
     const where: string[] = []
@@ -103,6 +107,14 @@ export class Opportunities {
     const row = this.db.prepare(`SELECT ${FULL} FROM opportunities WHERE id = ?`).get(id) as Record<string, unknown> | undefined
     if (!row) return null
     return { ...(row as unknown as Opportunity), scoreReasons: parseReasons(row['scoreReasons']) }
+  }
+
+  /** The jobs one run added, best score first: what a hunt found. */
+  byRun(runId: number): TrackerRow[] {
+    return this.db
+      .prepare(`SELECT ${ROW} FROM opportunities WHERE run_id = ? ORDER BY score DESC, id ASC`)
+      .all(runId)
+      .map(row => ({ ...row }) as TrackerRow)
   }
 
   /** The found rows, best score first: what Apply works through. */
@@ -176,6 +188,7 @@ export class Opportunities {
         runId,
       )
     const id = Number(result.lastInsertRowid)
+    this.companies.attach('opportunities', id, posting.company, posting.stage)
     this.addEvent(id, `Found by run ${runId ?? '?'} on ${posting.portal}`, runId)
     return id
   }
@@ -191,6 +204,7 @@ export class Opportunities {
       )
       .run(day, input.company.trim(), input.stage, input.role.trim(), input.portal.trim() || 'direct', input.mode.trim(), day, input.notes.trim(), day, input.link.trim() || null)
     const id = Number(result.lastInsertRowid)
+    this.companies.attach('opportunities', id, input.company, input.stage)
     this.addEvent(id, 'Added by you', null)
     return id
   }

@@ -1,8 +1,9 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
 import { DISCARD_REASONS } from '../../shared/types'
-import type { DiscardedPage, DiscardedPosting, DiscardedQuery, DiscardReason, NeverShowCompany } from '../../shared/types'
-import { companyKey, now, paging, today } from './database'
+import type { DiscardedPage, DiscardedPosting, DiscardedQuery, DiscardReason } from '../../shared/types'
+import type { Companies } from './companies'
+import { now, paging } from './database'
 
 export const DISCARDED_PAGE_SIZE = 15
 
@@ -15,14 +16,19 @@ export type NewDiscard = Omit<DiscardedPosting, 'id' | 'at' | 'runId'>
 
 /** Postings the hunt ruled out, each with the line that ruled it out. The company stays eligible. */
 export class Discarded {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly companies: Companies,
+  ) {}
 
   add(posting: NewDiscard, runId: number | null): number {
     if (!posting.line.trim()) throw new Error('A discard needs the posting line that ruled it out.')
     const result = this.db
       .prepare(`INSERT INTO discarded (at, company, role, portal, job_id, link, line, reason, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(now(), posting.company, posting.role, posting.portal, posting.jobId, posting.link, posting.line.trim(), posting.reason, runId)
-    return Number(result.lastInsertRowid)
+    const id = Number(result.lastInsertRowid)
+    this.companies.attach('discarded', id, posting.company)
+    return id
   }
 
   get(id: number): DiscardedPosting | null {
@@ -64,44 +70,5 @@ export class Discarded {
 
   remove(id: number): void {
     this.db.prepare('DELETE FROM discarded WHERE id = ?').run(id)
-  }
-}
-
-/** Companies the hunt never shows again, whatever they post. A rejection does not put a company here. */
-export class NeverShow {
-  constructor(private readonly db: DatabaseSync) {}
-
-  list(): NeverShowCompany[] {
-    return this.db
-      .prepare('SELECT id, company, why, added FROM never_show ORDER BY company COLLATE NOCASE')
-      .all()
-      .map(row => ({ ...row }) as NeverShowCompany)
-  }
-
-  add(company: string, why: string): number {
-    const name = company.trim()
-    if (!name) throw new Error('Enter a company name.')
-    if (!why.trim()) throw new Error('Say why this company should never come back.')
-    const result = this.db
-      .prepare(
-        `INSERT INTO never_show (company, company_key, why, added) VALUES (?, ?, ?, ?)
-         ON CONFLICT (company_key) DO UPDATE SET why = excluded.why`,
-      )
-      .run(name, companyKey(name), why.trim(), today())
-    return Number(result.lastInsertRowid)
-  }
-
-  remove(id: number): void {
-    this.db.prepare('DELETE FROM never_show WHERE id = ?').run(id)
-  }
-
-  /** The entry that blocks this company, if any. */
-  match(company: string): NeverShowCompany | null {
-    const row = this.db.prepare('SELECT id, company, why, added FROM never_show WHERE company_key = ?').get(companyKey(company))
-    return row ? ({ ...row } as NeverShowCompany) : null
-  }
-
-  count(): number {
-    return Number((this.db.prepare('SELECT COUNT(*) AS n FROM never_show').get() as { n: number }).n)
   }
 }

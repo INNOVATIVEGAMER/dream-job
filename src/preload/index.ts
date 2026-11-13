@@ -36,6 +36,16 @@ const api: JobAppApi = {
     setStatus: call('tracker:setStatus'),
     setNotes: call('tracker:setNotes'),
     add: call('tracker:add'),
+    companies: call('tracker:companies'),
+  },
+  companies: {
+    get: call('companies:get'),
+    names: call('companies:names'),
+    setStage: call('companies:setStage'),
+    setNotes: call('companies:setNotes'),
+    setNeverShow: call('companies:setNeverShow'),
+    rename: call('companies:rename'),
+    merge: call('companies:merge'),
   },
   discarded: {
     page: call('discarded:page'),
@@ -45,6 +55,7 @@ const api: JobAppApi = {
     removeNeverShow: call('discarded:removeNeverShow'),
   },
   contacts: {
+    byCompany: call('contacts:byCompany'),
     page: call('contacts:page'),
     ready: call('contacts:ready'),
     applied: call('contacts:applied'),
@@ -57,6 +68,7 @@ const api: JobAppApi = {
     answer: call('runs:answer'),
     stop: call('runs:stop'),
     showTab: call('runs:showTab'),
+    jobs: call('runs:jobs'),
   },
   flows: {
     hunt: call('flows:hunt'),

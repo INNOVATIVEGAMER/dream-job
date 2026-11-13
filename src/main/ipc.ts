@@ -6,7 +6,7 @@ import type { BrowserWindow } from 'electron'
 import { z } from 'zod'
 
 import type { AppliedCompany, Channel, OpportunityDetail, RunDetail } from '../shared/api'
-import { CONTACT_STATES, HUNT_WINDOWS, PORTALS, SIGN_IN_SITES, SIGN_IN_URLS, STAGES } from '../shared/types'
+import { CONTACT_STATES, CONTACT_VIEWS, HUNT_WINDOWS, PORTALS, SIGN_IN_SITES, SIGN_IN_URLS, STAGES, TRACKER_VIEWS } from '../shared/types'
 import type { AppStatus, DataTopic, ResumeInfo } from '../shared/types'
 import type { ChromeController } from './browser/chrome'
 import { findChrome } from './browser/chrome'
@@ -37,6 +37,7 @@ const page = z.number().int().min(0).max(100_000)
 const short = (max = 200) => z.string().max(max)
 
 const TrackerQuery = z.object({ status: short(), stage: short(), portal: short(), search: short(), page })
+const CompanyQuery = z.object({ view: z.enum(TRACKER_VIEWS), stage: short(), portal: short(), search: short() })
 const DiscardedQuery = z.object({ reason: short(), search: short(), page })
 const ContactQuery = z.object({ state: short(), company: short(), search: short(), page })
 const RunQuery = z.object({ flow: short(), portal: short(), page })
@@ -102,7 +103,33 @@ export function registerIpc(deps: IpcDeps): void {
       const opportunity = store.opportunities.get(id.parse(rowId))
       if (!opportunity) return null
       const contacts = CONTACT_STATES.flatMap(state => store.contacts.atCompany(opportunity.company, state))
-      return { opportunity, events: store.opportunities.events(opportunity.id), contacts }
+      const company = opportunity.companyId ? store.companies.get(opportunity.companyId) : null
+      const jobs = opportunity.companyId ? (store.companies.detail(opportunity.companyId)?.jobs.length ?? 1) : 1
+      return { opportunity, events: store.opportunities.events(opportunity.id), contacts, company, companyJobs: jobs }
+    },
+    'tracker:companies': query => store.companies.list(CompanyQuery.parse(query)),
+
+    'companies:get': companyId => store.companies.detail(id.parse(companyId)),
+    'companies:names': () => store.companies.names(),
+    'companies:setStage': (companyId, stage) => {
+      store.companies.setStage(id.parse(companyId), z.enum(STAGES).parse(stage))
+      deps.sendData(['opportunities'])
+    },
+    'companies:setNotes': (companyId, notes) => {
+      store.companies.setNotes(id.parse(companyId), short(20_000).parse(notes))
+      deps.sendData(['opportunities'])
+    },
+    'companies:setNeverShow': (companyId, on, why) => {
+      store.companies.setNeverShow(id.parse(companyId), z.boolean().parse(on), short(500).parse(why ?? ''))
+      deps.sendData(['opportunities', 'discarded'])
+    },
+    'companies:rename': (companyId, name) => {
+      store.companies.rename(id.parse(companyId), short().parse(name))
+      deps.sendData(['opportunities', 'contacts', 'discarded'])
+    },
+    'companies:merge': (fromId, intoId) => {
+      store.companies.merge(id.parse(fromId), id.parse(intoId))
+      deps.sendData(['opportunities', 'contacts', 'discarded'])
     },
     'tracker:setStatus': (rowId, status) => {
       store.opportunities.setStatus(id.parse(rowId), short().parse(status))
@@ -141,6 +168,7 @@ export function registerIpc(deps: IpcDeps): void {
       deps.sendData(['discarded'])
     },
 
+    'contacts:byCompany': (view, search) => store.contactCompanies(z.enum(CONTACT_VIEWS).parse(view), short().parse(search ?? '')),
     'contacts:page': query => store.contacts.page(ContactQuery.parse(query)),
     'contacts:ready': () => store.readyCompanies(),
     'contacts:applied': (): AppliedCompany[] => store.appliedCompanies(),
@@ -158,6 +186,7 @@ export function registerIpc(deps: IpcDeps): void {
     'runs:answer': (cardId, answer) => deps.engine.answer(short().parse(cardId), CardAnswerSchema.parse(answer)),
     'runs:stop': () => deps.engine.stop(),
     'runs:showTab': key => deps.engine.showTab(short().parse(key)),
+    'runs:jobs': runId => store.opportunities.byRun(id.parse(runId)),
 
     'flows:hunt': options => deps.flows.hunt(HuntOptions.parse(options)),
     'flows:apply': rowIds => deps.flows.apply(z.array(id).min(1).max(200).parse(rowIds)),

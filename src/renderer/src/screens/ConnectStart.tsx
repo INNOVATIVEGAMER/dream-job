@@ -1,149 +1,106 @@
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 
-import { InfoIcon, PlayIcon } from '@phosphor-icons/react'
+import { UserPlusIcon } from '@phosphor-icons/react'
 
+import { AT_ONCE } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { day } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
-import { attempt, Columns, Hidden, Loading, Page, Section } from '../ui/common'
-import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
-  AlertTitle,
-  Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-  NativeSelect,
-  NativeSelectOption,
-  Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../ui/nx'
+import { attempt, Loading, Page, Tip } from '../ui/common'
+import { Segments } from '../ui/fields'
+import { Checkbox, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableSelectionCell, TableSelectionHead } from '../ui/nx'
 
-/** Starts a connection-request run: which companies, and how many people at each. */
-export function ConnectStart(): JSX.Element {
+const SAME = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase()
+
+/** Starts connection requests: which companies you applied to, and how many people at each. */
+export function ConnectStart({ company }: { company?: string }): JSX.Element {
   const status = useAppStatus()
   const applied = useData(() => api.contacts.applied(), [], ['contacts', 'opportunities'])
   const [picked, setPicked] = useState<string[]>([])
-  const [perCompany, setPerCompany] = useState(10)
+  const [perCompany, setPerCompany] = useState('10')
   const isBusy = status?.run?.status === 'running' || status?.run?.status === 'waiting'
 
-  // Companies with no requests yet start picked.
+  // Opened from a company: that one. Otherwise, the companies with no requests yet.
   useEffect(() => {
-    if (applied.data) setPicked(applied.data.filter(company => company.total === 0).map(company => company.company))
-  }, [applied.data])
+    if (!applied.data) return
+    setPicked(company ? applied.data.filter(one => SAME(one.company, company)).map(one => one.company) : applied.data.filter(one => one.total === 0).map(one => one.company))
+  }, [applied.data, company])
 
   const start = async (): Promise<void> => {
-    if (await attempt(() => api.flows.connect({ companies: picked, perCompany }))) go('/run')
+    if (await attempt(() => api.flows.connect({ companies: picked, perCompany: Number(perCompany) }))) go('/run')
   }
 
+  const list = applied.data ?? []
+  const all = list.length > 0 && picked.length === list.length
   return (
-    <Page
-      back={{ label: 'Contacts', to: '/contacts' }}
-      title="Send connection requests"
-      description="Blank requests on LinkedIn, with no note, to people in your field at the companies you pick. Nobody gets a message until they accept."
-      actions={
-        <Button startIcon={<PlayIcon />} disabled={isBusy || picked.length === 0} onClick={() => void start()}>
-          Send to {picked.length} {picked.length === 1 ? 'company' : 'companies'}
-        </Button>
-      }
-    >
-      <Columns
-        main={
-          <Section title="Companies you applied to">
-            {!applied.data ? (
-              <Loading />
-            ) : applied.data.length === 0 ? (
-              <span className="nx:typography-body-small nx:text-muted-foreground">No applications yet. Apply first, then connect.</span>
+    <Page title="Send connection requests" crumbs={[{ label: 'Contacts', to: '/contacts' }]} narrow>
+      {!applied.data ? (
+        <Loading />
+      ) : (
+        <>
+          <div className="nx:flex nx:flex-col nx:gap-2">
+            <div className="nx:flex nx:items-center nx:gap-1">
+              <span className="nx:typography-label-default">Companies</span>
+              <Tip text="Companies you applied to. Requests go out blank, with no note." />
+            </div>
+            {list.length === 0 ? (
+              <span className="nx:typography-body-small nx:text-muted-foreground">Apply somewhere first: requests point at an application.</span>
             ) : (
-              <Table aria-label="Companies to connect at" density="compact">
+              <Table aria-label="Companies you applied to" density="compact">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>
-                      <Hidden>Include</Hidden>
-                    </TableHead>
-                    <TableHead>Company and role</TableHead>
-                    <TableHead>Applied</TableHead>
-                    <TableHead>Requests so far</TableHead>
+                    <TableSelectionHead>
+                      <Checkbox aria-label="Pick every company" checked={all ? true : picked.length ? 'indeterminate' : false} onCheckedChange={on => setPicked(on === true ? list.map(one => one.company) : [])} />
+                    </TableSelectionHead>
+                    <TableHead>Company</TableHead>
+                    <TableHead>Applied for</TableHead>
+                    <TableHead className="nx:text-end">Already sent</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {applied.data.map(company => (
-                    <TableRow key={company.company}>
-                      <TableCell>
-                        <Switch
-                          size="sm"
-                          aria-label={`Include ${company.company}`}
-                          checked={picked.includes(company.company)}
-                          onCheckedChange={on => setPicked(current => (on ? [...current, company.company] : current.filter(one => one !== company.company)))}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <div className="nx:flex nx:flex-col">
-                          <span className="nx:typography-label-default">{company.company}</span>
-                          <span className="nx:typography-body-small nx:text-muted-foreground">{company.role}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="nx:tabular-nums">{day(company.appliedOn)}</TableCell>
-                      <TableCell>
-                        {company.total === 0 ? 'None yet' : `${company.pending} pending${company.accepted ? `, ${company.accepted} accepted` : ''}`}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {list.map(one => {
+                    const on = picked.includes(one.company)
+                    return (
+                      <TableRow key={one.company} data-state={on ? 'selected' : undefined}>
+                        <TableSelectionCell>
+                          <Checkbox
+                            aria-label={`Send to ${one.company}`}
+                            checked={on}
+                            onCheckedChange={value => setPicked(current => (value === true ? [...current, one.company] : current.filter(name => name !== one.company)))}
+                          />
+                        </TableSelectionCell>
+                        <TableCell className="nx:typography-label-default">{one.company}</TableCell>
+                        <TableCell className="nx:typography-body-small nx:text-muted-foreground">
+                          {one.role} · {day(one.appliedOn)}
+                        </TableCell>
+                        <TableCell className="nx:text-end nx:typography-body-small nx:tabular-nums">{one.total || '–'}</TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             )}
-          </Section>
-        }
-        side={
-          <>
-            <Card>
-              <CardHeader>
-                <CardTitle>Who and how many</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="connect-count">Requests per company</FieldLabel>
-                    <NativeSelect id="connect-count" value={String(perCompany)} onChange={event => setPerCompany(Number(event.target.value))}>
-                      <NativeSelectOption value="5">Up to 5</NativeSelectOption>
-                      <NativeSelectOption value="10">Up to 10</NativeSelectOption>
-                      <NativeSelectOption value="20">Up to 20</NativeSelectOption>
-                    </NativeSelect>
-                  </Field>
-                  <Field>
-                    <FieldLabel>People</FieldLabel>
-                    <FieldDescription>
-                      People in your field at the company, matched to your target roles and closest to the role first, and its recruiters. For an undisclosed client, the recruiter who posted it.
-                    </FieldDescription>
-                  </Field>
-                </FieldGroup>
-              </CardContent>
-            </Card>
-            <Alert variant="information" layout="stack">
-              <AlertIcon>
-                <InfoIcon />
-              </AlertIcon>
-              <AlertTitle>LinkedIn's weekly limit</AlertTitle>
-              <AlertDescription>LinkedIn limits how many invitations go out a week. When it says the limit is reached, the run stops and keeps what was sent.</AlertDescription>
-            </Alert>
-          </>
-        }
-      />
+          </div>
+          <div className="nx:flex nx:flex-col nx:gap-2">
+            <div className="nx:flex nx:items-center nx:gap-1">
+              <span className="nx:typography-label-default">People per company</span>
+              <Tip text="Engineers in your field first, then their managers and the hiring team." />
+            </div>
+            <div>
+              <Segments value={perCompany} ariaLabel="People per company" options={['5', '10', '15'].map(n => ({ value: n, label: n }))} onChange={setPerCompany} />
+            </div>
+          </div>
+          <div className="nx:flex nx:items-center nx:gap-3">
+            <Button startIcon={<UserPlusIcon />} disabled={isBusy || picked.length === 0} onClick={() => void start()}>
+              Send to {picked.length} {picked.length === 1 ? 'company' : 'companies'}
+            </Button>
+            <span className="nx:typography-body-small nx:text-muted-foreground">{picked.length > 1 ? `${Math.min(AT_ONCE, picked.length)} at a time, one session each` : isBusy ? 'Another run is going.' : ''}</span>
+          </div>
+        </>
+      )}
     </Page>
   )
 }

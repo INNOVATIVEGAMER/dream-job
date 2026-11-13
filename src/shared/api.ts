@@ -1,5 +1,11 @@
 import type {
   AppStatus,
+  ContactCompanies,
+  ContactView,
+  Company,
+  CompanyDetail,
+  CompanyList,
+  CompanyQuery,
   BrowserInfo,
   CardAnswer,
   Contact,
@@ -35,9 +41,10 @@ import type {
   SiteState,
   TrackerPage,
   TrackerQuery,
+  TrackerRow,
 } from './types'
 
-export type OpportunityDetail = { opportunity: Opportunity; events: OpportunityEvent[]; contacts: Contact[] }
+export type OpportunityDetail = { opportunity: Opportunity; events: OpportunityEvent[]; contacts: Contact[]; company: Company | null; companyJobs: number }
 
 export type RunDetail = { summary: RunSummary; events: RunEvent[] }
 
@@ -78,6 +85,18 @@ export type JobAppApi = {
     setStatus: (id: number, status: string) => Promise<void>
     setNotes: (id: number, notes: string) => Promise<void>
     add: (input: NewOpportunity & { status: string }) => Promise<number>
+    /** The tracker, company first: each company with its jobs in the view. */
+    companies: (query: CompanyQuery) => Promise<CompanyList>
+  }
+  companies: {
+    get: (id: number) => Promise<CompanyDetail | null>
+    names: () => Promise<{ id: number; name: string }[]>
+    setStage: (id: number, stage: string) => Promise<void>
+    setNotes: (id: number, notes: string) => Promise<void>
+    setNeverShow: (id: number, on: boolean, why?: string) => Promise<void>
+    rename: (id: number, name: string) => Promise<void>
+    /** Moves everything at one company onto another. */
+    merge: (fromId: number, intoId: number) => Promise<void>
   }
   discarded: {
     page: (query: DiscardedQuery) => Promise<DiscardedPage>
@@ -87,6 +106,8 @@ export type JobAppApi = {
     removeNeverShow: (id: number) => Promise<void>
   }
   contacts: {
+    /** Contacts, company first. */
+    byCompany: (view: ContactView, search: string) => Promise<ContactCompanies>
     page: (query: ContactQuery) => Promise<ContactPage>
     ready: () => Promise<ReadyCompany[]>
     applied: () => Promise<AppliedCompany[]>
@@ -100,6 +121,8 @@ export type JobAppApi = {
     stop: () => Promise<void>
     /** Shows one session's tab in Chrome: by its lane key, or by a card it waits on. */
     showTab: (key: string) => Promise<void>
+    /** The jobs a run added: what a hunt found. */
+    jobs: (runId: number) => Promise<TrackerRow[]>
   }
   flows: {
     hunt: (options: HuntOptions) => Promise<number>
@@ -153,11 +176,20 @@ export const CHANNELS = [
   'tracker:setStatus',
   'tracker:setNotes',
   'tracker:add',
+  'tracker:companies',
+  'companies:get',
+  'companies:names',
+  'companies:setStage',
+  'companies:setNotes',
+  'companies:setNeverShow',
+  'companies:rename',
+  'companies:merge',
   'discarded:page',
   'discarded:restore',
   'discarded:neverShow',
   'discarded:addNeverShow',
   'discarded:removeNeverShow',
+  'contacts:byCompany',
   'contacts:page',
   'contacts:ready',
   'contacts:applied',
@@ -168,6 +200,7 @@ export const CHANNELS = [
   'runs:answer',
   'runs:stop',
   'runs:showTab',
+  'runs:jobs',
   'flows:hunt',
   'flows:apply',
   'flows:connect',

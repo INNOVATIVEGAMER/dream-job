@@ -3,8 +3,6 @@ import type { JSX, ReactNode } from 'react'
 import {
   ArchiveIcon,
   BriefcaseIcon,
-  BrowserIcon,
-  CheckCircleIcon,
   ClockCounterClockwiseIcon,
   GearIcon,
   HandPalmIcon,
@@ -20,8 +18,13 @@ import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
+import { CommandMenu } from './CommandMenu'
 import {
-  Badge,
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+  Button,
   Sidebar,
   SidebarContent,
   SidebarFooter,
@@ -35,7 +38,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarTrigger,
   Spinner,
 } from './nx'
 
@@ -58,90 +60,72 @@ function lanesLine(run: NonNullable<AppStatus['run']>): string {
   const waiting = run.lanes.filter(lane => lane.status === 'waiting').length
   const working = run.lanes.filter(lane => lane.status === 'running').length
   const done = run.lanes.filter(lane => lane.status !== 'running' && lane.status !== 'waiting' && lane.status !== 'queued').length
-  return [waiting ? `${waiting} waiting for you` : '', working ? `${working} working` : '', `${done} of ${run.lanes.length} done`].filter(Boolean).join(', ')
+  return [waiting ? `${waiting} need${waiting === 1 ? 's' : ''} you` : '', working ? `${working} working` : '', `${done} of ${run.lanes.length} done`].filter(Boolean).join(', ')
 }
 
-function RunningNow({ status, section }: { status: AppStatus | null; section: string }): JSX.Element {
+/** The run going now, in the sidebar; no run, no group. */
+function RunningNow({ status, section }: { status: AppStatus | null; section: string }): JSX.Element | null {
   const run = status?.run
-  const isBusy = run && (run.status === 'running' || run.status === 'waiting')
-  if (!run || !isBusy) {
-    return <p className="nx:typography-body-small nx:m-0 nx:px-2 nx:text-nav-muted-foreground">Nothing. Start a flow from Home.</p>
-  }
+  if (!run || (run.status !== 'running' && run.status !== 'waiting')) return null
   const line =
     run.lanes.length > 1
       ? lanesLine(run)
       : run.status === 'waiting'
-        ? 'Waiting for you'
+        ? 'Needs you'
         : run.progress
           ? `${run.progress.label}, ${run.progress.done} of ${run.progress.total}`
           : 'Running'
   return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton size="lg" isActive={section === 'run'} onClick={() => go('/run')}>
-          {run.status === 'waiting' ? <HandPalmIcon /> : <Spinner />}
-          <div className="nx:flex nx:flex-col nx:min-w-0">
-            <span className="nx:typography-label-default nx:truncate">{run.title}</span>
-            <span className="nx:typography-body-small nx:text-nav-muted-foreground nx:truncate">{line}</span>
-          </div>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
+    <SidebarGroup>
+      <SidebarGroupLabel>Running now</SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton size="lg" isActive={section === 'run'} onClick={() => go('/run')}>
+              {run.status === 'waiting' ? <HandPalmIcon /> : <Spinner />}
+              <div className="nx:flex nx:flex-col nx:min-w-0">
+                <span className="nx:typography-label-default nx:truncate">{run.title}</span>
+                <span className="nx:typography-body-small nx:text-nav-muted-foreground nx:truncate">{line}</span>
+              </div>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   )
 }
 
-function StatusBadges({ status }: { status: AppStatus | null }): JSX.Element {
+/** Claude or Chrome needing attention: one line, only when something is wrong. */
+function Problems({ status }: { status: AppStatus | null }): JSX.Element | null {
   const claude = status?.claude
-  const browser = status?.browser
-  const claudeOk = claude?.state === 'ok'
-  const chromeLabel =
-    browser?.mode === 'controlled' ? 'Chrome connected' : browser?.mode === 'signin' ? 'Chrome open to sign in' : 'Chrome closed'
+  const claudeBad = claude && claude.state !== 'ok' && claude.state !== 'checking'
+  const chromeBad = status?.browser.error
+  if (!claudeBad && !chromeBad) return null
   return (
-    <>
-      <Badge
-        variant={claudeOk ? 'success' : claude?.state === 'checking' ? 'secondary' : 'warning'}
-        fill="light"
-        isCaps={false}
-        leftIcon={claudeOk ? <CheckCircleIcon /> : claude?.state === 'checking' ? <Spinner /> : <WarningIcon />}
-        title={claude?.message}
-      >
-        {claudeOk ? 'Claude signed in' : claude?.state === 'checking' ? 'Checking Claude' : 'Claude needs attention'}
-      </Badge>
-      <Badge
-        variant={browser?.mode === 'controlled' ? 'information' : 'secondary'}
-        fill="light"
-        isCaps={false}
-        leftIcon={<BrowserIcon />}
-        title={browser?.error ?? undefined}
-      >
-        {chromeLabel}
-      </Badge>
-    </>
+    <div className="nx:px-4 nx:pt-3">
+      <Alert variant="warning" layout="inline">
+        <AlertIcon>
+          <WarningIcon />
+        </AlertIcon>
+        <AlertContent>
+          <AlertDescription>{claudeBad ? (claude.message ?? 'Claude Code needs attention.') : chromeBad}</AlertDescription>
+        </AlertContent>
+        <Button variant="outline" size="sm" onClick={() => go('/settings/accounts')}>
+          Open Accounts
+        </Button>
+      </Alert>
+    </div>
   )
 }
 
-const TITLES: Record<string, string> = {
-  home: 'Home',
-  tracker: 'Tracker',
-  opportunity: 'Tracker',
-  email: 'Tracker',
-  hunt: 'Hunt',
-  run: 'Running now',
-  runs: 'Run history',
-  contacts: 'Contacts',
-  discarded: 'Discarded',
-  settings: 'Settings',
-}
-
-/** The app's frame: the sidebar, the top bar with Claude and Chrome, and the screen. */
-export function Shell({ section, name, children }: { section: string; name: string; children: ReactNode }): JSX.Element {
+/** The app's frame: the sidebar, the command menu, and the screen. Each screen draws its own top bar. */
+export function Shell({ section, children }: { section: string; children: ReactNode }): JSX.Element {
   const status = useAppStatus()
   const home = useData(() => api.home(), [], ['opportunities', 'contacts'])
-  const total = home.data ? Object.values(home.data.counts).reduce((sum, n) => sum + n, 0) : undefined
 
-  const search: NavItem[] = [
+  const main: NavItem[] = [
     { to: '/', label: 'Home', icon: <HouseIcon />, match: 'home' },
-    { to: '/tracker', label: 'Tracker', icon: <TableIcon />, match: 'tracker', badge: total },
+    { to: '/tracker', label: 'Tracker', icon: <TableIcon />, match: 'tracker', badge: home.data?.companyCount || undefined },
     { to: '/hunt', label: 'Hunt', icon: <MagnifyingGlassIcon />, match: 'hunt' },
     { to: '/contacts', label: 'Contacts', icon: <UsersThreeIcon />, match: 'contacts', badge: home.data?.contactCounts.accepted || undefined },
   ]
@@ -149,29 +133,25 @@ export function Shell({ section, name, children }: { section: string; name: stri
     { to: '/discarded', label: 'Discarded', icon: <ArchiveIcon />, match: 'discarded' },
     { to: '/runs', label: 'Run history', icon: <ClockCounterClockwiseIcon />, match: 'runs' },
   ]
-  // A row, and the email check that moves rows on, sit under Tracker.
-  const navSection = section === 'opportunity' || section === 'email' ? 'tracker' : section
+  // A company, a job, and the email check that moves jobs on all sit under Tracker.
+  const navSection = ['opportunity', 'company', 'email'].includes(section) ? 'tracker' : section
 
   return (
     <SidebarProvider>
       <Sidebar>
         <SidebarHeader>
           <div className="nx:flex nx:items-center nx:gap-2 nx:px-2 nx:py-1">
-            <span className="nx:inline-flex nx:items-center nx:justify-center nx:rounded-md nx:bg-primary-background nx:text-primary-foreground" style={{ width: 28, height: 28 }}>
-              <BriefcaseIcon />
+            <span className="nx:inline-flex nx:items-center nx:justify-center nx:rounded-sm nx:bg-primary-background nx:text-primary-foreground" style={{ width: 24, height: 24 }}>
+              <BriefcaseIcon size={14} />
             </span>
-            <div className="nx:flex nx:flex-col nx:min-w-0">
-              <span className="nx:typography-label-default">Dream Job</span>
-              <span className="nx:typography-body-small nx:text-nav-muted-foreground nx:truncate">{name || 'Your job search'}</span>
-            </div>
+            <span className="nx:typography-label-default">Dream Job</span>
           </div>
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
-            <SidebarGroupLabel>Search</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {search.map(item => (
+                {main.map(item => (
                   <NavButton key={item.to} item={item} section={navSection} />
                 ))}
               </SidebarMenu>
@@ -187,12 +167,7 @@ export function Shell({ section, name, children }: { section: string; name: stri
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-          <SidebarGroup>
-            <SidebarGroupLabel>Running now</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <RunningNow status={status} section={navSection} />
-            </SidebarGroupContent>
-          </SidebarGroup>
+          <RunningNow status={status} section={navSection} />
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>
@@ -201,13 +176,10 @@ export function Shell({ section, name, children }: { section: string; name: stri
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
-        <header className="nx:flex nx:flex-wrap nx:items-center nx:gap-2 nx:px-6 nx:py-3 nx:border-b-default nx:border-border-default">
-          <SidebarTrigger aria-label="Show or hide the sidebar" />
-          <span className="nx:typography-label-default nx:flex-1">{TITLES[section] ?? 'Dream Job'}</span>
-          <StatusBadges status={status} />
-        </header>
+        <Problems status={status} />
         {children}
       </SidebarInset>
+      <CommandMenu />
     </SidebarProvider>
   )
 }

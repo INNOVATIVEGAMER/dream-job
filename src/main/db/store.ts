@@ -1,10 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite'
 
 import type { AppliedCompany } from '../../shared/api'
-import type { DiscardReason, EmailChange, EmailRunDetail, EmailSummary, HomeSummary, NeedsYou, ReadyCompany, TrackerRow } from '../../shared/types'
+import { CONTACT_STATES } from '../../shared/types'
+import type { Contact, ContactCompanies, ContactCompany, ContactState, ContactView, DiscardReason, EmailChange, EmailRunDetail, EmailSummary, HomeSummary, NeedsYou, ReadyCompany, TrackerRow } from '../../shared/types'
+import { Companies, NeverShow } from './companies'
 import { Contacts } from './contacts'
 import { companyKey, openDatabase } from './database'
-import { Discarded, NeverShow } from './discarded'
+import { Discarded } from './discarded'
 import { EmailStore } from './email'
 import { Opportunities } from './opportunities'
 import { Runs } from './runs'
@@ -15,6 +17,7 @@ import { SettingsStore } from './settings'
  * main process), and one object per kind of record.
  */
 export class Store {
+  readonly companies: Companies
   readonly opportunities: Opportunities
   readonly discarded: Discarded
   readonly neverShow: NeverShow
@@ -24,13 +27,14 @@ export class Store {
   readonly email: EmailStore
 
   private constructor(private readonly db: DatabaseSync) {
-    this.opportunities = new Opportunities(db)
-    this.discarded = new Discarded(db)
-    this.neverShow = new NeverShow(db)
-    this.contacts = new Contacts(db)
+    this.companies = new Companies(db)
+    this.opportunities = new Opportunities(db, this.companies)
+    this.discarded = new Discarded(db, this.companies)
+    this.neverShow = new NeverShow(this.companies)
+    this.contacts = new Contacts(db, this.companies)
     this.runs = new Runs(db)
     this.settings = new SettingsStore(db)
-    this.email = new EmailStore(db)
+    this.email = new EmailStore(db, this.companies)
   }
 
   static open(path: string): Store {
@@ -65,6 +69,38 @@ export class Store {
       const row = this.appliedRow(entry.company)
       return { ...entry, opportunityId: row?.id ?? null, role: row?.role ?? null, appliedOn: row ? row.lastTouch : null }
     })
+  }
+
+  /** Contacts, company first: each company with the job applied for and its people in the view. */
+  contactCompanies(view: ContactView, search: string): ContactCompanies {
+    const all = this.contacts.all()
+    const ready = new Set(this.contacts.readyCompanies().filter(entry => entry.isReady).map(entry => companyKey(entry.company)))
+    const byCompany = new Map<number, { name: string; people: Contact[] }>()
+    for (const contact of all as (Contact & { companyId: number | null })[]) {
+      if (!contact.companyId) continue
+      const entry = byCompany.get(contact.companyId) ?? { name: contact.company, people: [] }
+      entry.people.push(contact)
+      byCompany.set(contact.companyId, entry)
+    }
+    const wanted = search.trim().toLowerCase()
+    const counts = { ready: ready.size, pending: 0, accepted: 0, messaged: 0, referred: 0, all: all.length } as Record<ContactView, number>
+    for (const contact of all) counts[contact.state]++
+
+    const companies: ContactCompany[] = []
+    for (const [id, entry] of byCompany) {
+      const company = this.companies.get(id)
+      const name = company?.name ?? entry.name
+      const states = Object.fromEntries(CONTACT_STATES.map(state => [state, entry.people.filter(person => person.state === state).length])) as Record<ContactState, number>
+      const isReady = ready.has(companyKey(name))
+      if (view === 'ready' && !isReady) continue
+      let people = view === 'all' || view === 'ready' ? entry.people : entry.people.filter(person => person.state === view)
+      if (wanted && !name.toLowerCase().includes(wanted)) people = people.filter(person => person.name.toLowerCase().includes(wanted))
+      if (!people.length) continue
+      const row = this.appliedRow(name)
+      companies.push({ id, name, jobId: row?.id ?? null, role: row?.role ?? null, counts: states, isReady, people })
+    }
+    companies.sort((a, b) => Number(b.isReady) - Number(a.isReady) || b.counts.accepted - a.counts.accepted || a.name.localeCompare(b.name))
+    return { companies, counts, people: all.length, companyCount: byCompany.size }
   }
 
   /** Companies the user applied to, newest first, with where their connection requests stand. */
@@ -201,13 +237,7 @@ export class Store {
     for (const site of this.settings.sites()) {
       if (site.state === 'signed-out') {
         const name = site.site[0]!.toUpperCase() + site.site.slice(1)
-        needsYou.push({
-          id: `site-${site.site}`,
-          icon: 'sign-in',
-          title: `${name} signed you out`,
-          body: `Sign in once in Chrome. Runs on ${name} wait until you do.`,
-          action: { label: 'Open to sign in', to: '#/settings/accounts' },
-        })
+        needsYou.push({ id: `site-${site.site}`, icon: 'sign-in', title: `${name} is signed out`, body: "In the app's Chrome", action: { label: 'Sign in', to: '#/settings/accounts' } })
       }
     }
     for (const company of this.readyCompanies().filter(entry => entry.isReady)) {
@@ -215,32 +245,31 @@ export class Store {
         id: `ready-${company.company}`,
         icon: 'users',
         title: `${company.accepted} accepted at ${company.company}`,
-        body: 'Ready for your referral message, word for word, with your resume.',
-        action: { label: 'Send messages', to: '#/contacts' },
+        body: 'Ready for your referral message',
+        action: { label: 'Message', to: `#/contacts/message/${encodeURIComponent(company.company)}` },
       })
     }
     const replied = this.opportunities.page({ status: 'replied', stage: 'all', portal: 'all', search: '', page: 0 }).rows
     for (const row of replied.slice(0, 3)) {
+      needsYou.push({ id: `replied-${row.id}`, icon: 'chat', title: `${row.company} replied`, body: row.role, action: { label: 'Open', to: `#/opportunity/${row.id}` } })
+    }
+    const email = this.emailSummary()
+    if (email.waiting > 0 && email.lastRunId) {
       needsYou.push({
-        id: `replied-${row.id}`,
-        icon: 'chat',
-        title: `${row.company} replied`,
-        body: row.nextAction || 'Your reply is yours to send.',
-        action: { label: 'Open the row', to: `#/opportunity/${row.id}` },
+        id: 'email-waiting',
+        icon: 'hand',
+        title: `${email.waiting} ${email.waiting === 1 ? 'email' : 'emails'} about jobs you don't track`,
+        body: 'From the email check',
+        action: { label: 'Review', to: `#/email/${email.lastRunId}` },
       })
     }
     if (!this.settings.resume()) {
-      needsYou.push({
-        id: 'resume',
-        icon: 'warning',
-        title: 'Add your resume',
-        body: 'Apply and the referral message attach it. Add the PDF in Settings.',
-        action: { label: 'Open Settings', to: '#/settings/resume' },
-      })
+      needsYou.push({ id: 'resume', icon: 'warning', title: 'Add your resume', body: 'Applications and referral messages attach it', action: { label: 'Add', to: '#/settings/resume' } })
     }
 
     return {
       counts,
+      companyCount: this.companies.count(),
       nextFound: found[0] ?? null,
       foundCount: counts['found'] ?? 0,
       contactCounts,
@@ -248,7 +277,7 @@ export class Store {
       needsYou,
       recentRuns: this.runs.recent(4),
       lastHunt: this.runs.last('hunt'),
-      email: this.emailSummary(),
+      email,
     }
   }
 
