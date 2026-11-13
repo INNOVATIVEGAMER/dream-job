@@ -1,9 +1,9 @@
-# job-app
+# dream-job
 
 A local Electron app for the job search: a tracker, flows started from
 buttons, and a built-in browser, with Claude driven through the Agent SDK on
-the user's own Claude subscription. Private, personal, used daily; no public
-release.
+the user's own Claude Code sign-in. Open source under Apache 2.0, and used
+daily by its author.
 
 Scope doc (the POC's checks and build order):
 https://claude.ai/artifact/2jzHoWNXxeDz7JwwYnEHAm
@@ -21,8 +21,11 @@ https://claude.ai/artifact/2jzHoWNXxeDz7JwwYnEHAm
 ## AI
 
 - Claude runs through `@anthropic-ai/claude-agent-sdk`, pointed at the user's
-  installed, signed-in `claude`. Never an API key: remove `ANTHROPIC_API_KEY`
-  from the environment Claude Code runs in.
+  installed, signed-in `claude`. **Never restrict how Claude Code signs in**:
+  Anthropic's terms forbid removing or restricting any of its built-in methods
+  (a Claude account or the user's own API key). The environment passes
+  through untouched, and setup accepts every sign-in Claude Code reports.
+  The app itself never handles a key or token.
 - `src/main/claude.ts` finds the user's `claude` (PATH, then `~/.local/bin`
   and the other install places) and runs the setup check: `query()` with a
   prompt that never yields, `tools: []`, `settingSources: []`,
@@ -108,7 +111,7 @@ https://claude.ai/artifact/2jzHoWNXxeDz7JwwYnEHAm
   Chrome user agent and a Chrome brand list sent through the DevTools protocol.
   Both were tried. Do not go back to an embedded browser for signed-in sites.
 - The app opens the installed Google Chrome with its own profile
-  (`~/Library/Application Support/job-app/chrome-profile`, outside the repo so
+  (`~/Library/Application Support/dream-job/chrome-profile`, outside the repo so
   cookies never reach git), beside the app's window, in one of two modes:
   - `controlled`: `--remote-debugging-pipe`, a private pipe to the app only, no
     network port and no automation flags, so no banner and nothing a page can see

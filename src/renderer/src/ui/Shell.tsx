@@ -161,7 +161,7 @@ export function Shell({ section, name, children }: { section: string; name: stri
               <BriefcaseIcon />
             </span>
             <div className="nx:flex nx:flex-col nx:min-w-0">
-              <span className="nx:typography-label-default">Job App</span>
+              <span className="nx:typography-label-default">Dream Job</span>
               <span className="nx:typography-body-small nx:text-nav-muted-foreground nx:truncate">{name || 'Your job search'}</span>
             </div>
           </div>
@@ -203,7 +203,7 @@ export function Shell({ section, name, children }: { section: string; name: stri
       <SidebarInset>
         <header className="nx:flex nx:flex-wrap nx:items-center nx:gap-2 nx:px-6 nx:py-3 nx:border-b-default nx:border-border-default">
           <SidebarTrigger aria-label="Show or hide the sidebar" />
-          <span className="nx:typography-label-default nx:flex-1">{TITLES[section] ?? 'Job App'}</span>
+          <span className="nx:typography-label-default nx:flex-1">{TITLES[section] ?? 'Dream Job'}</span>
           <StatusBadges status={status} />
         </header>
         {children}

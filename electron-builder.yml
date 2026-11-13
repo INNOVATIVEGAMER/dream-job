@@ -1,11 +1,11 @@
-# How Job App is packaged for macOS. `pnpm dist:mac` builds a release:
+# How Dream Job is packaged for macOS. `pnpm dist:mac` builds a release:
 # signed with the Developer ID certificate in the keychain, and notarized
 # when Apple credentials are in the environment (see README, Packaging).
 # `pnpm dist:mac:local` builds one only for this Mac, signed ad hoc.
 
-appId: com.jobapp.desktop
-productName: Job App
-copyright: Copyright © 2026 Job App contributors
+appId: com.dreamjob.desktop
+productName: Dream Job
+copyright: Copyright © 2026 Dream Job contributors
 
 directories:
   output: release
@@ -32,10 +32,10 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   minimumSystemVersion: '12.0'
   # The zip; the dmg names its own below.
-  artifactName: Job-App-${version}-${arch}-mac.${ext}
+  artifactName: Dream-Job-${version}-${arch}-mac.${ext}
   extendInfo:
-    NSHumanReadableCopyright: Job App drives your own Google Chrome and your own Claude Code.
+    NSHumanReadableCopyright: Dream Job drives your own Google Chrome and your own Claude Code.
 
 dmg:
-  title: Job App ${version}
-  artifactName: Job-App-${version}-${arch}.${ext}
+  title: Dream Job ${version}
+  artifactName: Dream-Job-${version}-${arch}.${ext}

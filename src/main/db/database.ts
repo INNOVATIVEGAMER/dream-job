@@ -11,7 +11,7 @@ export function today(at = new Date()): string {
 /** Now as an ISO timestamp, for events and runs. */
 export const now = (): string => new Date().toISOString()
 
-/** A company name reduced for matching: "Fireflies.ai" and "fireflies ai" are the same company. */
+/** A company name reduced for matching: "Acme.io" and "acme io" are the same company. */
 export function companyKey(company: string): string {
   return company.toLowerCase().replace(/[^a-z0-9]+/g, '')
 }

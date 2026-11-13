@@ -28,7 +28,7 @@ const chromeNow = (): bigint => BigInt(Date.now()) * 1000n + 11_644_473_600_000_
 export function readSignIns(profileDir: string): Partial<Record<SignInSite, SiteState['state']>> {
   const file = [join(profileDir, 'Default', 'Network', 'Cookies'), join(profileDir, 'Default', 'Cookies')].find(path => existsSync(path))
   if (!file) return {}
-  const dir = mkdtempSync(join(tmpdir(), 'job-app-cookies-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dream-job-cookies-'))
   try {
     const copy = join(dir, 'Cookies')
     copyFileSync(file, copy)

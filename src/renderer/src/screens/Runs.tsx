@@ -55,7 +55,7 @@ function RunDetailCard({ id }: { id: number }): JSX.Element {
   )
 }
 
-/** Every flow run: what it did, how long it took, and what it used of the Claude plan. */
+/** Every flow run: what it did, how long it took, and the Claude usage it took. */
 export function Runs({ selected }: { selected: number | null }): JSX.Element {
   const [query, setQuery] = useState<RunQuery>({ flow: 'all', portal: 'all', page: 0 })
   const page = useData(() => api.runs.page(query), [JSON.stringify(query)], ['runs'])
@@ -63,7 +63,7 @@ export function Runs({ selected }: { selected: number | null }): JSX.Element {
   const shown = selected ?? data?.rows[0]?.id ?? null
 
   return (
-    <Page title="Run history" description="Every flow run, with what it did, how long it took and what it used of your Claude plan.">
+    <Page title="Run history" description="Every flow run, with what it did, how long it took and the Claude usage it took.">
       <div className="nx:flex nx:flex-wrap nx:gap-2 nx:items-center">
         <NativeSelect aria-label="Flow" value={query.flow} onChange={event => setQuery(current => ({ ...current, flow: event.target.value, page: 0 }))}>
           <NativeSelectOption value="all">All flows</NativeSelectOption>

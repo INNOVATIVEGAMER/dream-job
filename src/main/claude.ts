@@ -40,17 +40,15 @@ export async function findClaude(): Promise<string | null> {
 }
 
 /**
- * The environment Claude Code runs in: the app's own, minus every API
- * credential, so its usage can only bill the user's Claude plan. The SDK's
- * `env` replaces the whole environment, so PATH and HOME come along.
+ * The environment Claude Code runs in: the app's own, plus the places
+ * installers put command-line tools. Credentials pass through untouched:
+ * Claude Code signs in however the user set it up, a Claude plan or their own
+ * API key, and Anthropic's terms forbid restricting either. The SDK's `env`
+ * replaces the whole environment, so PATH and HOME come along.
  */
 export function claudeEnv(): Record<string, string | undefined> {
   const path = [...new Set([...(process.env['PATH'] ?? '').split(delimiter), ...toolDirs(), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].filter(Boolean))]
-  const env: Record<string, string | undefined> = { ...process.env, PATH: path.join(delimiter), CLAUDE_AGENT_SDK_CLIENT_APP: 'job-app/0.1.0' }
-  delete env['ANTHROPIC_API_KEY']
-  delete env['ANTHROPIC_AUTH_TOKEN']
-
-  return env
+  return { ...process.env, PATH: path.join(delimiter), CLAUDE_AGENT_SDK_CLIENT_APP: 'dream-job/0.1.0' }
 }
 
 /** A prompt that never sends a message: Claude Code starts and answers questions, and no model request is made. */
@@ -76,19 +74,17 @@ function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
 
 const isSet = (value: string | undefined): value is string => Boolean(value) && value !== 'none'
 
-/** Reads the verdict from what Claude Code says about the account. */
+/**
+ * Reads the verdict from what Claude Code says about the account. Every way
+ * Claude Code can sign in counts: a Claude plan, an API key, or a cloud
+ * provider. The message says which one runs will use.
+ */
 export function judge(account: AccountInfo): Pick<ClaudeStatus, 'state' | 'message'> {
   if (account.apiProvider && account.apiProvider !== 'firstParty') {
-    return {
-      state: 'other-provider',
-      message: `Claude Code is set up for ${account.apiProvider}, not your Claude subscription. Run claude auth login to sign in with your Claude account.`,
-    }
+    return { state: 'ok', message: `Signed in through ${account.apiProvider}. Runs use that account.` }
   }
   if (isSet(account.apiKeySource)) {
-    return {
-      state: 'api-key',
-      message: `Claude Code is signed in with an API key (${account.apiKeySource}), which would bill the API. Sign in with your Claude account instead: claude auth login.`,
-    }
+    return { state: 'ok', message: `Signed in with your API key (${account.apiKeySource}). Runs bill your Anthropic API account.` }
   }
   // A signed-in account reports an email or a plan; `tokenSource` is often
   // left out entirely, so its absence alone does not mean signed out.
@@ -98,7 +94,7 @@ export function judge(account: AccountInfo): Pick<ClaudeStatus, 'state' | 'messa
     return { state: 'ok', message: `Signed in${account.email ? ` as ${account.email}` : ''} on ${plan}.` }
   }
 
-  return { state: 'signed-out', message: 'Claude Code is not signed in. Run claude auth login in a terminal, then check again.' }
+  return { state: 'signed-out', message: 'Claude Code is not signed in. Run claude auth login in a terminal, with your Claude account or an API key, then check again.' }
 }
 
 /**

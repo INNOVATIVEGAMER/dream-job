@@ -24,7 +24,7 @@ const toSummary = (row: RunRow): RunSummary => ({
   usage: { turns: row.turns, inputTokens: row.inputTokens, outputTokens: row.outputTokens, ms: row.ms },
 })
 
-/** Every flow run, with its activity log and what it used of the Claude plan. */
+/** Every flow run, with its activity log and the Claude usage it took. */
 export class Runs {
   constructor(private readonly db: DatabaseSync) {}
 

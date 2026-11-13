@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { app, BrowserWindow, screen } from 'electron'
@@ -13,8 +13,12 @@ import { registerIpc } from './ipc'
 import { RunEngine } from './runs/engine'
 
 // One data folder for the app from the repository and the packaged app alike,
-// whatever name each runs under.
-app.setPath('userData', join(app.getPath('appData'), 'job-app'))
+// whatever name each runs under. Dream Job was first called Job App: its folder moves
+// to the new name once, on the first start after the rename, sign-ins and all.
+const dataFolder = join(app.getPath('appData'), 'dream-job')
+const oldDataFolder = join(app.getPath('appData'), 'job-app')
+if (!existsSync(dataFolder) && existsSync(oldDataFolder)) renameSync(oldDataFolder, dataFolder)
+app.setPath('userData', dataFolder)
 
 /** Everything the app keeps lives in its own folder on this Mac, outside any repository. */
 const dataDir = app.getPath('userData')
@@ -143,7 +147,7 @@ function createWindow(): void {
     height: Math.min(WINDOW.height, area.height),
     minWidth: 880,
     minHeight: 620,
-    title: 'Job App',
+    title: 'Dream Job',
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

@@ -134,7 +134,6 @@ function ClaudeStep({ onNext }: { onNext: () => void }): JSX.Element {
   const state = claude?.state
   const installed = checking ? null : state !== 'missing'
   const signedIn = checking ? null : state === 'ok' || state === 'api-key' || state === 'other-provider'
-  const onPlan = checking ? null : state === 'ok'
 
   const check = async (): Promise<void> => {
     setIsChecking(true)
@@ -146,7 +145,7 @@ function ClaudeStep({ onNext }: { onNext: () => void }): JSX.Element {
     <>
       <StepHeader
         title="Sign in with your own Claude Code"
-        description="Job App runs on your Claude plan, through Claude Code installed on this Mac. You sign in to Claude Code yourself. The app never sees your password or token."
+        description="Dream Job runs through Claude Code installed on this Mac, signed in your way: a Claude plan or your own API key. You sign in to Claude Code yourself. The app never sees your password, token or key."
       />
       <Card>
         <CardHeader>
@@ -168,31 +167,18 @@ function ClaudeStep({ onNext }: { onNext: () => void }): JSX.Element {
               <CheckRow
                 isOk={signedIn}
                 title={signedIn === false ? 'Not signed in' : 'Signed in'}
-                detail={claude?.account?.email ? `As ${claude.account.email}` : signedIn === false ? claude?.message : undefined}
-              />
-            )}
-            {signedIn !== false && installed !== false && (
-              <CheckRow
-                isOk={onPlan}
-                title={onPlan === false ? 'Not on a Claude plan' : 'On a Claude plan, not an API key'}
-                detail={
-                  onPlan
-                    ? `Runs use ${claude?.account?.subscriptionType ? `your ${claude.account.subscriptionType} plan` : 'your plan'}. An API key in your environment is ignored.`
-                    : onPlan === false
-                      ? claude?.message
-                      : undefined
-                }
+                detail={checking ? undefined : claude?.message}
               />
             )}
           </ul>
         </CardContent>
         <CardFooter>
-          <Button endIcon={<ArrowRightIcon />} disabled={!onPlan} onClick={onNext}>
+          <Button endIcon={<ArrowRightIcon />} disabled={!signedIn} onClick={onNext}>
             Continue
           </Button>
         </CardFooter>
       </Card>
-      {!checking && !onPlan && (
+      {!checking && !signedIn && (
         <Card>
           <CardHeader>
             <CardTitle>Not set up yet?</CardTitle>
@@ -201,7 +187,7 @@ function ClaudeStep({ onNext }: { onNext: () => void }): JSX.Element {
             <ol className="nx:typography-body-default nx:m-0 nx:pl-5 nx:flex nx:flex-col nx:gap-2">
               {state === 'missing' && <li>Install Claude Code on this Mac.</li>}
               <li>
-                In a terminal, run <code className="nx:typography-code-inline">claude auth login</code> and sign in with your Claude account, not an API key.
+                In a terminal, run <code className="nx:typography-code-inline">claude auth login</code> and sign in with your Claude account, or with an Anthropic Console account to use an API key.
               </li>
               <li>Come back here and press Check again.</li>
             </ol>
@@ -289,7 +275,7 @@ function ResumeStep(props: {
         <Card>
           <CardHeader>
             <CardTitle>Read it with Claude</CardTitle>
-            <CardDescription>Uses your Claude plan. Claude may open this one file and nothing else.</CardDescription>
+            <CardDescription>Uses your Claude Code sign-in. Claude may open this one file and nothing else.</CardDescription>
           </CardHeader>
           <CardFooter>
             <Buttons>
@@ -306,7 +292,7 @@ function ResumeStep(props: {
         <Card>
           <CardHeader>
             <CardTitle>Claude read your resume</CardTitle>
-            <CardDescription>Took {plural(props.read!.seconds, 'second')} on your Claude plan.</CardDescription>
+            <CardDescription>Took {plural(props.read!.seconds, 'second')}.</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="nx:m-0 nx:p-0 nx:list-none nx:flex nx:flex-col nx:gap-3 nx:typography-body-default">
@@ -720,7 +706,7 @@ export function Onboarding({ settings }: { settings: Settings }): JSX.Element {
           <span className="nx:inline-flex nx:items-center nx:justify-center nx:size-7 nx:rounded-md nx:bg-primary-background nx:text-primary-foreground">
             <BriefcaseIcon />
           </span>
-          <span className="nx:typography-label-default">Job App</span>
+          <span className="nx:typography-label-default">Dream Job</span>
         </div>
         <span className="nx:typography-body-small nx:text-muted-foreground">
           Setting up, step {step + 1} of {STEPS.length}

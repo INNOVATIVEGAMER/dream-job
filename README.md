@@ -1,4 +1,4 @@
-# Job App
+# Dream Job
 
 A macOS app that runs your job search on **LinkedIn**, **Wellfound** and
 **Instahyre**. It finds postings that fit you, applies to them, and builds a
@@ -6,8 +6,9 @@ referral path at every company you apply to.
 
 It works through two things you already have:
 
-- **Your own Claude Code**, signed in with your own Claude plan. Every run uses
-  your plan. There is no API key and no account with this app.
+- **Your own Claude Code**, signed in your way: a Claude plan or your own
+  Anthropic API key. Runs use whichever you signed in with. There is no
+  account with this app.
 - **Your own Google Chrome**, opened with a separate profile that belongs to
   the app. You sign in to each site once, yourself.
 
@@ -35,19 +36,42 @@ Everything stays on your Mac.
 
 ---
 
+## Read this first: the risks
+
+Dream Job automates websites whose terms do not allow it. Use it knowing what
+that means.
+
+- **The sites' terms forbid automation.** LinkedIn's User Agreement, and the
+  terms of Wellfound and Instahyre, prohibit bots and automated access,
+  including automated messages and connection requests. Running Dream Job
+  breaks those terms.
+- **Your accounts can be restricted or closed.** Each site can limit or shut
+  an account it sees automating. Connection requests sent in bulk are the most
+  watched. Go slowly, and don't run it on an account you can't afford to lose.
+- **Everything is sent as you.** Applications, requests and messages go out
+  from your own accounts. You are responsible for them.
+- **Claude usage.** Runs go through your own Claude Code, under Anthropic's
+  terms. Plan limits assume ordinary individual use, and a long hunt is heavy
+  use. With an API key you pay per use instead.
+- **No warranty.** Dream Job is provided as is, under the Apache License 2.0. It
+  is not affiliated with LinkedIn, Wellfound, Instahyre, Google or Anthropic.
+
+---
+
 ## Before you start
 
 You need:
 
 1. **A Mac** running macOS 12 or later.
 2. **Google Chrome**, installed in Applications.
-3. **Claude Code**, installed and signed in with a paid Claude plan:
+3. **Claude Code**, installed and signed in:
 
    ```
    claude auth login
    ```
 
-   Sign in with your Claude account, not an API key.
+   Sign in with your Claude account (a paid plan), or with an Anthropic
+   Console account to use an API key.
 
 4. **Accounts** on the portals you want to use: LinkedIn, Wellfound, Instahyre.
 5. **Your resume as a PDF.**
@@ -69,18 +93,18 @@ few minutes, once.
 2. Get the code and build the app:
 
    ```
-   git clone https://github.com/INNOVATIVEGAMER/job-app.git
-   cd job-app
+   git clone https://github.com/INNOVATIVEGAMER/dream-job.git
+   cd dream-job
    pnpm install
    node node_modules/electron/install.js
    pnpm dist:mac:local
    ```
 
-3. Open the `release` folder in Finder and drag **Job App** into
+3. Open the `release` folder in Finder and drag **Dream Job** into
    **Applications**. It is in `release/mac-arm64` on Apple silicon, or
    `release/mac` on an Intel Mac.
 
-4. Open Job App from Applications.
+4. Open Dream Job from Applications.
 
 ---
 
@@ -88,7 +112,7 @@ few minutes, once.
 
 The app walks you through five steps.
 
-1. **Claude Code.** The app checks that Claude Code is installed, signed in, and on a Claude plan. If a check fails, follow the steps it shows, then press **Check again**.
+1. **Claude Code.** The app checks that Claude Code is installed and signed in, and shows whether runs will use your plan or your API key. If a check fails, follow the steps it shows, then press **Check again**.
 2. **Your resume.** Choose your PDF. Claude reads it (about a minute) and pulls out your roles, skills, projects, links and a few starter form answers.
 3. **Review your profile.** Fix anything Claude got wrong. Everything written for you is drawn from this profile and nothing else.
 4. **What you're looking for.** Set the roles you want, roles you skip, the most years a posting may ask for, your country and cities, work modes, and your pay floor.
@@ -186,7 +210,7 @@ such as a recruiter who called you.
 
 ## Your data
 
-- Everything lives in `~/Library/Application Support/job-app`: your tracker, settings, resume, and the app's own Chrome profile.
+- Everything lives in `~/Library/Application Support/dream-job`: your tracker, settings, resume, and the app's own Chrome profile.
 - The app's Chrome profile is separate from your everyday Chrome.
 - Nothing is sent anywhere except through the portals you use and your own Claude Code.
 
@@ -194,8 +218,8 @@ such as a recruiter who called you.
 
 ## Troubleshooting
 
-**"Not on a Claude plan" or "Not signed in" during setup**
-Run `claude auth login` in Terminal, sign in with your Claude account, then press **Check again**.
+**"Not signed in" during setup**
+Run `claude auth login` in Terminal, sign in with your Claude account or an Anthropic Console account, then press **Check again**.
 
 **"Google Chrome is not installed"**
 Install Chrome into the main Applications folder.
@@ -218,9 +242,9 @@ A build made with `pnpm dist:mac:local` runs only on the Mac that built it. Buil
 
 ## Good to know
 
-- Job App is not affiliated with LinkedIn, Wellfound, Instahyre, Google or Anthropic.
+- Dream Job is not affiliated with LinkedIn, Wellfound, Instahyre, Google or Anthropic.
 - It acts on your own accounts, as you. You are responsible for what it sends and for following each site's terms.
-- Runs use your Claude plan's usage. A long hunt uses a lot of it, and five sessions at once use it about five times as fast as one.
+- Runs use your Claude plan's usage, or your API credits if you signed in with a key. A long hunt uses a lot, and five sessions at once use it about five times as fast as one.
 - Each session is its own Claude Code process and Chrome tab, so a run of five uses a few GB of memory while it lasts.
 
 ---
@@ -256,16 +280,16 @@ To sign and notarize a release:
 2. Store notarization credentials in your keychain, once:
 
    ```
-   xcrun notarytool store-credentials job-app-notary --apple-id <your Apple ID> --team-id <your team ID>
+   xcrun notarytool store-credentials dream-job-notary --apple-id <your Apple ID> --team-id <your team ID>
    ```
 
 3. Build:
 
    ```
-   APPLE_KEYCHAIN_PROFILE=job-app-notary pnpm dist:mac
+   APPLE_KEYCHAIN_PROFILE=dream-job-notary pnpm dist:mac
    ```
 
-4. Check: `spctl -a -vv "release/mac-arm64/Job App.app"` should say `source=Notarized Developer ID`.
+4. Check: `spctl -a -vv "release/mac-arm64/Dream Job.app"` should say `source=Notarized Developer ID`.
 
 The app from source and the packaged app share one data folder, so run one at a time.
 
@@ -273,4 +297,6 @@ The app from source and the packaged app share one data folder, so run one at a 
 
 ## License
 
-[Apache License 2.0](LICENSE)
+[Apache License 2.0](LICENSE). Every build carries the licenses of the
+open-source packages bundled into it, in a `THIRD_PARTY_NOTICES.txt` beside
+each process's code (`out/main`, `out/preload`, `out/renderer`).
