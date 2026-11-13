@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 
-import { CaretLeftIcon, CaretRightIcon, PaperPlaneTiltIcon, PlusIcon } from '@phosphor-icons/react'
+import { CaretLeftIcon, CaretRightIcon, EnvelopeIcon, PaperPlaneTiltIcon, PlusIcon } from '@phosphor-icons/react'
 
 import { PORTAL_NAMES, PORTALS, STAGES, STATUSES } from '../../../shared/types'
 import type { TrackerQuery } from '../../../shared/types'
@@ -52,6 +52,9 @@ export function Tracker(): JSX.Element {
       description={`Every opportunity from the hunt onward, newest touch first.${data ? ` ${data.all} rows.` : ''}`}
       actions={
         <>
+          <Button variant="outline" startIcon={<EnvelopeIcon />} onClick={() => go('/email')}>
+            Update from Gmail
+          </Button>
           <Button variant="outline" startIcon={<PlusIcon />} onClick={() => go('/tracker/new')}>
             Add a row
           </Button>

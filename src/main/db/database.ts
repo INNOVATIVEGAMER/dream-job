@@ -167,6 +167,51 @@ const MIGRATIONS: Migration[] = [
     // The kind of role skipped is the user's own setting, not one fixed kind.
     db.exec("UPDATE discarded SET reason = 'skipped-role' WHERE reason = 'backend-only'")
   },
+  db => {
+    // The email check: what it has read, what it changed, and jobs it found that the tracker lacks.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS email_seen (
+        key TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL,
+        run_id INTEGER,
+        seen_at TEXT NOT NULL,
+        opened INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS email_seen_run ON email_seen (run_id);
+
+      CREATE TABLE IF NOT EXISTS email_changes (
+        id INTEGER PRIMARY KEY,
+        run_id INTEGER,
+        at TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        target_id INTEGER NOT NULL,
+        from_state TEXT NOT NULL,
+        to_state TEXT NOT NULL,
+        note TEXT NOT NULL,
+        email_subject TEXT NOT NULL,
+        email_from TEXT NOT NULL,
+        email_date TEXT NOT NULL,
+        email_link TEXT NOT NULL,
+        undone_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS email_changes_run ON email_changes (run_id);
+
+      CREATE TABLE IF NOT EXISTS email_waiting (
+        id INTEGER PRIMARY KEY,
+        run_id INTEGER,
+        at TEXT NOT NULL,
+        company TEXT NOT NULL,
+        role TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        email_subject TEXT NOT NULL,
+        email_from TEXT NOT NULL,
+        email_date TEXT NOT NULL,
+        email_link TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'waiting',
+        row_id INTEGER
+      );
+    `)
+  },
 ]
 
 export const SCHEMA_VERSION = MIGRATIONS.length

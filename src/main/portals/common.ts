@@ -1,7 +1,7 @@
 import type { z } from 'zod'
 
-import { PORTAL_NAMES, PORTAL_TOOLS } from '../../shared/types'
-import type { Portal, SiteState, Stage } from '../../shared/types'
+import { GMAIL_TOOLS, PORTAL_TOOLS, TOOL_SITE_NAMES } from '../../shared/types'
+import type { Portal, PortalToolInfo, SignInSite, SiteState, Stage, ToolSite } from '../../shared/types'
 import { guarded, refuse, say } from '../browser/tools'
 import { defineTool } from '../runs/engine'
 import type { AnyTool, RunContext } from '../runs/engine'
@@ -12,7 +12,9 @@ type Shape = Record<string, z.ZodType>
 type Input<S extends Shape> = { [K in keyof S]: S[K] extends { _output: infer O } ? O : never }
 
 /** The name Claude calls a portal's tool by: portals share tool names, so each carries its portal's. */
-export const toolName = (portal: Portal, name: string): string => `${portal}_${name}`
+export const toolName = (site: ToolSite, name: string): string => `${site}_${name}`
+
+const toolsOf = (site: ToolSite): PortalToolInfo[] => (site === 'gmail' ? GMAIL_TOOLS : PORTAL_TOOLS[site])
 
 /**
  * One of a portal's own tools, held to the user's switches in Settings,
@@ -26,22 +28,22 @@ export const toolName = (portal: Portal, name: string): string => `${portal}_${n
  */
 export function portalTool<S extends Shape>(
   ctx: RunContext,
-  portal: Portal,
+  portal: ToolSite,
   name: string,
   description: string,
   shape: S,
   handler: (input: Input<S>) => Promise<ToolResult>,
   handover?: { steps: (input: Input<S>) => string[]; afterUser: (input: Input<S>) => Promise<ToolResult> },
 ): AnyTool {
-  const info = PORTAL_TOOLS[portal].find(tool => tool.name === name)
+  const info = toolsOf(portal).find(tool => tool.name === name)
   if (!info) throw new Error(`${name} is not in the ${portal} tool list`)
   return defineTool(toolName(portal, name), description, shape, (input: Input<S>) =>
     guarded(async () => {
       const setting = ctx.portal(portal)
-      if (!setting.enabled) return refuse(`${PORTAL_NAMES[portal]} is turned off in Settings. Leave it and go on.`)
+      if (!setting.enabled) return refuse(`${TOOL_SITE_NAMES[portal]} is turned off in Settings. Leave it and go on.`)
       if (setting.tools[name] !== false) return handler(input)
       if (!handover) {
-        return refuse(`"${info.label}" is turned off for ${PORTAL_NAMES[portal]} in Settings, so it cannot be used in this run. Go on without it.`)
+        return refuse(`"${info.label}" is turned off for ${TOOL_SITE_NAMES[portal]} in Settings, so it cannot be used in this run. Go on without it.`)
       }
       ctx.log('warn', `${info.label} is off in Settings: handed to you`)
       await ctx.chrome.bringToFront()
@@ -83,7 +85,7 @@ export async function clickPoint(ctx: RunContext, point: { x?: number; y?: numbe
 }
 
 /** Records what a portal's own page showed about the sign-in, for Settings, Accounts and Home. */
-export function markSite(ctx: RunContext, portal: Portal, state: SiteState['state']): void {
+export function markSite(ctx: RunContext, portal: SignInSite, state: SiteState['state']): void {
   const known = ctx.store.settings.sites().find(site => site.site === portal)
   if (known?.state === state) return
   ctx.store.settings.setSite(portal, state)

@@ -8,6 +8,9 @@ import type {
   DataTopic,
   DiscardedPage,
   DiscardedQuery,
+  EmailRunDetail,
+  EmailSettings,
+  EmailWaiting,
   FormAnswer,
   HomeSummary,
   HuntWindow,
@@ -102,6 +105,15 @@ export type JobAppApi = {
     connect: (options: ConnectOptions) => Promise<number>
     referral: (options: ReferralOptions) => Promise<number>
     checkAccepted: () => Promise<number>
+    /** The email check; `count` overrides the setting for this one check. */
+    email: (options: { count?: number }) => Promise<number>
+  }
+  email: {
+    detail: (runId: number) => Promise<EmailRunDetail | null>
+    undo: (changeId: number) => Promise<void>
+    waiting: () => Promise<EmailWaiting[]>
+    add: (waitingId: number) => Promise<number>
+    ignore: (waitingId: number) => Promise<void>
   }
   settings: {
     get: () => Promise<Settings>
@@ -109,6 +121,7 @@ export type JobAppApi = {
     setProfile: (value: Profile) => Promise<void>
     setReferral: (value: ReferralMessage) => Promise<void>
     setPortals: (value: PortalSettings) => Promise<void>
+    setEmail: (value: EmailSettings) => Promise<void>
     finishSetup: () => Promise<void>
     answers: () => Promise<FormAnswer[]>
     saveAnswer: (question: string, answer: string) => Promise<void>
@@ -156,11 +169,18 @@ export const CHANNELS = [
   'flows:connect',
   'flows:referral',
   'flows:checkAccepted',
+  'flows:email',
+  'email:detail',
+  'email:undo',
+  'email:waiting',
+  'email:add',
+  'email:ignore',
   'settings:get',
   'settings:setPreferences',
   'settings:setProfile',
   'settings:setReferral',
   'settings:setPortals',
+  'settings:setEmail',
   'settings:finishSetup',
   'settings:answers',
   'settings:saveAnswer',

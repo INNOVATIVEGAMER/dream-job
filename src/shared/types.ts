@@ -82,6 +82,11 @@ export const SIGN_IN_URLS: Record<SignInSite, string> = {
 
 export const SITE_NAMES: Record<SignInSite, string> = { google: 'Google', ...PORTAL_NAMES }
 
+/** The sites Claude works in through the app's own tools: the portals, and Gmail for the email check. */
+export type ToolSite = Portal | 'gmail'
+
+export const TOOL_SITE_NAMES: Record<ToolSite, string> = { ...PORTAL_NAMES, gmail: 'Gmail' }
+
 /** One opportunity as a table row shows it. */
 export type TrackerRow = {
   id: number
@@ -322,6 +327,20 @@ export type PortalSetting = { enabled: boolean; tools: Record<string, boolean>; 
 
 export type PortalSettings = Record<Portal, PortalSetting>
 
+/** How the email check reads Gmail, and what Claude may do there. */
+export type EmailSettings = {
+  enabled: boolean
+  tools: Record<string, boolean>
+  freeBrowsing: boolean
+  /** How many of the newest emails a check reads. */
+  count: EmailCount
+  /** Start a check when the app opens, at most once a day. */
+  checkOnOpen: boolean
+}
+
+export const EMAIL_COUNTS = [25, 50, 100] as const
+export type EmailCount = (typeof EMAIL_COUNTS)[number]
+
 export type Settings = {
   preferences: Preferences
   profile: Profile
@@ -330,18 +349,20 @@ export type Settings = {
   portals: PortalSettings
   /** Onboarding finished. */
   isSetUp: boolean
+  email: EmailSettings
 }
 
 /* ------------------------------------------------------------------ */
 /* Portal tools                                                        */
 /* ------------------------------------------------------------------ */
 
-export type PortalToolGroup = 'find' | 'apply' | 'connect'
+export type PortalToolGroup = 'find' | 'apply' | 'connect' | 'read'
 
 export const PORTAL_TOOL_GROUP_NAMES: Record<PortalToolGroup, string> = {
   find: 'Find jobs',
   apply: 'Apply',
   connect: 'Connect and message',
+  read: 'Read mail',
 }
 
 /** One of a portal's own tools, as Settings lists it. */
@@ -396,6 +417,12 @@ export const PORTAL_TOOLS: Record<Portal, PortalToolInfo[]> = {
   ],
 }
 
+/** Gmail's own tools: the switches in Settings, Portals, Gmail. Read only. */
+export const GMAIL_TOOLS: PortalToolInfo[] = [
+  { name: 'list_emails', label: 'List your newest emails', detail: 'Sender, subject, date and a line of preview', group: 'read' },
+  { name: 'read_email', label: 'Read an email', detail: 'Opens one and reads it, then leaves it read or unread as it was', group: 'read' },
+]
+
 /** A site's sign-in, as the app last saw it in Chrome. */
 export type SiteState = { site: string; state: 'signed-in' | 'signed-out' | 'unknown'; checked: string | null }
 
@@ -403,7 +430,7 @@ export type SiteState = { site: string; state: 'signed-in' | 'signed-out' | 'unk
 /* Runs                                                                */
 /* ------------------------------------------------------------------ */
 
-export const FLOWS = ['hunt', 'apply', 'connect', 'referral'] as const
+export const FLOWS = ['hunt', 'apply', 'connect', 'referral', 'email'] as const
 export type Flow = (typeof FLOWS)[number]
 
 export const FLOW_NAMES: Record<Flow, string> = {
@@ -411,6 +438,7 @@ export const FLOW_NAMES: Record<Flow, string> = {
   apply: 'Apply',
   connect: 'Connection requests',
   referral: 'Referral messages',
+  email: 'Email check',
 }
 
 export type RunStatus = 'running' | 'waiting' | 'done' | 'failed' | 'stopped'
@@ -485,7 +513,7 @@ export type RunCard =
   | {
       kind: 'tool-off'
       id: string
-      portal: Portal
+      portal: ToolSite
       /** The tool's label, such as "Submit Easy Apply". */
       tool: string
       /** What the user does in Chrome. */
@@ -543,6 +571,7 @@ export type HomeSummary = {
   needsYou: NeedsYou[]
   recentRuns: RunSummary[]
   lastHunt: RunSummary | null
+  email: EmailSummary
 }
 
 /** Fixed facts about the app's Chrome. */
@@ -568,4 +597,53 @@ export type ResumeImport = {
 }
 
 /** The kinds of data a screen shows; main says which changed so screens reload. */
-export type DataTopic = 'opportunities' | 'discarded' | 'contacts' | 'runs' | 'settings' | 'answers' | 'sites'
+export type DataTopic = 'opportunities' | 'discarded' | 'contacts' | 'runs' | 'settings' | 'answers' | 'sites' | 'email'
+
+/* ------------------------------------------------------------------ */
+/* Email check                                                         */
+/* ------------------------------------------------------------------ */
+
+/** The email a change or a waiting job came from. */
+export type EmailRef = { subject: string; from: string; date: string; link: string }
+
+/** One change an email check made: a tracker row's status, or a contact's state. */
+export type EmailChange = {
+  id: number
+  runId: number | null
+  at: string
+  kind: 'row' | 'contact'
+  targetId: number
+  /** The row's company, or the contact's name. */
+  title: string
+  /** The row's role, or the contact's company. */
+  subtitle: string
+  from: string
+  to: string
+  note: string
+  email: EmailRef
+  undone: boolean
+}
+
+/** An email about a job the tracker does not have, kept for the user. */
+export type EmailWaiting = {
+  id: number
+  runId: number | null
+  at: string
+  company: string
+  role: string
+  summary: string
+  email: EmailRef
+  state: 'waiting' | 'added' | 'ignored'
+}
+
+/** One email check: what it read and what it changed. */
+export type EmailRunDetail = {
+  run: RunSummary
+  listed: number
+  opened: number
+  changes: EmailChange[]
+  waiting: EmailWaiting[]
+}
+
+/** Home's line on the email check. */
+export type EmailSummary = { lastRunId: number | null; lastChecked: string | null; moved: number; waiting: number }

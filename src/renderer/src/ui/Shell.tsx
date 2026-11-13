@@ -110,6 +110,7 @@ const TITLES: Record<string, string> = {
   home: 'Home',
   tracker: 'Tracker',
   opportunity: 'Tracker',
+  email: 'Tracker',
   hunt: 'Hunt',
   run: 'Running now',
   runs: 'Run history',
@@ -134,7 +135,8 @@ export function Shell({ section, name, children }: { section: string; name: stri
     { to: '/discarded', label: 'Discarded', icon: <ArchiveIcon />, match: 'discarded' },
     { to: '/runs', label: 'Run history', icon: <ClockCounterClockwiseIcon />, match: 'runs' },
   ]
-  const navSection = section === 'opportunity' ? 'tracker' : section
+  // A row, and the email check that moves rows on, sit under Tracker.
+  const navSection = section === 'opportunity' || section === 'email' ? 'tracker' : section
 
   return (
     <SidebarProvider>

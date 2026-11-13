@@ -6,6 +6,8 @@ import { useRoute } from './lib/router'
 import { ConnectStart } from './screens/ConnectStart'
 import { Contacts } from './screens/Contacts'
 import { Discarded } from './screens/Discarded'
+import { EmailDone } from './screens/EmailDone'
+import { EmailStart } from './screens/EmailStart'
 import { Home } from './screens/Home'
 import { HuntStart } from './screens/HuntStart'
 import { Onboarding } from './screens/onboarding/Onboarding'
@@ -29,6 +31,8 @@ function Screen({ route }: { route: string[] }): JSX.Element {
       return <Opportunity id={Number(first)} />
     case 'hunt':
       return <HuntStart />
+    case 'email':
+      return first ? <EmailDone runId={Number(first)} /> : <EmailStart />
     case 'run':
       return <RunScreen />
     case 'runs':
@@ -41,7 +45,7 @@ function Screen({ route }: { route: string[] }): JSX.Element {
     case 'discarded':
       return <Discarded tab={first === 'never' ? 'never' : 'discarded'} />
     case 'settings':
-      return <Settings tab={first ?? 'preferences'} />
+      return <Settings tab={first ?? 'preferences'} sub={second} />
     default:
       return <Home />
   }

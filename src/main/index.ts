@@ -188,7 +188,8 @@ registerIpc({
 
 void app.whenReady().then(() => {
   createWindow()
-  void runClaudeCheck()
+  // Once Claude Code checks out, the email check runs if the user asked for it at start-up.
+  void runClaudeCheck().then(() => (claude.state === 'ok' ? flows.emailOnOpen() : undefined))
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

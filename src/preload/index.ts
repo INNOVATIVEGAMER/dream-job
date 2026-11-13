@@ -63,6 +63,14 @@ const api: JobAppApi = {
     connect: call('flows:connect'),
     referral: call('flows:referral'),
     checkAccepted: call('flows:checkAccepted'),
+    email: call('flows:email'),
+  },
+  email: {
+    detail: call('email:detail'),
+    undo: call('email:undo'),
+    waiting: call('email:waiting'),
+    add: call('email:add'),
+    ignore: call('email:ignore'),
   },
   settings: {
     get: call('settings:get'),
@@ -70,6 +78,7 @@ const api: JobAppApi = {
     setProfile: call('settings:setProfile'),
     setReferral: call('settings:setReferral'),
     setPortals: call('settings:setPortals'),
+    setEmail: call('settings:setEmail'),
     finishSetup: call('settings:finishSetup'),
     answers: call('settings:answers'),
     saveAnswer: call('settings:saveAnswer'),

@@ -2,8 +2,9 @@ import type { DatabaseSync } from 'node:sqlite'
 
 import { z } from 'zod'
 
-import { CURRENCIES, HUNT_WINDOWS, PAY_PERIODS, PORTAL_TOOLS, PORTALS } from '../../shared/types'
+import { CURRENCIES, EMAIL_COUNTS, GMAIL_TOOLS, HUNT_WINDOWS, PAY_PERIODS, PORTAL_TOOLS, PORTALS } from '../../shared/types'
 import type {
+  EmailSettings,
   FormAnswer,
   PortalSettings,
   Preferences,
@@ -93,6 +94,23 @@ export const PortalSettingsSchema = z.object({
   instahyre: PortalSettingSchema,
 })
 
+export const EmailSettingsSchema = z.object({
+  enabled: z.boolean(),
+  tools: z.record(z.string(), z.boolean()),
+  freeBrowsing: z.boolean(),
+  count: z.union(EMAIL_COUNTS.map(count => z.literal(count)) as [z.ZodLiteral<25>, z.ZodLiteral<50>, z.ZodLiteral<100>]),
+  checkOnOpen: z.boolean(),
+})
+
+/** Gmail on, both read tools on, nothing beyond them, the newest 50, and no check at start-up. */
+export const DEFAULT_EMAIL: EmailSettings = {
+  enabled: true,
+  tools: Object.fromEntries(GMAIL_TOOLS.map(tool => [tool.name, true])),
+  freeBrowsing: false,
+  count: 50,
+  checkOnOpen: false,
+}
+
 export const DEFAULT_PREFERENCES: Preferences = {
   targetRoles: [],
   skipRoles: [],
@@ -175,7 +193,19 @@ export class SettingsStore {
       resume: this.resume(),
       portals: this.portals(),
       isSetUp: this.isSetUp(),
+      email: this.email(),
     }
+  }
+
+  /** The email check's settings, with any tool a newer release added switched on. */
+  email(): EmailSettings {
+    const stored = this.read('email', EmailSettingsSchema, DEFAULT_EMAIL)
+    return { ...stored, tools: { ...DEFAULT_EMAIL.tools, ...stored.tools } }
+  }
+
+  setEmail(value: unknown): EmailSettings {
+    this.write('email', EmailSettingsSchema.parse(value))
+    return this.email()
   }
 
   preferences(): Preferences {

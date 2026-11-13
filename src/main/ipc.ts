@@ -163,6 +163,23 @@ export function registerIpc(deps: IpcDeps): void {
     'flows:connect': options => deps.flows.connect(ConnectOptions.parse(options)),
     'flows:referral': options => deps.flows.referral(ReferralOptions.parse(options)),
     'flows:checkAccepted': () => deps.flows.checkAccepted(),
+    'flows:email': options => deps.flows.email(z.object({ count: z.number().int().optional() }).parse(options ?? {})),
+
+    'email:detail': runId => store.emailDetail(id.parse(runId)),
+    'email:undo': changeId => {
+      store.undoEmailChange(id.parse(changeId))
+      deps.sendData(['email', 'opportunities', 'contacts'])
+    },
+    'email:waiting': () => store.email.waiting(),
+    'email:add': waitingId => {
+      const rowId = store.addEmailJob(id.parse(waitingId))
+      deps.sendData(['email', 'opportunities'])
+      return rowId
+    },
+    'email:ignore': waitingId => {
+      store.email.setWaiting(id.parse(waitingId), 'ignored')
+      deps.sendData(['email'])
+    },
 
     'settings:get': () => store.settings.all(),
     'settings:setPreferences': value => {
@@ -175,6 +192,10 @@ export function registerIpc(deps: IpcDeps): void {
     },
     'settings:setReferral': value => {
       store.settings.setReferral(value)
+      deps.sendData(['settings'])
+    },
+    'settings:setEmail': value => {
+      store.settings.setEmail(value)
       deps.sendData(['settings'])
     },
     'settings:setPortals': value => {

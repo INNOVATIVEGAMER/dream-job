@@ -5,6 +5,7 @@ import {
   ArrowRightIcon,
   BrowserIcon,
   ChatTextIcon,
+  EnvelopeIcon,
   HandPalmIcon,
   MagnifyingGlassIcon,
   PaperPlaneTiltIcon,
@@ -51,12 +52,12 @@ const NEED_ICONS: Record<NeedsYou['icon'], JSX.Element> = {
   warning: <WarningIcon size={16} />,
 }
 
-const FLOW_ICONS = { hunt: <MagnifyingGlassIcon />, apply: <PaperPlaneTiltIcon />, connect: <UserPlusIcon />, referral: <UsersThreeIcon /> }
+const FLOW_ICONS = { hunt: <MagnifyingGlassIcon />, apply: <PaperPlaneTiltIcon />, connect: <UserPlusIcon />, referral: <UsersThreeIcon />, email: <EnvelopeIcon /> }
 
 /** Home: the three flows, what needs the user, recent runs and the tracker's counts. */
 export function Home(): JSX.Element {
   const status = useAppStatus()
-  const home = useData(() => api.home(), [], ['opportunities', 'contacts', 'runs', 'settings', 'sites'])
+  const home = useData(() => api.home(), [], ['opportunities', 'contacts', 'runs', 'settings', 'sites', 'email'])
   const settings = useData(() => api.settings.get(), [], ['settings'])
   const [portal, setPortal] = useState<'all' | Portal>('all')
 
@@ -69,6 +70,9 @@ export function Home(): JSX.Element {
     const portals = portal === 'all' ? enabled : [portal]
     const started = await attempt(() => api.flows.hunt({ portals, window: settings.data?.preferences.window ?? 'day' }))
     if (started) go('/run')
+  }
+  const checkEmail = async (): Promise<void> => {
+    if (await attempt(() => api.flows.email({}))) go('/run')
   }
   const applyNext = async (): Promise<void> => {
     if (!summary?.nextFound) return
@@ -175,6 +179,38 @@ export function Home(): JSX.Element {
                           <Button variant="ghost" disabled={isBusy} onClick={() => go('/contacts/message')}>
                             Message accepted
                           </Button>
+                        </div>
+                      </CardFooter>
+                    </Card>
+                  </div>
+                  <div className="nx:flex nx:min-w-0" style={{ flex: '1 1 220px' }}>
+                    <Card className="nx:w-full">
+                      <CardHeader>
+                        <CardTitle>Email</CardTitle>
+                        <CardDescription>Read your newest emails in Gmail and move the tracker on: rejections, next rounds, offers and replies.</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="nx:flex nx:flex-col nx:gap-1">
+                          <span className="nx:typography-heading-medium">
+                            {summary.email.waiting ? `${summary.email.waiting} waiting` : summary.email.lastChecked ? 'Up to date' : 'Not checked yet'}
+                          </span>
+                          <span className="nx:typography-body-small nx:text-muted-foreground">
+                            {summary.email.lastChecked
+                              ? `Last check ${when(summary.email.lastChecked)}: ${summary.email.moved} ${summary.email.moved === 1 ? 'row' : 'rows'} moved on`
+                              : 'Claude reads only what is about your job search.'}
+                          </span>
+                        </div>
+                      </CardContent>
+                      <CardFooter>
+                        <div className="nx:flex nx:flex-wrap nx:gap-2">
+                          <Button variant="secondary" startIcon={<EnvelopeIcon />} disabled={isBusy || settings.data?.email.enabled === false} onClick={() => void checkEmail()}>
+                            Check email
+                          </Button>
+                          {summary.email.lastRunId && (
+                            <Button variant="ghost" onClick={() => go(`/email/${summary.email.lastRunId}`)}>
+                              What changed
+                            </Button>
+                          )}
                         </div>
                       </CardFooter>
                     </Card>

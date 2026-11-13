@@ -1,10 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite'
 
 import type { AppliedCompany } from '../../shared/api'
-import type { DiscardReason, HomeSummary, NeedsYou, ReadyCompany, TrackerRow } from '../../shared/types'
+import type { DiscardReason, EmailChange, EmailRunDetail, EmailSummary, HomeSummary, NeedsYou, ReadyCompany, TrackerRow } from '../../shared/types'
 import { Contacts } from './contacts'
 import { companyKey, openDatabase } from './database'
 import { Discarded, NeverShow } from './discarded'
+import { EmailStore } from './email'
 import { Opportunities } from './opportunities'
 import { Runs } from './runs'
 import { SettingsStore } from './settings'
@@ -20,6 +21,7 @@ export class Store {
   readonly contacts: Contacts
   readonly runs: Runs
   readonly settings: SettingsStore
+  readonly email: EmailStore
 
   private constructor(private readonly db: DatabaseSync) {
     this.opportunities = new Opportunities(db)
@@ -28,6 +30,7 @@ export class Store {
     this.contacts = new Contacts(db)
     this.runs = new Runs(db)
     this.settings = new SettingsStore(db)
+    this.email = new EmailStore(db)
   }
 
   static open(path: string): Store {
@@ -127,6 +130,68 @@ export class Store {
     })
   }
 
+  /** One email check: what it read, each change joined to its row or contact, and the jobs it kept for the user. */
+  emailDetail(runId: number): EmailRunDetail | null {
+    const run = this.runs.get(runId)
+    if (!run || run.flow !== 'email') return null
+    const changes: EmailChange[] = this.email.changes(runId).map(change => {
+      if (change.kind === 'contact') {
+        const contact = this.contacts.get(change.targetId)
+        return { ...change, title: contact?.name ?? 'A contact no longer kept', subtitle: contact ? `Contact at ${contact.company}` : '' }
+      }
+      const row = this.opportunities.get(change.targetId)
+      return { ...change, title: row?.company ?? 'A row no longer in the tracker', subtitle: row?.role ?? '' }
+    })
+    return { run, ...this.email.runCounts(runId), changes, waiting: this.email.waiting(runId) }
+  }
+
+  /** Puts a row or contact back as it was before an email check changed it. */
+  undoEmailChange(id: number): void {
+    this.transaction(() => {
+      const change = this.email.change(id)
+      if (!change) throw new Error('That change is no longer recorded.')
+      if (change.undone) return
+      if (change.kind === 'row') {
+        const row = this.opportunities.get(change.targetId)
+        if (!row) throw new Error('That row is no longer in the tracker.')
+        this.opportunities.setStatus(row.id, change.from, null)
+        this.opportunities.appendNote(row.id, `Undid the move to ${change.to} from the email "${change.email.subject}".`)
+      } else {
+        this.contacts.revertState(change.targetId, change.from as never)
+      }
+      this.email.markUndone(id)
+    })
+  }
+
+  /** Adds a job found in email to the tracker as found, with the email it came from in its notes. */
+  addEmailJob(id: number): number {
+    return this.transaction(() => {
+      const job = this.email.waitingById(id)
+      if (!job) throw new Error('That email is no longer kept.')
+      const rowId = this.opportunities.addManual({
+        company: job.company,
+        role: job.role,
+        stage: 'scaleup',
+        portal: 'email',
+        link: '',
+        mode: '',
+        notes: `From email: "${job.email.subject}" from ${job.email.from}, ${job.email.date}. ${job.summary}\nEmail: ${job.email.link}\nStage is provisional until you know the company's size.`,
+      })
+      this.email.setWaiting(id, 'added', rowId)
+      return rowId
+    })
+  }
+
+  private emailSummary(): EmailSummary {
+    const last = this.runs.last('email')
+    return {
+      lastRunId: last?.id ?? null,
+      lastChecked: last?.started ?? null,
+      moved: last ? this.email.standing(last.id) : 0,
+      waiting: this.email.waiting().length,
+    }
+  }
+
   home(): HomeSummary {
     const counts = this.opportunities.counts()
     const found = this.opportunities.found(1)
@@ -183,6 +248,7 @@ export class Store {
       needsYou,
       recentRuns: this.runs.recent(4),
       lastHunt: this.runs.last('hunt'),
+      email: this.emailSummary(),
     }
   }
 

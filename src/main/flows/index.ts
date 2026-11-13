@@ -3,6 +3,7 @@ import { HUNT_PORTALS } from '../../shared/types'
 import type { Store } from '../db/store'
 import type { RunEngine } from '../runs/engine'
 import { applySpec } from './apply'
+import { emailSpec } from './email'
 import { huntSpec, plannedSearches } from './hunt'
 import { checkSpec, connectSpec, referralReach, referralSpec } from './referral'
 
@@ -51,6 +52,23 @@ export class Flows {
     if (referral.attachResume && !this.store.settings.resume()) throw new Error('The message attaches your resume: add it in Settings first, or turn attaching off.')
     if (referralReach(this.store, options.companies) === 0) throw new Error('Nobody has accepted at those companies yet.')
     return this.engine.start(referralSpec(this.store, options.companies))
+  }
+
+  /** Reads the newest emails in Gmail and moves the tracker on; `count` overrides the setting for one check. */
+  async email(options: { count?: number } = {}): Promise<number> {
+    const settings = this.store.settings.email()
+    if (!settings.enabled) throw new Error('Gmail is turned off in Settings, Portals.')
+    const count = options.count && [25, 50, 100].includes(options.count) ? options.count : settings.count
+    return this.engine.start(emailSpec(this.store, count))
+  }
+
+  /** The check when the app opens, when the user turned it on: at most once a day, and only when nothing else runs. */
+  async emailOnOpen(): Promise<void> {
+    const settings = this.store.settings.email()
+    if (!settings.enabled || !settings.checkOnOpen || !this.store.settings.isSetUp() || this.engine.isBusy()) return
+    const last = this.store.runs.last('email')
+    if (last && Date.now() - new Date(last.started).getTime() < 20 * 60 * 60 * 1000) return
+    await this.email().catch(() => undefined)
   }
 
   async checkAccepted(): Promise<number> {

@@ -24,6 +24,7 @@ import type {
   RunEventKind,
   RunState,
   RunStatus,
+  ToolSite,
 } from '../../shared/types'
 import type { ChromeController } from '../browser/chrome'
 import { claudeEnv, findClaude } from '../claude'
@@ -59,7 +60,8 @@ export type RunContext = {
   count: (key: string, by?: number) => void
   /** Shows a card and waits, for as long as the user needs. A stopped run answers `cancel`. */
   ask: (card: CardInput) => Promise<CardAnswer>
-  portal: (portal: Portal) => PortalSetting
+  /** What the user lets Claude do on a site: a portal, or Gmail. */
+  portal: (site: ToolSite) => PortalSetting
   /** Tells the screens which data changed. */
   changed: (...topics: DataTopic[]) => void
 }
@@ -218,7 +220,7 @@ export class RunEngine {
       progress: (label, done, total) => this.set({ progress: { label, done, total } }),
       count: (key, by = 1) => this.set({ counts: { ...(this.state?.counts ?? {}), [key]: (this.state?.counts[key] ?? 0) + by } }),
       ask: card => this.ask(card),
-      portal: portal => this.deps.store.settings.portals()[portal],
+      portal: site => (site === 'gmail' ? this.deps.store.settings.email() : this.deps.store.settings.portals()[site]),
       changed: (...topics) => this.deps.onData(topics),
     }
   }

@@ -129,6 +129,24 @@ export class Contacts {
       .filter(contact => companyKey(contact.company) === key)
   }
 
+  /** Puts a contact back to an earlier state, clearing the dates of the states after it: for undoing a change. */
+  revertState(id: number, state: ContactState): void {
+    const contact = this.get(id)
+    if (!contact) throw new Error(`no contact with id ${id}`)
+    const at = CONTACT_STATES.indexOf(state)
+    const clear = (['accepted', 'messaged', 'referred'] as const).filter(later => CONTACT_STATES.indexOf(later) > at).map(later => `${later}_at = NULL`)
+    this.db.prepare(`UPDATE contacts SET state = ?${clear.length ? `, ${clear.join(', ')}` : ''} WHERE id = ?`).run(state, id)
+  }
+
+  /** Contacts whose name matches, for the email check: an exact name first, else every name that contains it. */
+  findByName(name: string): Contact[] {
+    const wanted = name.trim().toLowerCase()
+    if (!wanted) return []
+    const all = this.db.prepare(`SELECT ${COLUMNS} FROM contacts`).all().map(row => ({ ...row }) as Contact)
+    const exact = all.filter(contact => contact.name.trim().toLowerCase() === wanted)
+    return exact.length ? exact : all.filter(contact => contact.name.toLowerCase().includes(wanted))
+  }
+
   /** Records that the user thanked someone who referred them; the draft is theirs to send. */
   markThanked(id: number): void {
     this.db.prepare('UPDATE contacts SET thanked_at = ? WHERE id = ?').run(today(), id)

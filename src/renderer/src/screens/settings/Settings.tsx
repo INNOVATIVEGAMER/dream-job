@@ -20,7 +20,7 @@ import {
 } from '@phosphor-icons/react'
 
 import { PLAYBOOKS } from '../../../../shared/playbooks'
-import { PORTAL_NAMES, PORTAL_TOOL_GROUP_NAMES, PORTAL_TOOLS, PORTALS, SITE_NAMES } from '../../../../shared/types'
+import { GMAIL_TOOLS, PORTAL_NAMES, PORTAL_TOOL_GROUP_NAMES, PORTAL_TOOLS, PORTALS, SITE_NAMES } from '../../../../shared/types'
 import type {
   FormAnswer,
   Portal,
@@ -83,6 +83,7 @@ import {
   TabsTrigger,
   Textarea,
 } from '../../ui/nx'
+import { GmailSettings } from './GmailSettings'
 import { PreferencesForm } from './PreferencesForm'
 import { LinksEditor, ProjectsList, RolesList } from './ProfileParts'
 
@@ -555,15 +556,17 @@ function MessageTab({ settings }: { settings: SettingsValue }): JSX.Element {
   )
 }
 
-function PortalsTab({ settings }: { settings: SettingsValue }): JSX.Element {
-  const [selected, setSelected] = useState<Portal>('linkedin')
+function PortalsTab({ settings, initial }: { settings: SettingsValue; initial: Portal | 'gmail' }): JSX.Element {
+  const [selected, setSelected] = useState<Portal | 'gmail'>(initial)
+  // The portal shown when a portal is picked; Gmail has its own panel.
+  const portal: Portal = selected === 'gmail' ? 'linkedin' : selected
   const sites = useData(() => api.settings.sites(), [], ['sites'])
   const portals = settings.portals
   const save = (next: PortalSettings): void => void attempt(() => api.settings.setPortals(next))
-  const setting = portals[selected]
-  const tools = PORTAL_TOOLS[selected]
+  const setting = portals[portal]
+  const tools = PORTAL_TOOLS[portal]
   const groups = [...new Set(tools.map(tool => tool.group))]
-  const site = sites.data?.find(one => one.site === selected)
+  const site = sites.data?.find(one => one.site === portal)
 
   return (
     <div className="nx:flex nx:flex-wrap nx:gap-6 nx:items-start nx:pt-4">
@@ -584,91 +587,105 @@ function PortalsTab({ settings }: { settings: SettingsValue }): JSX.Element {
             </button>
           )
         })}
+        <button
+          type="button"
+          className={`nx:flex nx:flex-col nx:gap-1 nx:p-3 nx:rounded-md nx:text-left nx:border-0 nx:cursor-pointer ${selected === 'gmail' ? 'nx:bg-muted' : 'nx:bg-transparent'}`}
+          onClick={() => setSelected('gmail')}
+        >
+          <span className="nx:typography-label-default nx:text-foreground">Gmail</span>
+          <span className="nx:typography-body-small nx:text-muted-foreground">
+            {settings.email.enabled ? `On, ${Object.values(settings.email.tools).filter(Boolean).length} of ${GMAIL_TOOLS.length} tools: updates the tracker` : 'Off'}
+          </span>
+        </button>
       </nav>
-      <div className="nx:flex nx:flex-col nx:gap-5 nx:min-w-0" style={{ flex: '999 1 560px' }}>
-        <div className="nx:flex nx:flex-wrap nx:items-center nx:justify-between nx:gap-3">
-          <div className="nx:flex nx:flex-col nx:gap-1">
-            <h2 className="nx:typography-heading-medium nx:m-0">{PORTAL_NAMES[selected]}</h2>
-            <span className="nx:typography-body-small nx:text-muted-foreground">
-              {site?.state === 'signed-in' ? `Signed in. Checked ${when(site.checked)}.` : site?.state === 'signed-out' ? 'Signed out. Sign in from Accounts.' : 'Sign-in not checked yet.'}
-            </span>
-          </div>
-          <Field orientation="horizontal">
-            <Switch id={`use-${selected}`} checked={setting.enabled} onCheckedChange={enabled => save({ ...portals, [selected]: { ...setting, enabled } })} />
-            <FieldLabel htmlFor={`use-${selected}`}>Use {PORTAL_NAMES[selected]}</FieldLabel>
-          </Field>
-        </div>
-        <Card>
-          <CardHeader>
-            <CardTitle>What Claude may do here</CardTitle>
-            <CardDescription>Turn a tool off and the step that needs it is handed to you in Chrome.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="nx:flex nx:flex-col nx:gap-5">
-              {groups.map((group, i) => (
-                <div key={group} className="nx:flex nx:flex-col nx:gap-3">
-                  {i > 0 && <Separator />}
-                  <span className="nx:typography-label-caps nx:text-muted-foreground">{PORTAL_TOOL_GROUP_NAMES[group]}</span>
-                  {tools
-                    .filter(tool => tool.group === group)
-                    .map(tool => (
-                      <div key={tool.name} className="nx:flex nx:items-center nx:justify-between nx:gap-3">
-                        <div className="nx:flex nx:flex-col nx:gap-1">
-                          <span className="nx:typography-label-default">{tool.label}</span>
-                          <span className="nx:typography-body-small nx:text-muted-foreground">
-                            <code className="nx:typography-code-inline">{tool.name}</code> {tool.detail}
-                          </span>
-                          {tool.asksFirst && (
-                            <div>
-                              <Badge variant="warning" fill="light" isCaps={false} leftIcon={tool.name.includes('referral') ? <ShieldCheckIcon /> : <HandPalmIcon />}>
-                                {tool.asksFirst}
-                              </Badge>
-                            </div>
-                          )}
-                        </div>
-                        <Switch
-                          aria-label={tool.label}
-                          checked={setting.tools[tool.name] !== false}
-                          disabled={!setting.enabled}
-                          onCheckedChange={on => save({ ...portals, [selected]: { ...setting, tools: { ...setting.tools, [tool.name]: on } } })}
-                        />
-                      </div>
-                    ))}
-                </div>
-              ))}
-              <Separator />
-              <span className="nx:typography-label-caps nx:text-muted-foreground">Anything else</span>
-              <div className="nx:flex nx:items-center nx:justify-between nx:gap-3">
-                <div className="nx:flex nx:flex-col nx:gap-1">
-                  <span className="nx:typography-label-default">Free browsing on {PORTAL_NAMES[selected]}</span>
-                  <span className="nx:typography-body-small nx:text-muted-foreground">
-                    Open, read, click and type on pages the tools above don't cover. Off: Claude uses only the tools above.
-                  </span>
-                </div>
-                <Switch
-                  aria-label={`Free browsing on ${PORTAL_NAMES[selected]}`}
-                  checked={setting.freeBrowsing}
-                  disabled={!setting.enabled}
-                  onCheckedChange={freeBrowsing => save({ ...portals, [selected]: { ...setting, freeBrowsing } })}
-                />
-              </div>
+      {selected === 'gmail' ? (
+        <GmailSettings settings={settings} />
+      ) : (
+        <div className="nx:flex nx:flex-col nx:gap-5 nx:min-w-0" style={{ flex: '999 1 560px' }}>
+          <div className="nx:flex nx:flex-wrap nx:items-center nx:justify-between nx:gap-3">
+            <div className="nx:flex nx:flex-col nx:gap-1">
+              <h2 className="nx:typography-heading-medium nx:m-0">{PORTAL_NAMES[portal]}</h2>
+              <span className="nx:typography-body-small nx:text-muted-foreground">
+                {site?.state === 'signed-in' ? `Signed in. Checked ${when(site.checked)}.` : site?.state === 'signed-out' ? 'Signed out. Sign in from Accounts.' : 'Sign-in not checked yet.'}
+              </span>
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Playbook</CardTitle>
-            <CardDescription>The short notes Claude gets for {PORTAL_NAMES[selected]}, beyond what the tools do. Part of the app, updated with each release.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="nx:typography-body-small nx:m-0 nx:py-3 nx:pr-3 nx:pl-8 nx:rounded-md nx:bg-muted nx:flex nx:flex-col nx:gap-2">
-              {PLAYBOOKS[selected].map(line => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      </div>
+            <Field orientation="horizontal">
+              <Switch id={`use-${portal}`} checked={setting.enabled} onCheckedChange={enabled => save({ ...portals, [portal]: { ...setting, enabled } })} />
+              <FieldLabel htmlFor={`use-${portal}`}>Use {PORTAL_NAMES[portal]}</FieldLabel>
+            </Field>
+          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>What Claude may do here</CardTitle>
+              <CardDescription>Turn a tool off and the step that needs it is handed to you in Chrome.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="nx:flex nx:flex-col nx:gap-5">
+                {groups.map((group, i) => (
+                  <div key={group} className="nx:flex nx:flex-col nx:gap-3">
+                    {i > 0 && <Separator />}
+                    <span className="nx:typography-label-caps nx:text-muted-foreground">{PORTAL_TOOL_GROUP_NAMES[group]}</span>
+                    {tools
+                      .filter(tool => tool.group === group)
+                      .map(tool => (
+                        <div key={tool.name} className="nx:flex nx:items-center nx:justify-between nx:gap-3">
+                          <div className="nx:flex nx:flex-col nx:gap-1">
+                            <span className="nx:typography-label-default">{tool.label}</span>
+                            <span className="nx:typography-body-small nx:text-muted-foreground">
+                              <code className="nx:typography-code-inline">{tool.name}</code> {tool.detail}
+                            </span>
+                            {tool.asksFirst && (
+                              <div>
+                                <Badge variant="warning" fill="light" isCaps={false} leftIcon={tool.name.includes('referral') ? <ShieldCheckIcon /> : <HandPalmIcon />}>
+                                  {tool.asksFirst}
+                                </Badge>
+                              </div>
+                            )}
+                          </div>
+                          <Switch
+                            aria-label={tool.label}
+                            checked={setting.tools[tool.name] !== false}
+                            disabled={!setting.enabled}
+                            onCheckedChange={on => save({ ...portals, [portal]: { ...setting, tools: { ...setting.tools, [tool.name]: on } } })}
+                          />
+                        </div>
+                      ))}
+                  </div>
+                ))}
+                <Separator />
+                <span className="nx:typography-label-caps nx:text-muted-foreground">Anything else</span>
+                <div className="nx:flex nx:items-center nx:justify-between nx:gap-3">
+                  <div className="nx:flex nx:flex-col nx:gap-1">
+                    <span className="nx:typography-label-default">Free browsing on {PORTAL_NAMES[portal]}</span>
+                    <span className="nx:typography-body-small nx:text-muted-foreground">
+                      Open, read, click and type on pages the tools above don't cover. Off: Claude uses only the tools above.
+                    </span>
+                  </div>
+                  <Switch
+                    aria-label={`Free browsing on ${PORTAL_NAMES[portal]}`}
+                    checked={setting.freeBrowsing}
+                    disabled={!setting.enabled}
+                    onCheckedChange={freeBrowsing => save({ ...portals, [portal]: { ...setting, freeBrowsing } })}
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Playbook</CardTitle>
+              <CardDescription>The short notes Claude gets for {PORTAL_NAMES[portal]}, beyond what the tools do. Part of the app, updated with each release.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="nx:typography-body-small nx:m-0 nx:py-3 nx:pr-3 nx:pl-8 nx:rounded-md nx:bg-muted nx:flex nx:flex-col nx:gap-2">
+                {PLAYBOOKS[portal].map(line => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   )
 }
@@ -840,7 +857,7 @@ function AccountsTab(): JSX.Element {
 }
 
 /** Settings: entered once, used by every flow. */
-export function Settings({ tab }: { tab: string }): JSX.Element {
+export function Settings({ tab, sub }: { tab: string; sub?: string }): JSX.Element {
   const settings = useData(() => api.settings.get(), [], ['settings'])
   const current = TABS.some(([value]) => value === tab) ? tab : 'preferences'
 
@@ -874,7 +891,7 @@ export function Settings({ tab }: { tab: string }): JSX.Element {
             <MessageTab settings={settings.data} />
           </TabsContent>
           <TabsContent value="portals">
-            <PortalsTab settings={settings.data} />
+            <PortalsTab settings={settings.data} initial={sub === 'gmail' ? 'gmail' : 'linkedin'} />
           </TabsContent>
           <TabsContent value="accounts">
             <AccountsTab />

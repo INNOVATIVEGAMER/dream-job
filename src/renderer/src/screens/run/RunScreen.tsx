@@ -41,6 +41,12 @@ const COUNT_LABELS: Record<string, string> = {
   accepted: 'Newly accepted',
   messaged: 'Messages sent',
   filled: 'Fields filled',
+  listed: 'Emails listed',
+  seen: 'Skipped: an earlier check read them',
+  opened: 'About your job search',
+  moved: 'Rows moved on',
+  contacts: 'Contacts moved on',
+  waiting: 'Waiting for you',
 }
 
 function Result({ run }: { run: RunState }): JSX.Element | null {
@@ -100,6 +106,11 @@ export function RunScreen(): JSX.Element {
           {run.opportunityId && !isBusy && (
             <Button variant="outline" onClick={() => go(`/opportunity/${run.opportunityId}`)}>
               Open the row
+            </Button>
+          )}
+          {run.flow === 'email' && (
+            <Button variant={isBusy ? 'outline' : 'default'} onClick={() => go(`/email/${run.id}`)}>
+              {isBusy ? 'Changes so far' : 'See what changed'}
             </Button>
           )}
         </>

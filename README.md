@@ -23,6 +23,7 @@ Everything stays on your Mac.
 | **Apply** | Opens a posting and fills the form from your profile and saved answers, then submits. Works with LinkedIn Easy Apply, Wellfound, Instahyre and companies' own career sites. |
 | **Connection requests** | At companies you applied to, sends blank LinkedIn connection requests (never with a note) to people in your field and the hiring team. |
 | **Referral messages** | When enough people at a company accept, sends them your own saved message word for word, with your resume attached. |
+| **Email check** | Reads your newest emails in Gmail and moves the tracker on: rejections, next rounds, offers and replies, each linked to its email. |
 
 ### What always waits for you
 
@@ -143,6 +144,15 @@ The app types your message itself, checks that it matches your saved wording
 exactly, attaches your resume, and sends it. If anything doesn't match, nothing
 is sent.
 
+### 5. Update the tracker from Gmail
+
+1. From **Home**, press **Check email**; or from **Tracker**, press **Update from Gmail** to pick how many emails to read first.
+2. Claude reads the sender and subject of your newest emails (50 by default), opens only the ones about your job search, and moves the matching rows on.
+3. When it ends, **See what changed** lists every change with the email it came from. **Undo** puts a row back as it was.
+4. An email about a job that isn't in your tracker waits for you: **Add to tracker** or **Ignore**.
+
+It only reads. It never replies, sends, deletes, archives or labels mail, it leaves read and unread as they were, and it never follows a link in an email. It uses the Google account signed in to the app's Chrome. To run it every time the app opens (at most once a day), turn that on in **Settings, Portals, Gmail**.
+
 ### Keep the tracker current
 
 Open a row in **Tracker** to change its status (replied, screen, onsite, offer,
@@ -160,7 +170,7 @@ such as a recruiter who called you.
 | **Form answers** | Facts forms ask for, such as notice period or expected pay. Learned once, reused everywhere. |
 | **Resume** | The PDF uploaded with applications and attached to referral messages. |
 | **Referral message** | Your approved wording, and whether to attach your resume. |
-| **Portals** | Per portal: turn each of its tools on or off. A tool that's off hands that step to you in Chrome. Also shows the notes Claude gets for that portal. |
+| **Portals** | Per portal, and for Gmail: turn each of its tools on or off. A tool that's off hands that step to you in Chrome. Also shows the notes Claude gets there. Gmail's panel sets how many emails a check reads, and whether it runs when the app opens. |
 | **Accounts** | Claude Code status, Chrome, and sign-in for each site. |
 
 ---

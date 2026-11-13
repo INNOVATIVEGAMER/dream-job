@@ -13,7 +13,7 @@ import {
   SlidersHorizontalIcon,
 } from '@phosphor-icons/react'
 
-import { PORTAL_NAMES } from '../../../../shared/types'
+import { TOOL_SITE_NAMES } from '../../../../shared/types'
 import type { CardAnswer, RunCard } from '../../../../shared/types'
 import { api } from '../../lib/api'
 import { go } from '../../lib/router'
@@ -263,7 +263,7 @@ function ToolOffCard({ card }: { card: Extract<RunCard, { kind: 'tool-off' }> })
       <Card>
         <CardHeader>
           <CardTitle>
-            {card.tool} is off for Claude on {PORTAL_NAMES[card.portal]}
+            {card.tool} is off for Claude on {TOOL_SITE_NAMES[card.portal]}
           </CardTitle>
           <CardDescription>You turned it off in Settings, Portals. Everything before this step is done.</CardDescription>
           <CardAction>
@@ -295,7 +295,7 @@ function ToolOffCard({ card }: { card: Extract<RunCard, { kind: 'tool-off' }> })
       </Card>
       <div>
         <Button variant="ghost" size="sm" startIcon={<SlidersHorizontalIcon />} onClick={() => go('/settings/portals')}>
-          Change what Claude may do on {PORTAL_NAMES[card.portal]}
+          Change what Claude may do on {TOOL_SITE_NAMES[card.portal]}
         </Button>
       </div>
     </>

@@ -3,8 +3,8 @@ import { basename, dirname, join } from 'node:path'
 
 import { z } from 'zod'
 
-import { PORTAL_NAMES } from '../../shared/types'
-import type { Portal, WrittenAnswer } from '../../shared/types'
+import { TOOL_SITE_NAMES } from '../../shared/types'
+import type { Portal, ToolSite, WrittenAnswer } from '../../shared/types'
 import { defineTool } from '../runs/engine'
 import type { AnyTool, RunContext } from '../runs/engine'
 import {
@@ -72,12 +72,22 @@ export function portalOf(url: string): Portal | null {
   return null
 }
 
-/** Refuses general browsing on a portal where the user turned it off. */
+/** The site a URL belongs to among those with their own tools: a portal, or Gmail. */
+function siteOf(url: string): ToolSite | null {
+  try {
+    if (new URL(url).hostname === 'mail.google.com') return 'gmail'
+  } catch {
+    return null
+  }
+  return portalOf(url)
+}
+
+/** Refuses general browsing on a site where the user turned it off. */
 async function checkFreeBrowsing(ctx: RunContext, url?: string): Promise<string | null> {
   const where = url ?? (await ctx.chrome.page().catch(() => ({ url: '' }))).url
-  const portal = portalOf(where)
-  if (portal && !ctx.portal(portal).freeBrowsing) {
-    return `Free browsing is off for ${PORTAL_NAMES[portal]} in Settings. Use the ${PORTAL_NAMES[portal]} tools, or hand the step to the user with hand_to_user.`
+  const site = siteOf(where)
+  if (site && !ctx.portal(site).freeBrowsing) {
+    return `Free browsing is off for ${TOOL_SITE_NAMES[site]} in Settings. Use the ${TOOL_SITE_NAMES[site]} tools, or hand the step to the user with hand_to_user.`
   }
   return null
 }
