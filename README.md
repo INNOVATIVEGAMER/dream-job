@@ -1,302 +1,91 @@
 # Dream Job
 
-A macOS app that runs your job search on **LinkedIn**, **Wellfound** and
-**Instahyre**. It finds postings that fit you, applies to them, and builds a
-referral path at every company you apply to.
+Your job search, run by your own Claude Code in your own Chrome.
 
-It works through two things you already have:
+Dream Job finds jobs on LinkedIn, Wellfound and Instahyre, applies to them,
+builds a referral path at each company, and keeps your tracker current from
+your Gmail.
 
-- **Your own Claude Code**, signed in your way: a Claude plan or your own
-  Anthropic API key. Runs use whichever you signed in with. There is no
-  account with this app.
-- **Your own Google Chrome**, opened with a separate profile that belongs to
-  the app. You sign in to each site once, yourself.
-
-Everything stays on your Mac.
-
----
+> Still in development. Ideas, issues and pull requests are welcome.
 
 ## What it does
 
-| Flow | What happens |
-| --- | --- |
-| **Hunt** | Searches the portals for your target roles, reads each new posting, scores it 1 to 10, and adds the good ones to your tracker. The rest go to Discarded, with the posting's own words that ruled them out. |
-| **Apply** | Opens a posting and fills the form from your profile and saved answers, then submits. Works with LinkedIn Easy Apply, Wellfound, Instahyre and companies' own career sites. |
-| **Connection requests** | At companies you applied to, sends blank LinkedIn connection requests (never with a note) to people in your field and the hiring team. |
-| **Referral messages** | When enough people at a company accept, sends them your own saved message word for word, with your resume attached. |
-| **Email check** | Reads your newest emails in Gmail and moves the tracker on: rejections, next rounds, offers and replies, each linked to its email. |
+- **Hunt:** searches the portals for your target roles, scores every new posting against your profile, and adds the ones that fit to your tracker.
+- **Apply:** fills applications from your resume and saved answers, on LinkedIn Easy Apply, Wellfound, Instahyre and company career sites. Up to 5 at a time.
+- **Referrals:** sends blank connection requests to people at companies you applied to, then your own saved message, word for word, once they accept.
+- **Email check:** reads your newest emails and moves the tracker on: rejections, interviews, offers and replies.
 
-### What always waits for you
+## What always stays with you
 
-- **Anything Claude wrote in your voice.** Before a written answer (a cover note, "why this role") is sent, you see it and can edit it or say no.
-- **Passwords, sign-ins and one-time codes.** Claude never types them.
-- **CAPTCHAs, payment details, government IDs and the camera.** The run stops and hands Chrome to you.
-- **A posting that pays below your floor.** The run asks you before it goes on.
-- **Any message beyond your saved referral message.** Claude never writes to anyone.
-
----
+- Anything written in your voice waits for your approval before it is sent.
+- Passwords, one-time codes, CAPTCHAs, payment details and IDs: the run stops and hands Chrome to you.
+- Claude never writes to anyone beyond your saved referral message.
 
 ## Read this first: the risks
 
-Dream Job automates websites whose terms do not allow it. Use it knowing what
-that means.
+- **LinkedIn, Wellfound and Instahyre don't allow automation** in their terms. Using Dream Job breaks them, and they can restrict or close accounts. Bulk connection requests are the most watched.
+- **Everything goes out from your own accounts**, as you.
+- **Runs use your Claude plan**, or your API credits if you signed in with a key. A long hunt uses a lot.
+- **No warranty** (Apache 2.0). Not affiliated with LinkedIn, Wellfound, Instahyre, Google or Anthropic.
 
-- **The sites' terms forbid automation.** LinkedIn's User Agreement, and the
-  terms of Wellfound and Instahyre, prohibit bots and automated access,
-  including automated messages and connection requests. Running Dream Job
-  breaks those terms.
-- **Your accounts can be restricted or closed.** Each site can limit or shut
-  an account it sees automating. Connection requests sent in bulk are the most
-  watched. Go slowly, and don't run it on an account you can't afford to lose.
-- **Everything is sent as you.** Applications, requests and messages go out
-  from your own accounts. You are responsible for them.
-- **Claude usage.** Runs go through your own Claude Code, under Anthropic's
-  terms. Plan limits assume ordinary individual use, and a long hunt is heavy
-  use. With an API key you pay per use instead.
-- **No warranty.** Dream Job is provided as is, under the Apache License 2.0. It
-  is not affiliated with LinkedIn, Wellfound, Instahyre, Google or Anthropic.
+## Requirements
 
----
-
-## Before you start
-
-You need:
-
-1. **A Mac** running macOS 12 or later.
-2. **Google Chrome**, installed in Applications.
-3. **Claude Code**, installed and signed in:
-
-   ```
-   claude auth login
-   ```
-
-   Sign in with your Claude account (a paid plan), or with an Anthropic
-   Console account to use an API key.
-
-4. **Accounts** on the portals you want to use: LinkedIn, Wellfound, Instahyre.
-5. **Your resume as a PDF.**
-
----
+- macOS 12 or later, with Google Chrome in Applications
+- Claude Code, signed in with `claude auth login` (a Claude plan or an API key)
+- Node.js 22 or later, and pnpm, to build it
+- Your resume as a PDF
 
 ## Install
 
-There is no downloadable release yet, so build the app on your Mac. It takes a
-few minutes, once.
+There's no download yet, so build it once:
 
-1. Install **Node.js 22 or later** (from [nodejs.org](https://nodejs.org)) and
-   **pnpm**:
+```
+git clone https://github.com/INNOVATIVEGAMER/dream-job.git
+cd dream-job
+pnpm install
+node node_modules/electron/install.js
+pnpm dist:mac:local
+```
 
-   ```
-   npm install -g pnpm
-   ```
-
-2. Get the code and build the app:
-
-   ```
-   git clone https://github.com/INNOVATIVEGAMER/dream-job.git
-   cd dream-job
-   pnpm install
-   node node_modules/electron/install.js
-   pnpm dist:mac:local
-   ```
-
-3. Open the `release` folder in Finder and drag **Dream Job** into
-   **Applications**. It is in `release/mac-arm64` on Apple silicon, or
-   `release/mac` on an Intel Mac.
-
-4. Open Dream Job from Applications.
-
----
-
-## First run: setup
-
-The app walks you through five steps.
-
-1. **Claude Code.** The app checks that Claude Code is installed and signed in, and shows whether runs will use your plan or your API key. If a check fails, follow the steps it shows, then press **Check again**.
-2. **Your resume.** Choose your PDF. Claude reads it (about a minute) and pulls out your roles, skills, projects, links and a few starter form answers.
-3. **Review your profile.** Fix anything Claude got wrong. Everything written for you is drawn from this profile and nothing else.
-4. **What you're looking for.** Set the roles you want, roles you skip, the most years a posting may ask for, your country and cities, work modes, and your pay floor.
-5. **Portals and sign-in.** Turn on the portals you use, and press **Sign in** for each. Chrome opens; you type your password yourself. The sign-ins stay.
-
----
-
-## Daily use
-
-### 1. Hunt
-
-1. Go to **Hunt**.
-2. Pick the portals and how recent the postings should be (the past day, week or month).
-3. Press **Start hunt**.
-
-Each portal gets its own Claude session in its own Chrome tab, and they all run
-at once. The run screen shows a tile per portal with its progress: postings
-decided out of postings found. A LinkedIn hunt with several roles and cities can
-take 20 minutes or more. New finds appear in **Tracker** as *found*, each with
-its score and the reasons for it. A role found on two portals is added once.
-
-What each portal searches:
-
-- **LinkedIn:** each of your target roles, remote in your country, and hybrid and on-site in each of your cities.
-- **Wellfound:** the job search saved on your Wellfound account. Set your roles, places and pay there, on wellfound.com.
-- **Instahyre:** the jobs Instahyre recommends for your Instahyre profile.
-
-### 2. Apply
-
-- From **Home**, press **Apply to next** to work the best-scored found row, or
-- Open any row in **Tracker** and press **Apply**, or
-- In **Tracker**, tick several found rows and press **Apply to** (the number picked).
-
-Several rows run 5 at a time, each in its own Claude session and Chrome tab; the
-rest start as those finish. A session that needs you waits on its own card while
-the others keep going. Pick a session's tile on the run screen to see its card.
-
-When a form asks something your saved answers don't cover, the run asks you
-once, for all of it, and can save your answers for next time. When it wrote an
-answer in your voice, it shows you the text first. After it submits, the row
-moves to *applied*.
-
-### 3. Connection requests
-
-1. Go to **Contacts** and press **Send connection requests**.
-2. Pick companies you applied to, and how many people at each.
-3. Start it.
-
-Requests go out blank, with no note. People already connected to you are
-recorded as ready for your message. Each company gets its own session, 5 at a
-time. If LinkedIn says the invitation limit is reached, every session stops
-sending and the companies not yet started are left for later.
-
-### 4. Referral messages
-
-1. **Write your message once** in **Settings, Referral message**. Use these slots: `{name}`, `{role}`, `{company}`, `{job link}`. The app fills them for each person. Whatever you save is what gets sent, word for word.
-2. Go to **Contacts**, press **Message accepted**, then **Check now** to see who accepted.
-3. Pick the companies marked **Ready**: 3 people there have accepted, or nobody there is still pending.
-4. Press **Send messages**.
-
-The app types your message itself, checks that it matches your saved wording
-exactly, attaches your resume, and sends it. If anything doesn't match, nothing
-is sent. Each company gets its own session, 5 at a time.
-
-### 5. Update the tracker from Gmail
-
-1. From **Home**, press **Check email**; or from **Tracker**, press **Update from Gmail** to pick how many emails to read first.
-2. Claude reads the sender and subject of your newest emails (50 by default), opens only the ones about your job search, and moves the matching rows on.
-3. When it ends, **See what changed** lists every change with the email it came from. **Undo** puts a row back as it was.
-4. An email about a job that isn't in your tracker waits for you: **Add to tracker** or **Ignore**.
-
-It only reads. It never replies, sends, deletes, archives or labels mail, it leaves read and unread as they were, and it never follows a link in an email. It uses the Google account signed in to the app's Chrome. To run it every time the app opens (at most once a day), turn that on in **Settings, Portals, Gmail**.
-
-### Keep the tracker current
-
-Open a row in **Tracker** to change its status (replied, screen, onsite, offer,
-rejected) and add notes. **Add a row** records a job found outside the app,
-such as a recruiter who called you.
-
----
-
-## Settings
-
-| Tab | What it holds |
-| --- | --- |
-| **Preferences** | Target roles, roles you skip, experience ceiling, places, work modes, visa, pay floor. |
-| **Profile** | Your roles, projects, skills and links. The only source for anything written about you. Includes a "never mention or link" list. |
-| **Form answers** | Facts forms ask for, such as notice period or expected pay. Learned once, reused everywhere. |
-| **Resume** | The PDF uploaded with applications and attached to referral messages. |
-| **Referral message** | Your approved wording, and whether to attach your resume. |
-| **Portals** | Per portal, and for Gmail: turn each of its tools on or off. A tool that's off hands that step to you in Chrome. Also shows the notes Claude gets there. Gmail's panel sets how many emails a check reads, and whether it runs when the app opens. |
-| **Accounts** | Claude Code status, Chrome, and sign-in for each site. |
-
----
+Drag **Dream Job** from `release/mac-arm64` (Apple silicon) or `release/mac`
+(Intel) into Applications, and open it. Setup takes a few minutes: it checks
+Claude Code, reads your resume, asks what you're looking for, and has you sign
+in to each portal in the app's own Chrome.
 
 ## Your data
 
-- Everything lives in `~/Library/Application Support/dream-job`: your tracker, settings, resume, and the app's own Chrome profile.
-- The app's Chrome profile is separate from your everyday Chrome.
-- Nothing is sent anywhere except through the portals you use and your own Claude Code.
-
----
+Everything stays on your Mac, in `~/Library/Application Support/dream-job`:
+your tracker, settings, resume, and the app's Chrome profile, kept apart from
+your everyday Chrome.
 
 ## Troubleshooting
 
-**"Not signed in" during setup**
-Run `claude auth login` in Terminal, sign in with your Claude account or an Anthropic Console account, then press **Check again**.
+- **"Not signed in" during setup:** run `claude auth login`, then press **Check again**.
+- **A site shows as signed out:** Settings, Accounts, then **Sign in**.
+- **"Chrome is open for signing in":** quit that Chrome window (Cmd+Q) and start the run again.
+- **macOS won't open the app:** a `dist:mac:local` build only runs on the Mac that built it.
 
-**"Google Chrome is not installed"**
-Install Chrome into the main Applications folder.
-
-**A site shows as signed out**
-Go to **Settings, Accounts** and press **Sign in** for that site.
-
-**"Chrome is open for signing in"**
-Quit that Chrome window (Cmd+Q), then start the run again.
-
-**A run is waiting**
-Check the run screen. A card there says what it needs from you. When a run has
-several sessions, each one waiting has its own card: pick its tile. If a site
-signs out, one sign-in card covers every session on that site.
-
-**macOS says the app can't be opened**
-A build made with `pnpm dist:mac:local` runs only on the Mac that built it. Build it on each Mac, or use a signed release (see below).
-
----
-
-## Good to know
-
-- Dream Job is not affiliated with LinkedIn, Wellfound, Instahyre, Google or Anthropic.
-- It acts on your own accounts, as you. You are responsible for what it sends and for following each site's terms.
-- Runs use your Claude plan's usage, or your API credits if you signed in with a key. A long hunt uses a lot, and five sessions at once use it about five times as fast as one.
-- Each session is its own Claude Code process and Chrome tab, so a run of five uses a few GB of memory while it lasts.
-
----
-
-## For developers
-
-### Run from source
+## Contributing
 
 ```
 pnpm install
-node node_modules/electron/install.js   # first time only: downloads Electron
-pnpm dev
-```
-
-### Checks
-
-```
+node node_modules/electron/install.js   # first time only
+pnpm dev                                # run from source
 pnpm typecheck
 pnpm build
 ```
 
-### Packaging
+`CLAUDE.md` explains how the app is put together. For a signed, notarized
+release you need a Developer ID Application certificate:
 
-Every process is bundled with what it uses, so the app ships no
-`node_modules`, and no copy of Claude Code: it runs the user's own.
+```
+xcrun notarytool store-credentials dream-job-notary --apple-id <your Apple ID> --team-id <your team ID>
+APPLE_KEYCHAIN_PROFILE=dream-job-notary pnpm dist:mac
+```
 
-- `pnpm dist:mac:local` builds an ad-hoc signed app for the Mac that builds it.
-- `pnpm dist:mac` builds a release: a dmg and a zip for Apple silicon and Intel, signed with a Developer ID certificate. It stops if no certificate is found.
-
-To sign and notarize a release:
-
-1. Join the Apple Developer Program and create a **Developer ID Application** certificate (Xcode, Settings, Accounts, Manage Certificates).
-2. Store notarization credentials in your keychain, once:
-
-   ```
-   xcrun notarytool store-credentials dream-job-notary --apple-id <your Apple ID> --team-id <your team ID>
-   ```
-
-3. Build:
-
-   ```
-   APPLE_KEYCHAIN_PROFILE=dream-job-notary pnpm dist:mac
-   ```
-
-4. Check: `spctl -a -vv "release/mac-arm64/Dream Job.app"` should say `source=Notarized Developer ID`.
-
-The app from source and the packaged app share one data folder, so run one at a time.
-
----
+The app from source and the built app share one data folder, so run one at a time.
 
 ## License
 
-[Apache License 2.0](LICENSE). Every build carries the licenses of the
-open-source packages bundled into it, in a `THIRD_PARTY_NOTICES.txt` beside
-each process's code (`out/main`, `out/preload`, `out/renderer`).
+[Apache 2.0](LICENSE). Every build includes `THIRD_PARTY_NOTICES.txt` for the
+open-source packages bundled into it.
