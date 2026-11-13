@@ -531,6 +531,38 @@ export type CardAnswer =
 /** A tally a run keeps, such as postings added and discarded. */
 export type RunCounts = Record<string, number>
 
+export type RunProgress = { label: string; done: number; total: number }
+
+/** How many Claude sessions one run keeps going at once. */
+export const AT_ONCE = 5
+
+/** Where one session stands: waiting its turn, working, stopped on a card, or ended. */
+export type LaneStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'stopped'
+
+/**
+ * One Claude session inside a run, with its own Chrome tab: a portal in a
+ * hunt, a row in an apply, a company in the referral track.
+ */
+export type RunLane = {
+  key: string
+  title: string
+  subtitle: string | null
+  portal: string | null
+  opportunityId: number | null
+  status: LaneStatus
+  started: string | null
+  ended: string | null
+  progress: RunProgress | null
+  counts: RunCounts
+  /** What it waits on the user for. Sessions waiting on the same sign-in share one card. */
+  card: RunCard | null
+  events: RunEvent[]
+  /** The last thing it did, for its tile. */
+  last: string | null
+  usage: RunUsage
+  result: string | null
+}
+
 /** The run in progress, or the last one, as its screen shows it. */
 export type RunState = {
   id: number
@@ -542,12 +574,20 @@ export type RunState = {
   status: RunStatus
   started: string
   model: string | null
-  progress: { label: string; done: number; total: number } | null
+  /** With one session, its progress; with several, how many have ended. */
+  progress: RunProgress | null
+  /** Summed over every session. */
   counts: RunCounts
+  /** A card some session waits on; each session's own is on its lane. */
   card: RunCard | null
+  /** Every session's activity, newest last; with several, each line names its session. */
   events: RunEvent[]
   usage: RunUsage
   result: string | null
+  /** One per session. A run with one session works in the tab Chrome shows. */
+  lanes: RunLane[]
+  /** How many sessions run at once. */
+  atOnce: number
 }
 
 /* ------------------------------------------------------------------ */

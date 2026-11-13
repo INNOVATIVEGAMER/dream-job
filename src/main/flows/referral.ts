@@ -1,15 +1,31 @@
 import { z } from 'zod'
 
+import { AT_ONCE } from '../../shared/types'
 import { browserTools, REFUSE } from '../browser/tools'
 import type { Store } from '../db/store'
 import { linkedinTools } from '../portals/linkedin'
 import { linkedinNetworkTools } from '../portals/linkedin-network'
-import type { FlowSpec } from '../runs/engine'
+import { onePlan } from '../runs/engine'
+import type { FlowSpec, RunPlan } from '../runs/engine'
 
 const Output = z.object({ summary: z.string().describe('One or two sentences on what this run did') })
 type Answer = z.infer<typeof Output>
 
 const handOver = (tools: ReturnType<typeof browserTools>): ReturnType<typeof browserTools> => tools.filter(tool => tool.name === 'hand_to_user')
+
+const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`
+
+/** Each company once, whatever its spelling: rows at one company share a session, so nobody is asked twice. */
+function eachCompany(store: Store, companies: string[]): string[] {
+  const seen = new Set<string>()
+  return companies.filter(company => {
+    const row = store.appliedRow(company)
+    const key = row ? `row:${row.id}` : company.trim().toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
 
 /**
  * Blank connection requests at companies the user applied to: the wide end
@@ -19,12 +35,15 @@ export function connectSpec(store: Store, companies: string[], perCompany: numbe
   const prefs = store.settings.preferences()
   const profile = store.settings.profile()
   const rows = companies.map(company => ({ company, row: store.appliedRow(company) })).filter(entry => entry.row)
-  const before = store.contacts.counts()
+  const pendingAt = (): number => rows.reduce((sum, { company }) => sum + store.contacts.atCompany(company, 'pending').length, 0)
+  const before = pendingAt()
+  const only = rows.length === 1 ? rows[0]! : null
 
   return {
     flow: 'connect',
     title: 'Connection requests',
-    subtitle: `${rows.length} ${rows.length === 1 ? 'company' : 'companies'}, up to ${perCompany} each`,
+    laneTitle: only?.company,
+    subtitle: only ? only.row!.role : `${plural(rows.length, 'company', 'companies')}, up to ${perCompany} each`,
     portal: 'linkedin',
     system: [
       'This run sends blank LinkedIn connection requests to people at companies the user has applied to, so that once they accept, the user\'s approved referral message can go to them.',
@@ -52,11 +71,31 @@ export function connectSpec(store: Store, companies: string[], perCompany: numbe
     ],
     output: Output,
     finish: answer => {
-      const after = store.contacts.counts()
-      const sent = after.pending - before.pending
-      return `${sent > 0 ? `${sent} ${sent === 1 ? 'request' : 'requests'} out` : 'No new requests'}. ${answer.summary}`
+      const sent = pendingAt() - before
+      return `${sent > 0 ? `${plural(sent, 'request')} out` : 'No new requests'}. ${answer.summary}`
     },
     maxTurns: 150,
+  }
+}
+
+/** Connection requests: one session per company, 5 at a time, each in its own tab. */
+export function connectPlan(store: Store, companies: string[], perCompany: number): RunPlan {
+  const each = eachCompany(store, companies)
+  const before = store.contacts.counts().pending
+  const sessions = each.map(company => connectSpec(store, [company], perCompany))
+  if (sessions.length === 1) return onePlan(sessions[0]!)
+  return {
+    flow: 'connect',
+    title: 'Connection requests',
+    subtitle: `${plural(each.length, 'company', 'companies')}, up to ${perCompany} each, one session per company`,
+    portal: 'linkedin',
+    sessions,
+    atOnce: AT_ONCE,
+    unit: 'Companies done',
+    finish: (_outcomes, halted) => {
+      const sent = store.contacts.counts().pending - before
+      return `${sent > 0 ? `${plural(sent, 'request')} out` : 'No new requests'} across ${plural(each.length, 'company', 'companies')}.${halted ? ` ${halted}: the rest did not start.` : ''}`
+    },
   }
 }
 
@@ -92,10 +131,12 @@ export function referralSpec(store: Store, companies: string[]): FlowSpec<Answer
   const ids = batches.flatMap(batch => batch.people.map(person => person.id))
   const resume = store.settings.referral().attachResume
 
+  const only = batches.length === 1 ? batches[0]! : null
   return {
     flow: 'referral',
     title: 'Referral messages',
-    subtitle: `${ids.length} ${ids.length === 1 ? 'person' : 'people'} at ${batches.length} ${batches.length === 1 ? 'company' : 'companies'}`,
+    laneTitle: only?.company,
+    subtitle: only ? `${plural(ids.length, 'person', 'people')}, for ${only.row!.role}` : `${plural(ids.length, 'person', 'people')} at ${plural(batches.length, 'company', 'companies')}`,
     portal: 'linkedin',
     system: [
       `This run sends the user's approved referral message${resume ? ', with their resume,' : ''} to people who accepted their connection requests.`,
@@ -115,6 +156,27 @@ export function referralSpec(store: Store, companies: string[]): FlowSpec<Answer
       return `${sent} of ${ids.length} ${ids.length === 1 ? 'message' : 'messages'} sent. ${answer.summary}`
     },
     maxTurns: 80,
+  }
+}
+
+/** Referral messages: one session per company, 5 at a time, each in its own tab. */
+export function referralPlan(store: Store, companies: string[]): RunPlan {
+  const each = eachCompany(store, companies).filter(company => store.appliedRow(company) && store.contacts.atCompany(company, 'accepted').length)
+  const people = each.flatMap(company => store.contacts.atCompany(company, 'accepted').map(person => person.id))
+  const sessions = each.map(company => referralSpec(store, [company]))
+  if (sessions.length === 1) return onePlan(sessions[0]!)
+  return {
+    flow: 'referral',
+    title: 'Referral messages',
+    subtitle: `${plural(people.length, 'person', 'people')} at ${plural(each.length, 'company', 'companies')}, one session per company`,
+    portal: 'linkedin',
+    sessions,
+    atOnce: AT_ONCE,
+    unit: 'Companies done',
+    finish: () => {
+      const sent = people.filter(id => store.contacts.get(id)?.state === 'messaged').length
+      return `${sent} of ${plural(people.length, 'message')} sent across ${plural(each.length, 'company', 'companies')}.`
+    },
   }
 }
 

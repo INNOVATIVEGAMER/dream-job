@@ -112,6 +112,8 @@ export const INVITE_SCRIPT = String.raw`(() => {
   };
 })()`
 
+const LIMIT_REACHED = 'LinkedIn says the invitation limit is reached'
+
 type Invite = { none?: boolean; text?: string; send?: { x: number; y: number } | null; dismiss?: { x: number; y: number } | null; limit?: boolean }
 
 export const PROFILE_SCRIPT = String.raw`(() => {
@@ -302,6 +304,9 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
           company: z.string().min(1).max(200).describe('The company they are at, as the tracker names it'),
         },
         async ({ profile, name, headline, company }) => {
+          // LinkedIn's limit holds for the whole account: once one session meets it, none sends again.
+          const halted = ctx.halted()
+          if (halted) return refuse(`${halted}. Stop sending requests and finish.`)
           const vanity = vanityOf(profile)
           if (!vanity) return refuse('That is not a LinkedIn profile.')
           const url = profileUrl(vanity)
@@ -312,14 +317,18 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
           await waitFor(ctx, `[...document.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]')].some(d => d.getBoundingClientRect().width > 0)`, 6000)
           const invite = await ctx.chrome.evaluate<Invite>(INVITE_SCRIPT)
 
-          if (invite.limit) return refuse('LinkedIn says the invitation limit is reached. Stop sending requests and finish.')
+          if (invite.limit) {
+            ctx.halt(LIMIT_REACHED)
+            return refuse(`${LIMIT_REACHED}. Stop sending requests and finish.`)
+          }
           if (!invite.none && invite.send) {
             await clickPoint(ctx, invite.send)
             await sleep(1500)
             const after = await ctx.chrome.evaluate<Invite>(INVITE_SCRIPT)
             const said = await ctx.chrome.evaluate<string>('document.body.innerText.slice(0, 4000)', true).catch(() => '')
             if (after.limit || /invitation limit|reached the (weekly )?limit/i.test(said)) {
-              return refuse('LinkedIn says the invitation limit is reached. Stop sending requests and finish.')
+              ctx.halt(LIMIT_REACHED)
+              return refuse(`${LIMIT_REACHED}. Stop sending requests and finish.`)
             }
             if (!after.none) {
               // Still open, or a different question (such as their email): either way, not sent.

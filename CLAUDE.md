@@ -36,7 +36,16 @@ https://claude.ai/artifact/2jzHoWNXxeDz7JwwYnEHAm
   process `require`s it because Electron 45 runs Node 24. Keep it external, not
   bundled.
 - Flows run in the background and show results on screens, not in a chat.
-- `src/main/flows.ts` runs one flow at a time: `tools: []`, the browser tools
+- `src/main/runs/engine.ts` runs one flow at a time, as a plan of sessions:
+  one `query()` per session, up to `AT_ONCE` (5) together, the rest queued.
+  Hunt is one session per portal; Apply one per row; Connect and Referral one
+  per company; the email check is one session. A run with
+  one session drives the tab Chrome follows; with several, each session opens
+  its own tab (`ChromeController.openTab`) and closes it when it ends. Each
+  session has its own card; sessions that hit the same sign-in share one card.
+  `ctx.halt(reason)` stops queued sessions from starting (LinkedIn's
+  invitation limit uses it).
+- Each session gets `tools: []`, the browser tools
   from `src/main/browser-tools.ts` as an in-process MCP server, `allowedTools`
   plus `permissionMode: 'dontAsk'` so nothing else can run, streaming input
   (needed for `interrupt()`), and `outputFormat` built from the same Zod schema
@@ -108,6 +117,12 @@ https://claude.ai/artifact/2jzHoWNXxeDz7JwwYnEHAm
 - `src/main/cdp.ts` is a small DevTools-protocol client over that pipe (NUL
   separated JSON); `src/main/chrome.ts` opens Chrome, follows one tab and
   drives it. Tested against Chrome 146: connect, follow a tab, navigate, history.
+- **A background tab stops drawing**: no animation frames, and
+  IntersectionObserver never fires, so lazy lists (LinkedIn's job cards) stay
+  empty. `Emulation.setFocusEmulationEnabled` on a tab makes it draw, run its
+  timers and load lazily as if it were in front, with no launch flags needed
+  (measured headful on Chrome 146). Every tab the app drives gets it, so
+  sessions can each work in a tab of their own at once.
 - Chrome on macOS keeps running after its last window closes; it counts as
   closed when quit (Cmd+Q) or when the app closes it.
 

@@ -1,13 +1,13 @@
 import { z } from 'zod'
 
-import { DISCARD_REASONS, PORTALS } from '../../shared/types'
+import { AT_ONCE, DISCARD_REASONS, PORTALS } from '../../shared/types'
 import type { Opportunity, Portal } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
 import type { Store } from '../db/store'
 import { applyTools } from '../portals'
-import { defineTool } from '../runs/engine'
-import type { AnyTool, FlowSpec, RunContext } from '../runs/engine'
+import { defineTool, onePlan } from '../runs/engine'
+import type { AnyTool, FlowSpec, RunContext, RunPlan } from '../runs/engine'
 import { answersText, preferencesText, profileText, WRITING_RULES } from './context'
 
 const Output = z.object({
@@ -184,6 +184,7 @@ export function applySpec(store: Store, row: Opportunity): FlowSpec<Answer> {
   return {
     flow: 'apply',
     title: `Apply: ${row.company}`,
+    laneTitle: row.company,
     subtitle: row.role,
     portal: row.portal,
     playbooks: portal ? [portal] : [],
@@ -198,5 +199,34 @@ export function applySpec(store: Store, row: Opportunity): FlowSpec<Answer> {
     output: Output,
     finish: (answer, ctx) => finish(store, row, record, answer, ctx),
     maxTurns: 120,
+  }
+}
+
+/** Applies to rows: one session per row, 5 at a time, each in its own tab. */
+export function applyPlan(store: Store, rows: Opportunity[]): RunPlan {
+  const sessions = rows.map(row => applySpec(store, row))
+  if (sessions.length === 1) return onePlan(sessions[0]!)
+  return {
+    flow: 'apply',
+    title: `Apply to ${rows.length} rows`,
+    subtitle: rows.map(row => row.company).join(', '),
+    portal: null,
+    sessions,
+    atOnce: AT_ONCE,
+    unit: 'Rows done',
+    finish: outcomes => {
+      const statuses = rows.map(row => store.opportunities.get(row.id)?.status)
+      const applied = statuses.filter(status => status === 'applied').length
+      const dead = statuses.filter(status => status === 'dead').length
+      const unfinished = outcomes.filter(outcome => outcome.status !== 'done').length
+      const rest = rows.length - applied - dead
+      return [
+        `${applied} of ${rows.length} applied.`,
+        dead ? `${dead} no longer taking applications.` : '',
+        rest ? `${rest} not applied${unfinished ? `, ${unfinished} of them because the session did not finish` : ''}: each session's line below says why.` : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+    },
   }
 }

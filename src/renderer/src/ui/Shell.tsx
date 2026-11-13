@@ -53,12 +53,28 @@ function NavButton({ item, section }: { item: NavItem; section: string }): JSX.E
   )
 }
 
+/** A run of several sessions in a few words: who waits for you and how many work. */
+function lanesLine(run: NonNullable<AppStatus['run']>): string {
+  const waiting = run.lanes.filter(lane => lane.status === 'waiting').length
+  const working = run.lanes.filter(lane => lane.status === 'running').length
+  const done = run.lanes.filter(lane => lane.status !== 'running' && lane.status !== 'waiting' && lane.status !== 'queued').length
+  return [waiting ? `${waiting} waiting for you` : '', working ? `${working} working` : '', `${done} of ${run.lanes.length} done`].filter(Boolean).join(', ')
+}
+
 function RunningNow({ status, section }: { status: AppStatus | null; section: string }): JSX.Element {
   const run = status?.run
   const isBusy = run && (run.status === 'running' || run.status === 'waiting')
   if (!run || !isBusy) {
     return <p className="nx:typography-body-small nx:m-0 nx:px-2 nx:text-nav-muted-foreground">Nothing. Start a flow from Home.</p>
   }
+  const line =
+    run.lanes.length > 1
+      ? lanesLine(run)
+      : run.status === 'waiting'
+        ? 'Waiting for you'
+        : run.progress
+          ? `${run.progress.label}, ${run.progress.done} of ${run.progress.total}`
+          : 'Running'
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -66,9 +82,7 @@ function RunningNow({ status, section }: { status: AppStatus | null; section: st
           {run.status === 'waiting' ? <HandPalmIcon /> : <Spinner />}
           <div className="nx:flex nx:flex-col nx:min-w-0">
             <span className="nx:typography-label-default nx:truncate">{run.title}</span>
-            <span className="nx:typography-body-small nx:text-nav-muted-foreground nx:truncate">
-              {run.status === 'waiting' ? 'Waiting for you' : run.progress ? `${run.progress.label}, ${run.progress.done} of ${run.progress.total}` : 'Running'}
-            </span>
+            <span className="nx:typography-body-small nx:text-nav-muted-foreground nx:truncate">{line}</span>
           </div>
         </SidebarMenuButton>
       </SidebarMenuItem>

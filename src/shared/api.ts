@@ -98,10 +98,13 @@ export type JobAppApi = {
     get: (id: number) => Promise<RunDetail | null>
     answer: (cardId: string, answer: CardAnswer) => Promise<void>
     stop: () => Promise<void>
+    /** Shows one session's tab in Chrome: by its lane key, or by a card it waits on. */
+    showTab: (key: string) => Promise<void>
   }
   flows: {
     hunt: (options: HuntOptions) => Promise<number>
-    apply: (opportunityId: number) => Promise<number>
+    /** One session per row, 5 at a time. */
+    apply: (opportunityIds: number[]) => Promise<number>
     connect: (options: ConnectOptions) => Promise<number>
     referral: (options: ReferralOptions) => Promise<number>
     checkAccepted: () => Promise<number>
@@ -164,6 +167,7 @@ export const CHANNELS = [
   'runs:get',
   'runs:answer',
   'runs:stop',
+  'runs:showTab',
   'flows:hunt',
   'flows:apply',
   'flows:connect',

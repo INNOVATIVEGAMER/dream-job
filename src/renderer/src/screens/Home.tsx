@@ -76,7 +76,7 @@ export function Home(): JSX.Element {
   }
   const applyNext = async (): Promise<void> => {
     if (!summary?.nextFound) return
-    const started = await attempt(() => api.flows.apply(summary.nextFound!.id))
+    const started = await attempt(() => api.flows.apply([summary.nextFound!.id]))
     if (started) go('/run')
   }
 

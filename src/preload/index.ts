@@ -56,6 +56,7 @@ const api: JobAppApi = {
     get: call('runs:get'),
     answer: call('runs:answer'),
     stop: call('runs:stop'),
+    showTab: call('runs:showTab'),
   },
   flows: {
     hunt: call('flows:hunt'),

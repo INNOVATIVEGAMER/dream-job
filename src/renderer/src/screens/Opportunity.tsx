@@ -58,7 +58,7 @@ export function Opportunity({ id }: { id: number }): JSX.Element {
 
   const contacts = detail.data.contacts
   const apply = async (): Promise<void> => {
-    if (await attempt(() => api.flows.apply(row.id))) go('/run')
+    if (await attempt(() => api.flows.apply([row.id]))) go('/run')
   }
 
   return (

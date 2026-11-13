@@ -157,9 +157,10 @@ export function registerIpc(deps: IpcDeps): void {
     },
     'runs:answer': (cardId, answer) => deps.engine.answer(short().parse(cardId), CardAnswerSchema.parse(answer)),
     'runs:stop': () => deps.engine.stop(),
+    'runs:showTab': key => deps.engine.showTab(short().parse(key)),
 
     'flows:hunt': options => deps.flows.hunt(HuntOptions.parse(options)),
-    'flows:apply': rowId => deps.flows.apply(id.parse(rowId)),
+    'flows:apply': rowIds => deps.flows.apply(z.array(id).min(1).max(200).parse(rowIds)),
     'flows:connect': options => deps.flows.connect(ConnectOptions.parse(options)),
     'flows:referral': options => deps.flows.referral(ReferralOptions.parse(options)),
     'flows:checkAccepted': () => deps.flows.checkAccepted(),

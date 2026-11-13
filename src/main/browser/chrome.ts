@@ -41,121 +41,23 @@ export function findChrome(): string | null {
   return candidates.find(path => existsSync(path)) ?? null
 }
 
+type Send = (method: string, params: Record<string, unknown>, sessionId?: string, isQuiet?: boolean) => Promise<Record<string, unknown>>
+
 /**
- * Runs Google Chrome with the app's own profile, in one of two modes:
- * `signin` opens it with no control link at all, for signing in to Google;
- * `controlled` adds `--remote-debugging-pipe`, a private pipe to this process
- * only, and follows one tab. No automation flags are passed, so Chrome shows
- * no "controlled by automated software" banner and pages cannot tell.
- *
- * Every page the app follows gets the submit guard: a form submit that comes
- * from the app's own clicks or typing is blocked unless an approved submit
- * opened the gate first. The user's own clicks are never blocked.
+ * What a run's tools do in one tab: read it, open pages, click, type and
+ * upload as a person would. The tab the app follows and every tab a session
+ * opens for itself work the same way.
  */
-export class ChromeController {
-  private child: ChildProcess | null = null
-  private cdp: Cdp | null = null
-  private pageId: string | null = null
-  private pageSession: string | null = null
-  private attaching: Promise<void> | null = null
-  private startedAt = 0
-  private state: BrowserState = CLOSED
+export abstract class PageDriver {
+  protected abstract session(): Promise<string>
+  protected abstract send(method: string, params: Record<string, unknown>, sessionId?: string, isQuiet?: boolean): Promise<Record<string, unknown>>
 
-  /** `extraArgs` go to Chrome as given, such as `--headless=new` for a check run off screen. */
-  constructor(
-    private readonly profileDir: string,
-    private readonly onChange: (state: BrowserState) => void,
-    private readonly extraArgs: readonly string[] = [],
-  ) {}
-
-  current(): BrowserState {
-    return this.state
-  }
-
-  isControlled(): boolean {
-    return this.state.mode === 'controlled' && this.pageSession !== null
-  }
-
-  /**
-   * Opens `url` in a new tab of the sign-in window. Chrome hands a second
-   * launch with the same profile to the running one and exits at once.
-   */
-  openInSignin(url: string): void {
-    if (this.state.mode !== 'signin') throw new Error('Chrome is not open for signing in.')
-    const chromePath = findChrome()
-    if (!chromePath) throw new Error('Google Chrome is not installed in Applications. Install it, then try again.')
-    spawn(chromePath, [`--user-data-dir=${this.profileDir}`, url], { stdio: 'ignore' }).once('error', error => this.fail(error))
-  }
-
-  async open(mode: 'signin' | 'controlled', bounds: Bounds, url = START_URL): Promise<void> {
-    if (this.child) throw new Error('Chrome is already open. Close it first.')
-    const chromePath = findChrome()
-    if (!chromePath) throw new Error('Google Chrome is not installed in Applications. Install it, then try again.')
-    mkdirSync(this.profileDir, { recursive: true })
-    const args = [
-      `--user-data-dir=${this.profileDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      `--window-position=${bounds.x},${bounds.y}`,
-      `--window-size=${bounds.width},${bounds.height}`,
-    ]
-    if (mode === 'controlled') args.push('--remote-debugging-pipe')
-    args.push(...this.extraArgs, url)
-
-    const child = spawn(chromePath, args, {
-      stdio: mode === 'controlled' ? ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] : 'ignore',
-    })
-    this.child = child
-    this.startedAt = Date.now()
-    child.once('error', error => this.ended(`Chrome did not start: ${error.message}`))
-    child.once('exit', () => this.ended())
-    this.set({ ...CLOSED, mode, url })
-
-    if (mode === 'controlled') {
-      const cdp = new Cdp(child.stdio[3] as Writable, child.stdio[4] as Readable)
-      this.cdp = cdp
-      cdp.on('event', event => void this.onEvent(event).catch(error => this.fail(error)))
-      await cdp.send('Target.setDiscoverTargets', { discover: true })
-    }
-  }
-
-  /** Waits until a tab is followed, up to `ms`. */
-  async ready(ms = 10_000): Promise<void> {
-    const deadline = Date.now() + ms
-    while (Date.now() < deadline) {
-      if (this.pageSession) return
-      if (this.attaching) await this.attaching
-      else await sleep(150)
-    }
-    throw new Error('Chrome opened, but no tab was ready in time.')
-  }
-
-  /** Closes Chrome: politely over the pipe when controlled, by signal otherwise. */
-  /** Closes Chrome and resolves once it has exited. */
-  async close(): Promise<void> {
-    const child = this.child
-    if (!child) return
-    const exited = new Promise<void>(resolve => {
-      if (child.exitCode !== null || child.signalCode !== null) resolve()
-      else child.once('exit', () => resolve())
-    })
-    if (this.cdp) {
-      await this.cdp.send('Browser.close').catch(() => undefined)
-      setTimeout(() => child.exitCode === null && child.kill('SIGTERM'), 2000)
-    } else {
-      child.kill('SIGTERM')
-    }
-    const last = setTimeout(() => child.exitCode === null && child.signalCode === null && child.kill('SIGKILL'), 6000)
-    await exited
-    clearTimeout(last)
-  }
-
-  /** Sends one command to the followed tab. */
+  /** Sends one command to this tab. */
   async command(method: string, params: Record<string, unknown> = {}, isQuiet = false): Promise<Record<string, unknown>> {
     return this.send(method, params, await this.session(), isQuiet)
   }
 
-  /** Runs JavaScript in the followed tab and answers its value. */
+  /** Runs JavaScript in this tab and answers its value. */
   async evaluate<T>(expression: string, isQuiet = false): Promise<T> {
     const answer = (await this.command(
       'Runtime.evaluate',
@@ -169,14 +71,14 @@ export class ChromeController {
     return answer.result?.value as T
   }
 
-  /** The followed tab's address and title. */
+  /** This tab's address and title. */
   async page(): Promise<{ url: string; title: string }> {
     return this.evaluate<{ url: string; title: string }>('({ url: location.href, title: document.title })')
   }
 
   /**
-   * Opens a URL in the followed tab and waits for it to finish loading, then a
-   * little longer: pages such as LinkedIn fill in their lists after load.
+   * Opens a URL in this tab and waits for it to finish loading, then a little
+   * longer: pages such as LinkedIn fill in their lists after load.
    */
   async openPage(url: string): Promise<void> {
     const answer = (await this.command('Page.navigate', { url })) as { errorText?: string }
@@ -258,8 +160,182 @@ export class ChromeController {
     await this.command('DOM.setFileInputFiles', { nodeId, files })
   }
 
+  /** Shows this tab in Chrome, with Chrome in front. */
   async bringToFront(): Promise<void> {
     await this.command('Page.bringToFront').catch(() => undefined)
+  }
+
+  private async markActing(): Promise<void> {
+    await this.evaluate(`window.__jobappGuard && (window.__jobappGuard.acting = Date.now() + ${ACTING_MS})`, true).catch(() => undefined)
+  }
+}
+
+/**
+ * A tab one session opened for itself, so several sessions can work at once.
+ * It renders and runs as if it were the tab on screen, and closes when its
+ * session ends.
+ */
+export class Tab extends PageDriver {
+  constructor(
+    readonly targetId: string,
+    private readonly sessionId: string,
+    private readonly sender: Send,
+    private readonly onClose: () => Promise<void>,
+  ) {
+    super()
+  }
+
+  protected async session(): Promise<string> {
+    return this.sessionId
+  }
+
+  protected send(method: string, params: Record<string, unknown>, sessionId?: string, isQuiet = false): Promise<Record<string, unknown>> {
+    return this.sender(method, params, sessionId, isQuiet)
+  }
+
+  async close(): Promise<void> {
+    await this.onClose()
+  }
+}
+
+/**
+ * Runs Google Chrome with the app's own profile, in one of two modes:
+ * `signin` opens it with no control link at all, for signing in to Google;
+ * `controlled` adds `--remote-debugging-pipe`, a private pipe to this process
+ * only, and follows one tab. No automation flags are passed, so Chrome shows
+ * no "controlled by automated software" banner and pages cannot tell.
+ *
+ * Every page the app drives gets the submit guard: a form submit that comes
+ * from the app's own clicks or typing is blocked unless an approved submit
+ * opened the gate first. The user's own clicks are never blocked.
+ *
+ * Every page the app drives also gets focus emulation. Chrome stops drawing a
+ * tab that is not on screen, and pages that fill in lists as they scroll
+ * (LinkedIn's job cards among them) then never fill in. With focus emulation
+ * a tab draws, runs its timers and loads lazily as if it were in front, so
+ * sessions can each work in their own tab at once.
+ */
+export class ChromeController extends PageDriver {
+  private child: ChildProcess | null = null
+  private cdp: Cdp | null = null
+  private pageId: string | null = null
+  private pageSession: string | null = null
+  private attaching: Promise<void> | null = null
+  /** The tabs sessions opened for themselves: never the followed tab. */
+  private readonly sessionTabs = new Set<string>()
+  private openingTabs = 0
+  private startedAt = 0
+  private state: BrowserState = CLOSED
+
+  /** `extraArgs` go to Chrome as given, such as `--headless=new` for a check run off screen. */
+  constructor(
+    private readonly profileDir: string,
+    private readonly onChange: (state: BrowserState) => void,
+    private readonly extraArgs: readonly string[] = [],
+  ) {
+    super()
+  }
+
+  current(): BrowserState {
+    return this.state
+  }
+
+  isControlled(): boolean {
+    return this.state.mode === 'controlled' && this.pageSession !== null
+  }
+
+  /**
+   * Opens `url` in a new tab of the sign-in window. Chrome hands a second
+   * launch with the same profile to the running one and exits at once.
+   */
+  openInSignin(url: string): void {
+    if (this.state.mode !== 'signin') throw new Error('Chrome is not open for signing in.')
+    const chromePath = findChrome()
+    if (!chromePath) throw new Error('Google Chrome is not installed in Applications. Install it, then try again.')
+    spawn(chromePath, [`--user-data-dir=${this.profileDir}`, url], { stdio: 'ignore' }).once('error', error => this.fail(error))
+  }
+
+  async open(mode: 'signin' | 'controlled', bounds: Bounds, url = START_URL): Promise<void> {
+    if (this.child) throw new Error('Chrome is already open. Close it first.')
+    const chromePath = findChrome()
+    if (!chromePath) throw new Error('Google Chrome is not installed in Applications. Install it, then try again.')
+    mkdirSync(this.profileDir, { recursive: true })
+    const args = [
+      `--user-data-dir=${this.profileDir}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      `--window-position=${bounds.x},${bounds.y}`,
+      `--window-size=${bounds.width},${bounds.height}`,
+    ]
+    if (mode === 'controlled') args.push('--remote-debugging-pipe')
+    args.push(...this.extraArgs, url)
+
+    const child = spawn(chromePath, args, {
+      stdio: mode === 'controlled' ? ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] : 'ignore',
+    })
+    this.child = child
+    this.startedAt = Date.now()
+    child.once('error', error => this.ended(`Chrome did not start: ${error.message}`))
+    child.once('exit', () => this.ended())
+    this.set({ ...CLOSED, mode, url })
+
+    if (mode === 'controlled') {
+      const cdp = new Cdp(child.stdio[3] as Writable, child.stdio[4] as Readable)
+      this.cdp = cdp
+      cdp.on('event', event => void this.onEvent(event).catch(error => this.fail(error)))
+      await cdp.send('Target.setDiscoverTargets', { discover: true })
+    }
+  }
+
+  /** Waits until a tab is followed, up to `ms`. */
+  async ready(ms = 10_000): Promise<void> {
+    const deadline = Date.now() + ms
+    while (Date.now() < deadline) {
+      if (this.pageSession) return
+      if (this.attaching) await this.attaching
+      else await sleep(150)
+    }
+    throw new Error('Chrome opened, but no tab was ready in time.')
+  }
+
+  /** Closes Chrome, politely over the pipe when controlled, and resolves once it has exited. */
+  async close(): Promise<void> {
+    const child = this.child
+    if (!child) return
+    const exited = new Promise<void>(resolve => {
+      if (child.exitCode !== null || child.signalCode !== null) resolve()
+      else child.once('exit', () => resolve())
+    })
+    if (this.cdp) {
+      await this.cdp.send('Browser.close').catch(() => undefined)
+      setTimeout(() => child.exitCode === null && child.kill('SIGTERM'), 2000)
+    } else {
+      child.kill('SIGTERM')
+    }
+    const last = setTimeout(() => child.exitCode === null && child.signalCode === null && child.kill('SIGKILL'), 6000)
+    await exited
+    clearTimeout(last)
+  }
+
+  /**
+   * Opens a tab of its own for one session, behind the tab on screen, ready
+   * to drive: the guard and focus emulation are in place before it is used.
+   */
+  async openTab(): Promise<Tab> {
+    if (this.state.mode !== 'controlled' || !this.cdp) throw new Error("Chrome is not open under the app's control.")
+    this.openingTabs++
+    try {
+      const { targetId } = (await this.send('Target.createTarget', { url: 'about:blank', background: true })) as { targetId: string }
+      this.sessionTabs.add(targetId)
+      const { sessionId } = (await this.send('Target.attachToTarget', { targetId, flatten: true })) as { sessionId: string }
+      await this.prepare(sessionId)
+      return new Tab(targetId, sessionId, (method, params, session, isQuiet) => this.send(method, params, session, isQuiet), async () => {
+        await this.send('Target.closeTarget', { targetId }, undefined, true).catch(() => undefined)
+        this.sessionTabs.delete(targetId)
+      })
+    } finally {
+      this.openingTabs--
+    }
   }
 
   async navigate(url: string): Promise<void> {
@@ -280,10 +356,6 @@ export class ChromeController {
     await this.send('Page.reload', {}, await this.session())
   }
 
-  private async markActing(): Promise<void> {
-    await this.evaluate(`window.__jobappGuard && (window.__jobappGuard.acting = Date.now() + ${ACTING_MS})`, true).catch(() => undefined)
-  }
-
   private async step(by: number): Promise<void> {
     const session = await this.session()
     const history = (await this.send('Page.getNavigationHistory', {}, session)) as unknown as History
@@ -291,7 +363,7 @@ export class ChromeController {
     if (entry) await this.send('Page.navigateToHistoryEntry', { entryId: entry.id }, session)
   }
 
-  private async session(): Promise<string> {
+  protected async session(): Promise<string> {
     if (this.state.mode !== 'controlled' || !this.cdp) {
       throw new Error("Chrome is not open under the app's control.")
     }
@@ -302,7 +374,7 @@ export class ChromeController {
   }
 
   /** A quiet command keeps its failure off the screens: polling during a page load fails on purpose. */
-  private async send(
+  protected async send(
     method: string,
     params: Record<string, unknown>,
     sessionId?: string,
@@ -323,17 +395,20 @@ export class ChromeController {
   private async onEvent(event: CdpEvent): Promise<void> {
     if (event.method === 'Target.targetCreated' || event.method === 'Target.targetInfoChanged') {
       const info = event.params.targetInfo as TargetInfo
-      if (info.type !== 'page') return
-      if (!this.pageId) await this.follow(info.targetId)
+      if (info.type !== 'page' || this.sessionTabs.has(info.targetId)) return
+      // A tab a session is opening is never followed, even before its id is known.
+      if (!this.pageId && this.openingTabs === 0) await this.follow(info.targetId)
       if (info.targetId === this.pageId) {
         this.set({ url: info.url, title: info.title })
         await this.refreshHistory()
       }
+    } else if (event.method === 'Target.targetDestroyed' && this.sessionTabs.has(event.params.targetId as string)) {
+      this.sessionTabs.delete(event.params.targetId as string)
     } else if (event.method === 'Target.targetDestroyed' && event.params.targetId === this.pageId) {
       this.pageId = null
       this.pageSession = null
       const { targetInfos } = (await this.send('Target.getTargets', {})) as { targetInfos?: TargetInfo[] }
-      const next = targetInfos?.find(one => one.type === 'page')
+      const next = targetInfos?.find(one => one.type === 'page' && !this.sessionTabs.has(one.targetId))
       if (next) {
         await this.follow(next.targetId)
         this.set({ url: next.url, title: next.title })
@@ -348,16 +423,24 @@ export class ChromeController {
     this.pageId = targetId
     this.attaching = (async () => {
       const { sessionId } = (await this.send('Target.attachToTarget', { targetId, flatten: true })) as { sessionId: string }
-      // The guard goes into every document this tab loads from now on, and the one already open.
-      await this.send('Page.enable', {}, sessionId).catch(() => undefined)
-      await this.send('Page.addScriptToEvaluateOnNewDocument', { source: GUARD_SCRIPT }, sessionId).catch(() => undefined)
-      await this.send('Runtime.evaluate', { expression: GUARD_SCRIPT }, sessionId, true).catch(() => undefined)
+      await this.prepare(sessionId)
       this.pageSession = sessionId
     })().finally(() => {
       this.attaching = null
     })
 
     return this.attaching
+  }
+
+  /**
+   * Readies a tab to be driven: the guard goes into every document it loads
+   * from now on and the one already open, and it draws as if it were in front.
+   */
+  private async prepare(sessionId: string): Promise<void> {
+    await this.send('Page.enable', {}, sessionId).catch(() => undefined)
+    await this.send('Page.addScriptToEvaluateOnNewDocument', { source: GUARD_SCRIPT }, sessionId).catch(() => undefined)
+    await this.send('Runtime.evaluate', { expression: GUARD_SCRIPT }, sessionId, true).catch(() => undefined)
+    await this.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId, true).catch(() => undefined)
   }
 
   private async refreshHistory(): Promise<void> {
@@ -377,6 +460,7 @@ export class ChromeController {
     this.pageId = null
     this.pageSession = null
     this.attaching = null
+    this.sessionTabs.clear()
     const error =
       reason ??
       (quick

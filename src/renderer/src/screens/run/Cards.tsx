@@ -47,7 +47,8 @@ import {
 } from '../../ui/nx'
 
 const answer = (card: RunCard, reply: CardAnswer): Promise<void | undefined> => attempt(() => api.runs.answer(card.id, reply))
-const front = (): Promise<void | undefined> => attempt(() => api.chrome.front())
+/** Shows the tab of the session waiting on this card: its own tab when the run has several, else the one Chrome shows. */
+const front = (card: RunCard): Promise<void | undefined> => attempt(() => api.runs.showTab(card.id))
 
 function ApproveCard({ card }: { card: Extract<RunCard, { kind: 'approve' }> }): JSX.Element {
   const [texts, setTexts] = useState(card.answers.map(one => one.text))
@@ -112,7 +113,7 @@ function ApproveCard({ card }: { card: Extract<RunCard, { kind: 'approve' }> }):
         <Button variant="outline" onClick={() => void answer(card, { kind: 'cancel' })}>
           {card.isMidForm ? "Don't apply" : "Don't submit"}
         </Button>
-        <Button variant="ghost" startIcon={<BrowserIcon />} onClick={() => void front()}>
+        <Button variant="ghost" startIcon={<BrowserIcon />} onClick={() => void front(card)}>
           See the form in Chrome
         </Button>
       </div>
@@ -149,7 +150,7 @@ function HandoverCard({ card }: { card: Extract<RunCard, { kind: 'handover' }> }
       </CardContent>
       <CardFooter>
         <div className="nx:flex nx:flex-wrap nx:gap-2">
-          <Button variant="outline" startIcon={<BrowserIcon />} onClick={() => void front()}>
+          <Button variant="outline" startIcon={<BrowserIcon />} onClick={() => void front(card)}>
             Bring Chrome forward
           </Button>
           <Button startIcon={<PlayIcon />} onClick={() => void answer(card, { kind: 'resume' })}>
@@ -281,7 +282,7 @@ function ToolOffCard({ card }: { card: Extract<RunCard, { kind: 'tool-off' }> })
         </CardContent>
         <CardFooter>
           <div className="nx:flex nx:flex-wrap nx:gap-2">
-            <Button variant="outline" startIcon={<BrowserIcon />} onClick={() => void front()}>
+            <Button variant="outline" startIcon={<BrowserIcon />} onClick={() => void front(card)}>
               Bring Chrome forward
             </Button>
             <Button startIcon={<CheckIcon />} onClick={() => void answer(card, { kind: 'choose', option: 'done' })}>

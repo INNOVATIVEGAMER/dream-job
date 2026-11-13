@@ -104,9 +104,11 @@ The app walks you through five steps.
 2. Pick the portals and how recent the postings should be (the past day, week or month).
 3. Press **Start hunt**.
 
-The run screen shows its progress: postings decided out of postings found. A hunt
-with several roles and cities can take 20 minutes or more. New finds appear in
-**Tracker** as *found*, each with its score and the reasons for it.
+Each portal gets its own Claude session in its own Chrome tab, and they all run
+at once. The run screen shows a tile per portal with its progress: postings
+decided out of postings found. A LinkedIn hunt with several roles and cities can
+take 20 minutes or more. New finds appear in **Tracker** as *found*, each with
+its score and the reasons for it. A role found on two portals is added once.
 
 What each portal searches:
 
@@ -117,7 +119,12 @@ What each portal searches:
 ### 2. Apply
 
 - From **Home**, press **Apply to next** to work the best-scored found row, or
-- Open any row in **Tracker** and press **Apply**.
+- Open any row in **Tracker** and press **Apply**, or
+- In **Tracker**, tick several found rows and press **Apply to** (the number picked).
+
+Several rows run 5 at a time, each in its own Claude session and Chrome tab; the
+rest start as those finish. A session that needs you waits on its own card while
+the others keep going. Pick a session's tile on the run screen to see its card.
 
 When a form asks something your saved answers don't cover, the run asks you
 once, for all of it, and can save your answers for next time. When it wrote an
@@ -131,7 +138,9 @@ moves to *applied*.
 3. Start it.
 
 Requests go out blank, with no note. People already connected to you are
-recorded as ready for your message.
+recorded as ready for your message. Each company gets its own session, 5 at a
+time. If LinkedIn says the invitation limit is reached, every session stops
+sending and the companies not yet started are left for later.
 
 ### 4. Referral messages
 
@@ -142,7 +151,7 @@ recorded as ready for your message.
 
 The app types your message itself, checks that it matches your saved wording
 exactly, attaches your resume, and sends it. If anything doesn't match, nothing
-is sent.
+is sent. Each company gets its own session, 5 at a time.
 
 ### 5. Update the tracker from Gmail
 
@@ -198,7 +207,9 @@ Go to **Settings, Accounts** and press **Sign in** for that site.
 Quit that Chrome window (Cmd+Q), then start the run again.
 
 **A run is waiting**
-Check the run screen. A card there says what it needs from you.
+Check the run screen. A card there says what it needs from you. When a run has
+several sessions, each one waiting has its own card: pick its tile. If a site
+signs out, one sign-in card covers every session on that site.
 
 **macOS says the app can't be opened**
 A build made with `pnpm dist:mac:local` runs only on the Mac that built it. Build it on each Mac, or use a signed release (see below).
@@ -209,7 +220,8 @@ A build made with `pnpm dist:mac:local` runs only on the Mac that built it. Buil
 
 - Job App is not affiliated with LinkedIn, Wellfound, Instahyre, Google or Anthropic.
 - It acts on your own accounts, as you. You are responsible for what it sends and for following each site's terms.
-- Runs use your Claude plan's usage. A long hunt uses a lot of it.
+- Runs use your Claude plan's usage. A long hunt uses a lot of it, and five sessions at once use it about five times as fast as one.
+- Each session is its own Claude Code process and Chrome tab, so a run of five uses a few GB of memory while it lasts.
 
 ---
 

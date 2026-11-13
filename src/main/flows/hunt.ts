@@ -1,12 +1,12 @@
 import { z } from 'zod'
 
-import { DISCARD_REASONS, HUNT_WINDOW_NAMES, PORTAL_NAMES, STAGES } from '../../shared/types'
+import { AT_ONCE, DISCARD_REASONS, HUNT_WINDOW_NAMES, PORTAL_NAMES, STAGES } from '../../shared/types'
 import type { HuntWindow, Portal, Preferences, Profile } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { Store } from '../db/store'
 import { huntTools, postingLink } from '../portals'
-import { defineTool } from '../runs/engine'
-import type { AnyTool, FlowSpec, RunContext } from '../runs/engine'
+import { defineTool, onePlan } from '../runs/engine'
+import type { AnyTool, FlowSpec, RunContext, RunPlan } from '../runs/engine'
 import { fitText, preferencesText } from './context'
 
 type Search = { role: string; mode: 'remote' | 'hybrid' | 'on-site'; place: string }
@@ -25,10 +25,10 @@ export function plannedSearches(prefs: Preferences): Search[] {
   return searches
 }
 
-const listNames = (portals: Portal[]): string => {
-  const names = portals.map(portal => PORTAL_NAMES[portal])
-  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : (names[0] ?? '')
-}
+const listOf = (names: string[]): string =>
+  names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : (names[0] ?? '')
+
+const listNames = (portals: Portal[]): string => listOf(portals.map(portal => PORTAL_NAMES[portal]))
 
 const Output = z.object({ summary: z.string().describe('One or two sentences on what this hunt found') })
 
@@ -50,11 +50,12 @@ function howToSearch(portal: Portal, searches: Search[]): string[] {
   }
 }
 
-function system(prefs: Preferences, profile: Profile, portals: Portal[], searches: Search[]): string {
+function system(prefs: Preferences, profile: Profile, portal: Portal, searches: Search[]): string {
   return [
-    `This run is a hunt on ${listNames(portals)}: find new postings that fit the user, and record every one.`,
+    `This session is a hunt on ${PORTAL_NAMES[portal]}: find new postings that fit the user, and record every one. Other portals may be hunted at the same time by other sessions.`,
     '',
-    ...portals.flatMap(portal => [...howToSearch(portal, searches), '']),
+    ...howToSearch(portal, searches),
+    '',
     'Every new posting a search returns ends in exactly one call: add_posting or discard_posting.',
     '1. Screen it from its search line. Discard straight away only when that line alone rules it out (the title is plainly a role the user skips or plainly not one they want, or the place is plainly outside where they can work), quoting it.',
     '2. Read the rest with the portal\'s read_job, then add or discard it.',
@@ -76,7 +77,7 @@ function system(prefs: Preferences, profile: Profile, portals: Portal[], searche
     '- A recruiting firm hiring for a client is added like any posting. Company is the client where named, otherwise "Undisclosed (via <firm>)"; put what the firm says about the client in notes.',
     '- Stage: as read_job gives it from headcount. Where the portal shows none, use scaleup and say it is provisional in notes.',
     '- Score 1 to 10 for fit: how closely the work matches the roles wanted and the user\'s skills and experience. Add postings scoring 5 or more. Below 5, discard as other, quoting the line that shows the mismatch.',
-    '- The same role at the same company on two portals is one posting: add it once.',
+    '- The same role at the same company is one posting, whichever portal shows it: add_posting says when it is already tracked, perhaps from another portal, and leaves it.',
     '- A discard\'s line is the posting\'s own words, copied exactly.',
     '',
     'Finish when every search has run and every new posting is added or discarded.',
@@ -84,9 +85,11 @@ function system(prefs: Preferences, profile: Profile, portals: Portal[], searche
 }
 
 /** The hunt's own tools: what to keep and what to rule out. */
-function recordTools(ctx: RunContext, portals: Portal[], tally: { added: number; discarded: number }, onDecided: (key: string) => void): AnyTool[] {
+type Tally = { added: number; discarded: number }
+
+function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecided: (key: string) => void): AnyTool[] {
   const { store } = ctx
-  const portalEnum = z.enum(portals as [Portal, ...Portal[]])
+  const portalEnum = z.enum([portal])
   const linkFor = (portal: Portal, jobId: string, link: string): string | null => postingLink(portal, jobId) ?? (link.startsWith('https://') ? link : null)
 
   return [
@@ -136,7 +139,7 @@ function recordTools(ctx: RunContext, portals: Portal[], tally: { added: number;
             },
             ctx.runId,
           )
-          tally.added++
+          for (const tally of tallies) tally.added++
           ctx.count('added')
           ctx.changed('opportunities')
           ctx.log('good', `Added ${input.company}, ${input.role} (score ${input.score})`)
@@ -171,7 +174,7 @@ function recordTools(ctx: RunContext, portals: Portal[], tally: { added: number;
             },
             ctx.runId,
           )
-          tally.discarded++
+          for (const tally of tallies) tally.discarded++
           ctx.count('discarded')
           ctx.changed('discarded')
           ctx.log('step', `Discarded ${input.company}, ${input.role}: ${input.reason}`)
@@ -181,12 +184,13 @@ function recordTools(ctx: RunContext, portals: Portal[], tally: { added: number;
   ]
 }
 
-export function huntSpec(store: Store, portals: Portal[], window: HuntWindow): FlowSpec<z.infer<typeof Output>> {
+/** One portal's hunt, in a session of its own. `total` is the whole run's tally, shared by every portal's session. */
+function huntSpec(store: Store, portal: Portal, window: HuntWindow, total: Tally): FlowSpec<z.infer<typeof Output>> {
   const prefs = store.settings.preferences()
   const profile = store.settings.profile()
-  const searches = portals.includes('linkedin') ? plannedSearches(prefs) : []
-  const steps = searches.length + portals.filter(portal => portal !== 'linkedin').length
-  const tally = { added: 0, discarded: 0 }
+  const searches = portal === 'linkedin' ? plannedSearches(prefs) : []
+  const steps = portal === 'linkedin' ? searches.length : 1
+  const tally: Tally = { added: 0, discarded: 0 }
   // Searches run, new postings they found, and postings added or discarded, all for the progress bar.
   const searched = new Set<string>()
   const found = new Set<string>()
@@ -194,11 +198,12 @@ export function huntSpec(store: Store, portals: Portal[], window: HuntWindow): F
 
   return {
     flow: 'hunt',
-    title: `Hunt on ${listNames(portals)}`,
+    title: `Hunt on ${PORTAL_NAMES[portal]}`,
+    laneTitle: PORTAL_NAMES[portal],
     subtitle: `${HUNT_WINDOW_NAMES[window]}${searches.length ? `, ${searches.length} LinkedIn ${searches.length === 1 ? 'search' : 'searches'}` : ''}`,
-    portal: portals.length === 1 ? portals[0]! : null,
-    playbooks: portals,
-    system: system(prefs, profile, portals, searches),
+    portal,
+    playbooks: [portal],
+    system: system(prefs, profile, portal, searches),
     prompt: 'Run the hunt.',
     tools: ctx => {
       // Searches until one finds something new; from then on, the postings decided out of those found.
@@ -222,10 +227,31 @@ export function huntSpec(store: Store, portals: Portal[], window: HuntWindow): F
         show()
       }
       const general = browserTools(ctx, REFUSE.hunt).filter(tool => ['hand_to_user', 'read_page'].includes(tool.name))
-      return [...portals.flatMap(portal => huntTools(ctx, portal, hunt)), ...recordTools(ctx, portals, tally, onDecided), ...general]
+      return [...huntTools(ctx, portal, hunt), ...recordTools(ctx, portal, [tally, total], onDecided), ...general]
     },
     output: Output,
     finish: answer => `Added ${tally.added}, discarded ${tally.discarded}. ${answer.summary}`,
     maxTurns: 300,
+  }
+}
+
+/** A hunt: one session per portal, all at once, each in its own tab. */
+export function huntPlan(store: Store, portals: Portal[], window: HuntWindow): RunPlan {
+  const total: Tally = { added: 0, discarded: 0 }
+  const sessions = portals.map(portal => huntSpec(store, portal, window, total))
+  if (sessions.length === 1) return onePlan(sessions[0]!)
+  const searches = portals.includes('linkedin') ? plannedSearches(store.settings.preferences()).length : 0
+  return {
+    flow: 'hunt',
+    title: `Hunt on ${listNames(portals)}`,
+    subtitle: `${HUNT_WINDOW_NAMES[window]}, one session per portal${searches ? `, ${searches} LinkedIn ${searches === 1 ? 'search' : 'searches'}` : ''}`,
+    portal: null,
+    sessions,
+    atOnce: AT_ONCE,
+    unit: 'Portals done',
+    finish: outcomes => {
+      const unfinished = outcomes.filter(outcome => outcome.status !== 'done').map(outcome => outcome.title)
+      return `Added ${total.added}, discarded ${total.discarded} across ${listNames(portals)}.${unfinished.length ? ` ${listOf(unfinished)} did not finish: its activity says why.` : ''}`
+    },
   }
 }
