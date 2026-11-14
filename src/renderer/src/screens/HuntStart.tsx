@@ -3,7 +3,7 @@ import type { JSX } from 'react'
 
 import { ArrowRightIcon, MagnifyingGlassIcon, SignInIcon, WarningIcon } from '@phosphor-icons/react'
 
-import { HUNT_PORTALS, HUNT_WINDOW_NAMES, HUNT_WINDOWS, PORTAL_NAMES, PORTALS } from '../../../shared/types'
+import { HUNT_PORTALS, HUNT_WINDOW_NAMES, HUNT_WINDOWS, isSignInSite, PORTAL_NAMES, PORTALS } from '../../../shared/types'
 import type { HuntWindow, Portal, Preferences } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
@@ -26,7 +26,15 @@ function source(portal: Portal, prefs: Preferences): string {
     const n = searchCount(prefs)
     return `${n} ${n === 1 ? 'search' : 'searches'} from your target roles and places`
   }
-  return portal === 'wellfound' ? 'The search saved on your Wellfound account' : 'The jobs Instahyre recommends for you'
+  const SOURCES: Record<Exclude<Portal, 'linkedin'>, string> = {
+    wellfound: 'The search saved on your Wellfound account',
+    instahyre: 'The jobs Instahyre recommends for you',
+    jsgurujobs: `JavaScript roles open to ${prefs.country || 'your country'}, newest first`,
+    onlyfrontendjobs: prefs.modes.hybrid || prefs.modes.onsite ? 'Every frontend role, newest first' : 'Remote frontend roles, newest first',
+    workatastartup: 'The newest engineering roles at YC startups',
+    weekday: 'The filters saved on your Weekday account',
+  }
+  return SOURCES[portal]
 }
 
 /** The hunt, before it starts: which portals, how recent, then the last few hunts. */
@@ -103,7 +111,7 @@ export function HuntStart(): JSX.Element {
                     <Button variant="ghost" size="sm" onClick={() => go(`/settings/portals`)}>
                       Turn on
                     </Button>
-                  ) : out ? (
+                  ) : out && isSignInSite(portal) ? (
                     <Button variant="outline" size="sm" startIcon={<SignInIcon />} onClick={() => void attempt(() => api.chrome.signIn(portal))}>
                       Sign in
                     </Button>

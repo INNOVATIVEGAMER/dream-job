@@ -36,7 +36,8 @@ const listNames = (portals: Portal[]): string => listOf(portals.map(portal => PO
 
 const Output = z.object({ summary: z.string().describe('One or two sentences on what this hunt found') })
 
-function howToSearch(portal: Portal, searches: Search[]): string[] {
+function howToSearch(portal: Portal, searches: Search[], prefs: Preferences): string[] {
+  const modes = (['remote', 'hybrid', 'onsite'] as const).filter(mode => prefs.modes[mode])
   switch (portal) {
     case 'linkedin':
       return [
@@ -51,6 +52,22 @@ function howToSearch(portal: Portal, searches: Search[]): string[] {
       return [
         'Instahyre: call instahyre_list_matches once. It lists the jobs Instahyre recommends for the user\'s Instahyre profile; Instahyre shows no dates, so every match counts. Read postings with instahyre_read_job by job id.',
       ]
+    case 'jsgurujobs':
+      return [
+        `JSGuruJobs: call jsgurujobs_search_jobs once for each work mode the user wants (${modes.join(', ') || 'any'}), with country the two-letter code for ${prefs.country || 'the user\'s country'}, page 1 first. Look at a later page only when the first was mostly new and inside the window. Read postings with jsgurujobs_read_job by job id: it also follows the apply link to the company's own posting.`,
+      ]
+    case 'onlyfrontendjobs':
+      return [
+        `OnlyFrontendJobs: call onlyfrontendjobs_search_jobs with remote_only ${prefs.modes.hybrid || prefs.modes.onsite ? 'false, to see every role' : 'true'}. Read postings with onlyfrontendjobs_read_job by link: its job record gives the countries it hires from and the company's own posting.`,
+      ]
+    case 'workatastartup':
+      return [
+        `Work at a Startup: call workatastartup_search_jobs with remote_only ${prefs.modes.hybrid || prefs.modes.onsite ? 'false' : 'true'}. It lists the newest engineering jobs at YC startups; postings show no dates. Read postings with workatastartup_read_job by job id.`,
+      ]
+    case 'weekday':
+      return [
+        'Weekday: call weekday_search_jobs with list "fast-apply", then with list "all". It reads the filters saved on the user\'s Weekday account, within the window. Read postings with weekday_read_job by link.',
+      ]
   }
 }
 
@@ -58,7 +75,7 @@ function system(prefs: Preferences, profile: Profile, portal: Portal, searches: 
   return [
     `This session is a hunt on ${PORTAL_NAMES[portal]}: find new postings that fit the user, and record every one. Other portals may be hunted at the same time by other sessions.`,
     '',
-    ...howToSearch(portal, searches),
+    ...howToSearch(portal, searches, prefs),
     '',
     'Every new posting a search returns ends in exactly one call: add_posting or discard_posting.',
     '1. Screen it from its search line. Discard straight away only when that line alone rules it out (the title is plainly a role the user skips or plainly not one they want, or the place is plainly outside where they can work), quoting it.',

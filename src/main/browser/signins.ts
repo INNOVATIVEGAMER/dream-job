@@ -15,6 +15,9 @@ const SESSION_COOKIES: Record<SignInSite, { domain: string; name: string } | nul
   linkedin: { domain: 'linkedin.com', name: 'li_at' },
   wellfound: null,
   instahyre: null,
+  jsgurujobs: null,
+  workatastartup: null,
+  weekday: null,
 }
 
 /** Microseconds from 1601-01-01, as Chrome stores expiry. */

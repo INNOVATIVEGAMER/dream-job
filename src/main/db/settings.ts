@@ -6,6 +6,7 @@ import { CURRENCIES, EMAIL_COUNTS, GMAIL_TOOLS, HUNT_WINDOWS, PAY_PERIODS, PORTA
 import type {
   EmailSettings,
   FormAnswer,
+  Portal,
   PortalSettings,
   Preferences,
   Profile,
@@ -88,11 +89,10 @@ const PortalSettingSchema = z.object({
   freeBrowsing: z.boolean(),
 })
 
-export const PortalSettingsSchema = z.object({
-  linkedin: PortalSettingSchema,
-  wellfound: PortalSettingSchema,
-  instahyre: PortalSettingSchema,
-})
+export const PortalSettingsSchema = z.object(Object.fromEntries(PORTALS.map(portal => [portal, PortalSettingSchema])) as Record<Portal, typeof PortalSettingSchema>)
+
+/** Saved portal settings as read back: a portal added after they were saved has none yet, and takes the defaults. */
+const StoredPortalsSchema = PortalSettingsSchema.partial()
 
 export const EmailSettingsSchema = z.object({
   enabled: z.boolean(),
@@ -240,13 +240,11 @@ export class SettingsStore {
 
   /** Portal settings, with any tool a newer release added switched on. */
   portals(): PortalSettings {
-    const stored = this.read('portals', PortalSettingsSchema, DEFAULT_PORTALS)
+    const stored = this.read('portals', StoredPortalsSchema, DEFAULT_PORTALS)
     const merged = { ...DEFAULT_PORTALS }
     for (const portal of PORTALS) {
-      merged[portal] = {
-        ...stored[portal],
-        tools: { ...DEFAULT_PORTALS[portal].tools, ...stored[portal].tools },
-      }
+      const saved = stored[portal] ?? DEFAULT_PORTALS[portal]
+      merged[portal] = { ...saved, tools: { ...DEFAULT_PORTALS[portal].tools, ...saved.tools } }
     }
     return merged
   }

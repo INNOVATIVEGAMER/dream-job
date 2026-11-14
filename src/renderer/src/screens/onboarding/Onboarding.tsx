@@ -4,7 +4,7 @@ import type { JSX, ReactNode } from 'react'
 import { ArrowsClockwiseIcon, BriefcaseIcon, CheckCircleIcon, FilePdfIcon, TrashIcon, UploadSimpleIcon, WarningIcon } from '@phosphor-icons/react'
 
 import { yearsOfExperience } from '../../../../shared/profile'
-import { PORTAL_NAMES, PORTALS } from '../../../../shared/types'
+import { isSignInSite, PORTAL_NAMES, PORTALS } from '../../../../shared/types'
 import type { ClaudeStatus, Portal, Preferences, Profile, ResumeImport, Settings, SiteState } from '../../../../shared/types'
 import { api } from '../../lib/api'
 import { useData } from '../../lib/data'
@@ -39,6 +39,10 @@ const PORTAL_USE: Record<Portal, string> = {
   linkedin: 'Hunt, apply and the referral track',
   wellfound: 'Hunt and apply',
   instahyre: 'Hunt and apply',
+  jsgurujobs: 'Hunt; applications go to company sites',
+  onlyfrontendjobs: 'Hunt, no account needed; applications go to company sites',
+  workatastartup: 'Hunt and apply at YC startups',
+  weekday: 'Hunt and apply, from your saved Weekday filters',
 }
 
 /** A starter form answer from the resume, edited before it is saved. */
@@ -418,7 +422,7 @@ function PortalsStep({ settings, onBack }: { settings: Settings; onBack: () => v
             }
             title={PORTAL_NAMES[portal]}
             detail={PORTAL_USE[portal]}
-            actions={portals[portal].enabled ? <SignIn site={site(portal)} onSignIn={() => void attempt(() => api.chrome.signIn(portal))} /> : undefined}
+            actions={portals[portal].enabled && isSignInSite(portal) ? <SignIn site={site(portal)} onSignIn={() => void attempt(() => api.chrome.signIn(portal))} /> : undefined}
           />
         ))}
         <ListRow

@@ -56,21 +56,29 @@ export type Status = (typeof STATUSES)[number]
 export const STAGES = ['startup', 'scaleup', 'large'] as const
 export type Stage = (typeof STAGES)[number]
 
-/** The portals v1 drives. Rows from before the app keep whatever source they came from. */
-export const PORTALS = ['linkedin', 'wellfound', 'instahyre'] as const
+/** The portals the app drives. Rows from before the app keep whatever source they came from. */
+export const PORTALS = ['linkedin', 'wellfound', 'instahyre', 'jsgurujobs', 'onlyfrontendjobs', 'workatastartup', 'weekday'] as const
 export type Portal = (typeof PORTALS)[number]
 
 /** Portals whose own tools are built so far; the hunt runs only on these. */
-export const HUNT_PORTALS: readonly Portal[] = ['linkedin', 'wellfound', 'instahyre']
+export const HUNT_PORTALS: readonly Portal[] = PORTALS
 
 export const PORTAL_NAMES: Record<Portal, string> = {
   linkedin: 'LinkedIn',
   wellfound: 'Wellfound',
   instahyre: 'Instahyre',
+  jsgurujobs: 'JSGuruJobs',
+  onlyfrontendjobs: 'OnlyFrontendJobs',
+  workatastartup: 'Work at a Startup',
+  weekday: 'Weekday',
 }
 
-/** The sites the user signs in to in the app's Chrome: Google, for "Continue with Google", and each portal. */
-export const SIGN_IN_SITES = ['google', ...PORTALS] as const
+/**
+ * The sites the user signs in to in the app's Chrome: Google, for "Continue
+ * with Google", and each portal that needs an account. OnlyFrontendJobs is
+ * read signed out.
+ */
+export const SIGN_IN_SITES = ['google', 'linkedin', 'wellfound', 'instahyre', 'jsgurujobs', 'workatastartup', 'weekday'] as const
 export type SignInSite = (typeof SIGN_IN_SITES)[number]
 
 export const SIGN_IN_URLS: Record<SignInSite, string> = {
@@ -78,9 +86,15 @@ export const SIGN_IN_URLS: Record<SignInSite, string> = {
   linkedin: 'https://www.linkedin.com/login',
   wellfound: 'https://wellfound.com/login',
   instahyre: 'https://www.instahyre.com/login/',
+  jsgurujobs: 'https://jsgurujobs.com/login',
+  workatastartup: 'https://www.workatastartup.com/',
+  weekday: 'https://jobs.weekday.works/',
 }
 
 export const SITE_NAMES: Record<SignInSite, string> = { google: 'Google', ...PORTAL_NAMES }
+
+/** Whether a site has a sign-in of its own: every portal but OnlyFrontendJobs. */
+export const isSignInSite = (site: string): site is SignInSite => (SIGN_IN_SITES as readonly string[]).includes(site)
 
 /** The sites Claude works in through the app's own tools: the portals, and Gmail for the email check. */
 export type ToolSite = Portal | 'gmail'
@@ -539,6 +553,30 @@ export const PORTAL_TOOLS: Record<Portal, PortalToolInfo[]> = {
     { name: 'list_matches', label: 'List matched jobs', detail: 'The jobs Instahyre matched to your profile', group: 'find' },
     { name: 'read_job', label: 'Read a posting', detail: 'Pay, experience, description', group: 'find' },
     { name: 'apply', label: 'Apply', detail: 'In one step, with your Instahyre profile', group: 'apply' },
+  ],
+  jsgurujobs: [
+    { name: 'search_jobs', label: 'Search jobs', detail: 'By country and work mode, newest first', group: 'find' },
+    { name: 'read_job', label: 'Read a posting', detail: "Place, mode, pay, description, and the company's apply page it leads to", group: 'find' },
+  ],
+  onlyfrontendjobs: [
+    { name: 'search_jobs', label: 'Search jobs', detail: 'Remote or all frontend roles, newest first', group: 'find' },
+    { name: 'read_job', label: 'Read a posting', detail: "Place, regions, years asked, description, and the company's apply page", group: 'find' },
+  ],
+  workatastartup: [
+    { name: 'search_jobs', label: 'Search jobs', detail: 'Engineering roles at YC startups, newest first', group: 'find' },
+    { name: 'read_job', label: 'Read a posting', detail: 'Place, visa, pay, years asked, the company, and whether you applied', group: 'find' },
+    {
+      name: 'open_apply',
+      label: 'Open the application',
+      detail: "Opens the posting's Apply form and reads its fields",
+      group: 'apply',
+      asksFirst: 'Your message to the founders and written answers wait for you',
+    },
+  ],
+  weekday: [
+    { name: 'search_jobs', label: 'List jobs', detail: 'From the filters saved on your Weekday account', group: 'find' },
+    { name: 'read_job', label: 'Read a posting', detail: 'Place, years asked, skills, description, and where it applies', group: 'find' },
+    { name: 'apply', label: 'Apply on Weekday', detail: 'Hands you the Apply press in Chrome, then checks it went through', group: 'apply', asksFirst: 'You press Apply' },
   ],
 }
 

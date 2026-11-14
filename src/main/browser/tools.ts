@@ -66,6 +66,10 @@ export function portalOf(url: string): Portal | null {
     if (/(^|\.)linkedin\.com$/.test(host)) return 'linkedin'
     if (/(^|\.)(wellfound\.com|angel\.co)$/.test(host)) return 'wellfound'
     if (/(^|\.)instahyre\.com$/.test(host)) return 'instahyre'
+    if (/(^|\.)jsgurujobs\.com$/.test(host)) return 'jsgurujobs'
+    if (/(^|\.)onlyfrontendjobs\.com$/.test(host)) return 'onlyfrontendjobs'
+    if (/(^|\.)workatastartup\.com$/.test(host)) return 'workatastartup'
+    if (/(^|\.)weekday\.works$/.test(host)) return 'weekday'
   } catch {
     // not a URL: no portal
   }
@@ -123,7 +127,7 @@ export async function typeInto(ctx: RunContext, ref: number, text: string): Prom
 type Fact = { label: string; value: string }
 
 /** What a flow hears when a form is sent: where, which written answers went, and whether the user pressed it. */
-export type Sent = { route: 'easy-apply' | 'company-site' | 'wellfound' | 'instahyre'; written: WrittenAnswer[]; edited: boolean; facts: Fact[]; byUser: boolean }
+export type Sent = { route: 'easy-apply' | 'company-site' | 'wellfound' | 'instahyre' | 'workatastartup' | 'weekday'; written: WrittenAnswer[]; edited: boolean; facts: Fact[]; byUser: boolean }
 
 /** What an apply run's tools saw and sent, for the flow to save on the row. */
 export type ApplyRecord = {

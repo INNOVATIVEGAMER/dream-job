@@ -6,17 +6,20 @@ import {
   ArrowsClockwiseIcon,
   BrowserIcon,
   BriefcaseIcon,
+  CalendarBlankIcon,
   CaretDownIcon,
   CaretUpIcon,
   CheckCircleIcon,
   EnvelopeIcon,
   FileArrowUpIcon,
+  FileJsIcon,
   FilePdfIcon,
   LinkedinLogoIcon,
   MagnifyingGlassIcon,
   PencilSimpleIcon,
   PlusIcon,
   RocketIcon,
+  RocketLaunchIcon,
   SignInIcon,
   TerminalWindowIcon,
   TrashIcon,
@@ -27,7 +30,7 @@ import {
 
 import { GMAIL_PLAYBOOK, PLAYBOOKS } from '../../../../shared/playbooks'
 import { yearsOfExperience } from '../../../../shared/profile'
-import { EMAIL_COUNTS, GMAIL_TOOLS, PORTAL_NAMES, PORTAL_TOOL_GROUP_NAMES, PORTAL_TOOLS, PORTALS, SIGN_IN_SITES, SITE_NAMES } from '../../../../shared/types'
+import { EMAIL_COUNTS, GMAIL_TOOLS, isSignInSite, PORTAL_NAMES, PORTAL_TOOL_GROUP_NAMES, PORTAL_TOOLS, PORTALS, SIGN_IN_SITES, SITE_NAMES } from '../../../../shared/types'
 import type { EmailCount, EmailSettings, FormAnswer, Portal, PortalSetting, Preferences, Profile, Settings as SettingsValue, SignInSite, SiteState } from '../../../../shared/types'
 import { api } from '../../lib/api'
 import { useAutosaved } from '../../lib/autosave'
@@ -563,6 +566,9 @@ const SITE_ICON: Record<SignInSite, JSX.Element> = {
   linkedin: <LinkedinLogoIcon size={18} />,
   wellfound: <RocketIcon size={18} />,
   instahyre: <BriefcaseIcon size={18} />,
+  jsgurujobs: <FileJsIcon size={18} />,
+  workatastartup: <RocketLaunchIcon size={18} />,
+  weekday: <CalendarBlankIcon size={18} />,
 }
 
 function StateMark({ ok }: { ok: boolean }): JSX.Element {
@@ -688,9 +694,9 @@ function PortalSection({ settings, portal }: { settings: SettingsValue; portal: 
     <>
       <Head
         title={name}
-        meta={<span className="nx:typography-body-small nx:text-muted-foreground">{signInText(site)}</span>}
+        meta={<span className="nx:typography-body-small nx:text-muted-foreground">{isSignInSite(portal) ? signInText(site) : 'No account needed'}</span>}
         action={
-          site?.state !== 'signed-in' ? (
+          isSignInSite(portal) && site?.state !== 'signed-in' ? (
             <Button variant="outline" size="sm" startIcon={<SignInIcon />} onClick={() => void attempt(() => api.chrome.signIn(portal))}>
               Sign in
             </Button>

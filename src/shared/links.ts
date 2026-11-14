@@ -27,7 +27,7 @@ export function linkKey(url: string): string {
 export function isPortalLink(url: string | null | undefined): boolean {
   if (!url) return false
   try {
-    return /(^|\.)(linkedin\.com|wellfound\.com|angel\.co|instahyre\.com)$/.test(new URL(url).hostname)
+    return /(^|\.)(linkedin\.com|wellfound\.com|angel\.co|instahyre\.com|jsgurujobs\.com|onlyfrontendjobs\.com|workatastartup\.com|weekday\.works)$/.test(new URL(url).hostname)
   } catch {
     return false
   }

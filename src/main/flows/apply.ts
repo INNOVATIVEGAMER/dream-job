@@ -49,6 +49,23 @@ function howToApply(portal: Portal | null, row: Opportunity): string[] {
         '- On Wellfound: wellfound_apply with no answers opens the form and reads it; call it again with every answer, including a short note to the company (a written answer), and it sends.',
         '- Applying on the company\'s site instead: open_page with that link, and apply there.',
       ]
+    case 'workatastartup':
+      return [
+        `- Start with workatastartup_read_job (job id ${row.jobId}): it says whether the posting is there, already applied to, and what the application asks.`,
+        `- Then workatastartup_open_apply opens the form: a message to the founders and the company's own questions. Fill it with type_text and choose_option, and send it with submit_form: every written answer waits for the user first.`,
+      ]
+    case 'weekday':
+      return [
+        `- Start with weekday_read_job (link ${row.portalLink ?? row.link}): it says whether it still takes applications, whether it was applied to, and where it applies.`,
+        '- On Weekday: weekday_apply hands the Apply press to the user, then checks it went through.',
+        "- On the company's site: open_page with the link read_job gives, and apply there.",
+      ]
+    case 'jsgurujobs':
+    case 'onlyfrontendjobs':
+      return [
+        `- Start with ${portal}_read_job (${portal === 'jsgurujobs' ? `job id ${row.jobId}` : `link ${row.portalLink ?? row.link}`}): it gives the company's own posting, where the application goes.`,
+        '- Then open_page that link and apply there.',
+      ]
     case 'instahyre':
       return [
         `- Start with instahyre_read_job (job id ${row.jobId}): it says whether the posting is there and already applied to.`,
@@ -138,6 +155,8 @@ const ROUTE_WORDS: Record<NonNullable<ApplyRecord['sent']>['route'], string> = {
   'company-site': 'on the company\'s site',
   wellfound: 'on Wellfound',
   instahyre: 'on Instahyre',
+  workatastartup: 'on Work at a Startup',
+  weekday: 'on Weekday',
 }
 
 /** What went in the application, for the row's notes. */

@@ -20,6 +20,10 @@ const SITES: Site[] = [
   { name: 'LinkedIn', host: /(^|\.)linkedin\.com$/, gapMs: [6_000, 10_000] },
   { name: 'Wellfound', host: /(^|\.)(wellfound\.com|angel\.co)$/, gapMs: [3_000, 5_000] },
   { name: 'Instahyre', host: /(^|\.)instahyre\.com$/, gapMs: [3_000, 5_000] },
+  { name: 'JSGuruJobs', host: /(^|\.)jsgurujobs\.com$/, gapMs: [3_000, 5_000] },
+  { name: 'OnlyFrontendJobs', host: /(^|\.)onlyfrontendjobs\.com$/, gapMs: [3_000, 5_000] },
+  { name: 'Work at a Startup', host: /(^|\.)workatastartup\.com$/, gapMs: [3_000, 5_000] },
+  { name: 'Weekday', host: /(^|\.)weekday\.works$/, gapMs: [3_000, 5_000] },
 ]
 
 /** The first wait after a refusal, doubled for each refusal after it, up to the cap. */

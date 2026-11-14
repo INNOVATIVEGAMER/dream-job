@@ -21,7 +21,7 @@ export type PostingRead = {
   jobId: string
   /** The posting on the portal. */
   postingLink: string
-  route: 'easy-apply' | 'company-site' | 'wellfound' | 'instahyre' | 'unknown'
+  route: 'easy-apply' | 'company-site' | 'wellfound' | 'instahyre' | 'workatastartup' | 'weekday' | 'unknown'
   /** Where the apply button leads off the portal; null when it applies on the portal, or no link was found. */
   applyUrl: string | null
   closed: boolean

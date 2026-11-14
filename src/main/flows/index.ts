@@ -1,9 +1,11 @@
 import type { ConnectOptions, HuntOptions, ReferralOptions } from '../../shared/api'
 import { CHECK_STATUSES, HUNT_PORTALS } from '../../shared/types'
+import type { Portal } from '../../shared/types'
 import type { Store } from '../db/store'
 import type { Opportunity } from '../../shared/types'
 import { onePlan } from '../runs/engine'
 import type { RunEngine } from '../runs/engine'
+import { READ_BY } from '../portals'
 import { applyPlan } from './apply'
 import { emailSpec } from './email'
 import { huntPlan, plannedSearches } from './hunt'
@@ -41,7 +43,7 @@ export class Flows {
         ? 'That row is no longer in the tracker.'
         : row.status !== 'found'
           ? `${row.company} is at ${row.status}, not found: apply works found rows.`
-          : !row.link && !(['linkedin', 'instahyre'].includes(row.portal.toLowerCase()) && row.jobId)
+          : !row.link && !row.portalLink && !(READ_BY[row.portal.toLowerCase() as Portal] === 'id' && row.jobId)
             ? `${row.company} has no link to the posting. Add one on the row, then apply.`
             : null
       if (problem) firstProblem ??= problem

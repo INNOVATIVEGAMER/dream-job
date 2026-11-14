@@ -5,7 +5,7 @@ import { AT_ONCE, CHECK_STATUSES, PORTALS, WORK_MODES } from '../../shared/types
 import type { Opportunity, Portal } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { Store } from '../db/store'
-import { huntTools } from '../portals'
+import { huntTools, READ_BY } from '../portals'
 import { defineTool, onePlan } from '../runs/engine'
 import type { AnyTool, FlowSpec, RunContext, RunPlan } from '../runs/engine'
 import { applyPageTool } from './apply-page'
@@ -33,16 +33,16 @@ const savedApplyOf = (row: Opportunity): string | null => (row.link && !isPortal
 /** A job the check can read: on a portal by its id or posting link, or by its saved apply page. */
 export function isCheckable(row: Opportunity): boolean {
   const portal = portalOf(row)
-  const byPortal = (portal === 'linkedin' || portal === 'instahyre') && !!row.jobId
-  const byLink = (portal === 'wellfound' && !!row.portalLink) || !!savedApplyOf(row)
+  const byPortal = !!portal && READ_BY[portal] === 'id' && !!row.jobId
+  const byLink = (!!portal && READ_BY[portal] === 'link' && !!row.portalLink) || !!savedApplyOf(row)
   return (CHECK_STATUSES as readonly string[]).includes(row.status) && (byPortal || byLink)
 }
 
 function rowLine(row: Opportunity): string {
   const portal = portalOf(row)
   const reads = [
-    portal === 'linkedin' || portal === 'instahyre' ? `${portal}_read_job, job id ${row.jobId}` : '',
-    portal === 'wellfound' && row.portalLink ? `wellfound_read_job, link ${row.portalLink}` : '',
+    portal && READ_BY[portal] === 'id' && row.jobId ? `${portal}_read_job, job id ${row.jobId}` : '',
+    portal && READ_BY[portal] === 'link' && row.portalLink ? `${portal}_read_job, link ${row.portalLink}` : '',
     savedApplyOf(row) ? `apply page saved: ${savedApplyOf(row)}` : '',
   ].filter(Boolean)
   return `- Job ${row.id}: ${row.company}, ${row.role}, ${row.status === 'found' ? 'not applied to yet' : 'already applied to'} (${reads.join('; ')})`
