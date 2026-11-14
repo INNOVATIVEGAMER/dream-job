@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import type { JSX, ReactNode } from 'react'
 
 import {
@@ -15,7 +16,7 @@ import {
   WarningIcon,
 } from '@phosphor-icons/react'
 
-import type { NeedsYou } from '../../../shared/types'
+import type { NeedsYou, Status } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { when } from '../lib/format'
@@ -58,6 +59,15 @@ const NEED_ICON: Record<NeedsYou['icon'], ReactNode> = {
   warning: <WarningIcon className="nx:text-warning-subtle-foreground" />,
 }
 
+/** Home's line of numbers: each a status, and the tracker view of the same name. */
+const METRICS: [Status, string][] = [
+  ['found', 'found to apply'],
+  ['applied', 'applied'],
+  ['outreached', 'outreached'],
+  ['referred', 'referred'],
+  ['interview', 'in interviews'],
+]
+
 function Quick({ label, icon, shortcut, onClick, disabled }: { label: string; icon: ReactNode; shortcut: string; onClick: () => void; disabled?: boolean }): JSX.Element {
   return (
     <Button variant="outline" size="sm" startIcon={icon} disabled={disabled} onClick={onClick}>
@@ -83,15 +93,15 @@ function Row({ icon, title, body, action }: { icon: ReactNode; title: string; bo
 /** Home is an inbox: what needs you first, a few quick actions, then recent runs. */
 export function Home(): JSX.Element {
   const status = useAppStatus()
-  const home = useData(() => api.home(), [], ['opportunities', 'contacts', 'runs', 'settings', 'sites', 'email'])
+  const home = useData(() => api.home(), [], ['jobs', 'people', 'runs', 'settings', 'sites', 'email'])
   const summary = home.data
   const run = status?.run
 
   if (!summary) return <Page title="Home"><Loading /></Page>
 
-  const jobs = Object.values(summary.counts).reduce((sum, n) => sum + n, 0)
-  const interviewing = (summary.counts['screen'] ?? 0) + (summary.counts['onsite'] ?? 0) + (summary.counts['offer'] ?? 0)
-  const applied = (summary.counts['applied'] ?? 0) + (summary.counts['outreach'] ?? 0) + (summary.counts['replied'] ?? 0)
+  const count = (status: Status): number => summary.counts[status] ?? 0
+  // Discarded jobs were ruled out, so they don't count as jobs in play.
+  const jobs = Object.entries(summary.counts).reduce((sum, [status, n]) => (status === 'discarded' ? sum : sum + n), 0)
 
   const search = (
     <button
@@ -187,19 +197,18 @@ export function Home(): JSX.Element {
         <div className="nx:flex nx:flex-wrap nx:gap-2">
           <Quick label="New hunt" icon={<MagnifyingGlassIcon />} shortcut="H" onClick={() => go('/hunt')} />
           <Quick label="Pick jobs to apply" icon={<PaperPlaneTiltIcon />} shortcut="A" disabled={!summary.foundCount} onClick={() => go('/tracker/found')} />
-          <Quick label="Check email" icon={<EnvelopeIcon />} shortcut="E" onClick={() => go('/email')} />
           <Quick label="Pick companies to connect" icon={<UserPlusIcon />} shortcut="R" onClick={() => go('/tracker/applied')} />
+          <Quick label="Check email" icon={<EnvelopeIcon />} shortcut="E" onClick={() => go('/email')} />
         </div>
       </div>
 
       <div className="nx:flex nx:flex-wrap nx:items-center nx:gap-2">
-        {metric(summary.counts['found'] ?? 0, 'found to apply', 'found')}
-        <span className="nx:text-muted-foreground">·</span>
-        {metric(applied, 'applied', 'applied')}
-        <span className="nx:text-muted-foreground">·</span>
-        {metric(interviewing, 'interviewing', 'interviewing')}
-        <span className="nx:text-muted-foreground">·</span>
-        {metric(summary.counts['replied'] ?? 0, 'replied', 'applied')}
+        {METRICS.map(([status, label], i) => (
+          <Fragment key={status}>
+            {i > 0 && <span className="nx:text-muted-foreground">·</span>}
+            {metric(count(status), label, status)}
+          </Fragment>
+        ))}
       </div>
 
       {needs.length > 0 && (

@@ -2,17 +2,17 @@ import { useEffect, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
 
 import {
-  ArchiveIcon,
   BuildingsIcon,
-  ChatCircleIcon,
   ClockCounterClockwiseIcon,
   EnvelopeIcon,
+  EyeSlashIcon,
   GearIcon,
   HouseIcon,
   ListChecksIcon,
   MagnifyingGlassIcon,
   PaperPlaneTiltIcon,
   TableIcon,
+  UserCheckIcon,
   UserPlusIcon,
 } from '@phosphor-icons/react'
 
@@ -28,10 +28,15 @@ export async function checkPostings(ids: number[]): Promise<void> {
 }
 
 /** Sends new blank connection requests at each company, up to the usual number each, then shows the run. Answers whether it started. */
-export async function sendRequests(companies: string[]): Promise<boolean> {
-  const runId = await attempt(() => api.flows.connect({ companies, perCompany: REQUESTS_PER_COMPANY }))
+export async function sendRequests(companyIds: number[]): Promise<boolean> {
+  const runId = await attempt(() => api.flows.connect({ companyIds, perCompany: REQUESTS_PER_COMPANY }))
   if (runId) go('/run')
   return !!runId
+}
+
+/** Reads your newest LinkedIn connections and marks everyone who accepted a request, then shows the run. */
+export async function checkAccepted(): Promise<void> {
+  if (await attempt(() => api.flows.checkAccepted())) go('/run')
 }
 
 type Command = { key: string; label: string; icon: ReactNode; shortcut?: string; run: () => void }
@@ -39,16 +44,16 @@ type Command = { key: string; label: string; icon: ReactNode; shortcut?: string;
 const RUN: Command[] = [
   { key: 'hunt', label: 'Start a hunt', icon: <MagnifyingGlassIcon />, shortcut: 'H', run: () => go('/hunt') },
   { key: 'apply', label: 'Pick found jobs to apply to', icon: <PaperPlaneTiltIcon />, shortcut: 'A', run: () => go('/tracker/found') },
-  { key: 'check', label: 'Check postings of found and applied jobs', icon: <ListChecksIcon />, run: () => void checkPostings([]) },
-  { key: 'email', label: 'Check email', icon: <EnvelopeIcon />, shortcut: 'E', run: () => go('/email') },
   { key: 'connect', label: 'Pick companies to send connection requests', icon: <UserPlusIcon />, shortcut: 'R', run: () => go('/tracker/applied') },
-  { key: 'message', label: 'Message connections', icon: <ChatCircleIcon />, shortcut: 'M', run: () => go('/message') },
+  { key: 'email', label: 'Check email', icon: <EnvelopeIcon />, shortcut: 'E', run: () => go('/email') },
+  { key: 'check', label: 'Check postings of found and applied jobs', icon: <ListChecksIcon />, run: () => void checkPostings([]) },
+  { key: 'accepted', label: 'Check who accepted your requests', icon: <UserCheckIcon />, run: () => void checkAccepted() },
 ]
 
 const PAGES: Command[] = [
   { key: 'home', label: 'Go to Home', icon: <HouseIcon />, run: () => go('/') },
   { key: 'tracker', label: 'Go to Tracker', icon: <TableIcon />, run: () => go('/tracker') },
-  { key: 'discarded', label: 'Go to Discarded', icon: <ArchiveIcon />, run: () => go('/discarded') },
+  { key: 'never-show', label: 'Go to Never show', icon: <EyeSlashIcon />, run: () => go('/never-show') },
   { key: 'runs', label: 'Go to Run history', icon: <ClockCounterClockwiseIcon />, run: () => go('/runs') },
   { key: 'settings', label: 'Open Settings', icon: <GearIcon />, run: () => go('/settings') },
 ]

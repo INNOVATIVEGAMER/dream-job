@@ -1,9 +1,9 @@
 import type { JSX, ReactNode } from 'react'
 
 import {
-  ArchiveIcon,
   BriefcaseIcon,
   ClockCounterClockwiseIcon,
+  EyeSlashIcon,
   GearIcon,
   HandPalmIcon,
   HouseIcon,
@@ -120,7 +120,7 @@ function Problems({ status }: { status: AppStatus | null }): JSX.Element | null 
 /** The app's frame: the sidebar, the command menu, and the screen. Each screen draws its own top bar. */
 export function Shell({ section, children }: { section: string; children: ReactNode }): JSX.Element {
   const status = useAppStatus()
-  const home = useData(() => api.home(), [], ['opportunities', 'contacts'])
+  const home = useData(() => api.home(), [], ['jobs', 'people'])
 
   const main: NavItem[] = [
     { to: '/', label: 'Home', icon: <HouseIcon />, match: 'home' },
@@ -128,11 +128,11 @@ export function Shell({ section, children }: { section: string; children: ReactN
     { to: '/hunt', label: 'Hunt', icon: <MagnifyingGlassIcon />, match: 'hunt' },
   ]
   const records: NavItem[] = [
-    { to: '/discarded', label: 'Discarded', icon: <ArchiveIcon />, match: 'discarded' },
+    { to: '/never-show', label: 'Never show', icon: <EyeSlashIcon />, match: 'never-show' },
     { to: '/runs', label: 'Run history', icon: <ClockCounterClockwiseIcon />, match: 'runs' },
   ]
   // A company, a job, its people, and the email check that moves jobs on all sit under Tracker.
-  const navSection = ['opportunity', 'company', 'email', 'message'].includes(section) ? 'tracker' : section
+  const navSection = ['job', 'company', 'email'].includes(section) ? 'tracker' : section
 
   return (
     <SidebarProvider>

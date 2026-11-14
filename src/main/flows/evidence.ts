@@ -96,6 +96,18 @@ export function checkYears(minYears: number | null, quote: string, texts: string
   return { value: minYears, quote: said }
 }
 
+export const REQ_ID =
+  'The company\'s own id for this job exactly as the posting shows it, such as "R0123456" or "JR-2024-1189" (often labelled Job ID, Req ID or Requisition). Not the portal\'s id. "" when the posting shows none'
+
+/** The company's own id for the job, kept only when it is on a page read for this job, as written. */
+export function checkReqId(reqId: string, texts: string[]): string | null | { error: string } {
+  const said = reqId.trim()
+  if (!said) return null
+  if (!/\d/.test(said) || said.length > 40) return { error: `"${said}" doesn't look like a job id. Give "" when the posting shows none.` }
+  if (!isQuoted(said, texts)) return { error: `"${said}" is not on any page read for this job. Copy it exactly, or give "".` }
+  return said
+}
+
 export type ApplyOutcome = {
   /** Where the application goes: the company's page as it landed, or the posting itself when it applies on the portal. */
   link: string | null

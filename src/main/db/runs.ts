@@ -6,7 +6,7 @@ import { now, paging } from './database'
 
 export const RUNS_PAGE_SIZE = 15
 
-const COLUMNS = `id, flow, title, portal, opportunity_id AS opportunityId, started, ended, status, result,
+const COLUMNS = `id, flow, title, portal, job_id AS jobId, started, ended, status, result,
   turns, input_tokens AS inputTokens, output_tokens AS outputTokens, ms`
 
 type RunRow = Omit<RunSummary, 'usage'> & RunUsage
@@ -16,7 +16,7 @@ const toSummary = (row: RunRow): RunSummary => ({
   flow: row.flow,
   title: row.title,
   portal: row.portal,
-  opportunityId: row.opportunityId,
+  jobId: row.jobId,
   started: row.started,
   ended: row.ended,
   status: row.status,
@@ -28,10 +28,10 @@ const toSummary = (row: RunRow): RunSummary => ({
 export class Runs {
   constructor(private readonly db: DatabaseSync) {}
 
-  start(flow: Flow, title: string, portal: string | null, opportunityId: number | null): number {
+  start(flow: Flow, title: string, portal: string | null, jobId: number | null): number {
     const result = this.db
-      .prepare(`INSERT INTO runs (flow, title, portal, opportunity_id, started, status) VALUES (?, ?, ?, ?, ?, 'running')`)
-      .run(flow, title, portal, opportunityId, now())
+      .prepare(`INSERT INTO runs (flow, title, portal, job_id, started, status) VALUES (?, ?, ?, ?, ?, 'running')`)
+      .run(flow, title, portal, jobId, now())
     return Number(result.lastInsertRowid)
   }
 

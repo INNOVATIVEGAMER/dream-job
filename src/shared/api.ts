@@ -1,30 +1,29 @@
 import type {
+  Activity,
   AppStatus,
+  BrowserInfo,
+  CardAnswer,
   Company,
   CompanyDetail,
   CompanyList,
   CompanyQuery,
-  BrowserInfo,
-  CardAnswer,
-  Contact,
   DataTopic,
-  DiscardedPage,
-  DiscardedQuery,
   EmailRunDetail,
   EmailSettings,
-  EmailWaiting,
   FormAnswer,
   HomeSummary,
   HuntWindow,
+  Job,
+  JobOutreach,
+  JobRow,
   NeverShowCompany,
-  NewOpportunity,
-  Opportunity,
-  OpportunityEvent,
+  NewJob,
+  OutreachState,
+  PeopleCount,
   Portal,
   PortalSettings,
   Preferences,
   Profile,
-  ReadyCompany,
   ReferralMessage,
   ResumeImport,
   ResumeInfo,
@@ -35,19 +34,18 @@ import type {
   Settings,
   SignInSite,
   SiteState,
-  TrackerPage,
-  TrackerQuery,
-  TrackerRow,
   WorkMode,
 } from './types'
 
-export type OpportunityDetail = { opportunity: Opportunity; events: OpportunityEvent[]; contacts: Contact[]; company: Company | null; companyJobs: number }
+/** One job's page: the job, its company, its history, and who was asked about it. */
+export type JobDetail = { job: Job; company: Company; companyJobs: number; people: PeopleCount; activity: Activity[]; outreach: JobOutreach[] }
 
 export type RunDetail = { summary: RunSummary; events: RunEvent[] }
 
 export type HuntOptions = { portals: Portal[]; window: HuntWindow }
-export type ConnectOptions = { companies: string[]; perCompany: number }
-export type ReferralOptions = { companies: string[] }
+export type ConnectOptions = { companyIds: number[]; perCompany: number }
+/** A referral ask: these people, about this job, word for word. */
+export type ReferralOptions = { jobId: number; personIds: number[]; resume: boolean }
 
 /** The only door from the screens to the main process, exposed as `window.jobApp`. */
 export type JobAppApi = {
@@ -66,16 +64,19 @@ export type JobAppApi = {
   }
   home: () => Promise<HomeSummary>
   tracker: {
-    page: (query: TrackerQuery) => Promise<TrackerPage>
-    get: (id: number) => Promise<OpportunityDetail | null>
+    /** The tracker, company first: each company with its jobs in the view. */
+    companies: (query: CompanyQuery) => Promise<CompanyList>
+    get: (id: number) => Promise<JobDetail | null>
     setStatus: (id: number, status: string) => Promise<void>
     setNotes: (id: number, notes: string) => Promise<void>
     setWorkMode: (id: number, workMode: WorkMode) => Promise<void>
     /** The links the user pastes: the posting where it was found, and where the application goes. "" clears one. */
     setLinks: (id: number, links: { postingLink: string; applyLink: string }) => Promise<void>
-    add: (input: NewOpportunity & { status: string }) => Promise<number>
-    /** The tracker, company first: each company with its jobs in the view. */
-    companies: (query: CompanyQuery) => Promise<CompanyList>
+    /** The company's own id for the job, as the posting shows it. "" clears it. */
+    setReqId: (id: number, reqId: string) => Promise<void>
+    add: (input: NewJob) => Promise<number>
+    /** A discarded job back to found. */
+    restore: (id: number) => Promise<void>
   }
   companies: {
     get: (id: number) => Promise<CompanyDetail | null>
@@ -86,17 +87,12 @@ export type JobAppApi = {
     rename: (id: number, name: string) => Promise<void>
     /** Moves everything at one company onto another. */
     merge: (fromId: number, intoId: number) => Promise<void>
-  }
-  discarded: {
-    page: (query: DiscardedQuery) => Promise<DiscardedPage>
-    restore: (id: number) => Promise<number>
-    neverShow: () => Promise<NeverShowCompany[]>
+    neverShown: () => Promise<NeverShowCompany[]>
     addNeverShow: (company: string, why: string) => Promise<void>
-    removeNeverShow: (id: number) => Promise<void>
   }
-  contacts: {
-    ready: () => Promise<ReadyCompany[]>
-    get: (id: number) => Promise<Contact | null>
+  outreach: {
+    /** Where a referral ask stands: you set it. */
+    setState: (id: number, state: OutreachState) => Promise<void>
   }
   runs: {
     page: (query: RunQuery) => Promise<RunPage>
@@ -106,18 +102,19 @@ export type JobAppApi = {
     /** Shows one session's tab in Chrome: by its lane key, or by a card it waits on. */
     showTab: (key: string) => Promise<void>
     /** The jobs a run added: what a hunt found. */
-    jobs: (runId: number) => Promise<TrackerRow[]>
+    jobs: (runId: number) => Promise<JobRow[]>
   }
   flows: {
     hunt: (options: HuntOptions) => Promise<number>
-    /** One session per row, 5 at a time. */
-    apply: (opportunityIds: number[]) => Promise<number>
-    /** Reads found jobs' apply pages: closed ones are marked dead, and each keeps the company's link. No ids: every found job. */
-    checkPostings: (opportunityIds: number[]) => Promise<number>
-    /** New blank requests at each company, found or applied: one session per company. */
+    /** One session per job, 5 at a time. */
+    apply: (jobIds: number[]) => Promise<number>
+    /** Reads found and applied jobs' postings: closed found ones are marked dead, and each keeps the company's link. No ids: all of them. */
+    checkPostings: (jobIds: number[]) => Promise<number>
+    /** New blank requests at each company: one session per company. */
     connect: (options: ConnectOptions) => Promise<number>
     /** Reads the user's LinkedIn connections at each company: adds them, and marks requests that were accepted. One session per company. */
     refreshPeople: (companyIds: number[]) => Promise<number>
+    /** The referral message to these people, about this job. */
     referral: (options: ReferralOptions) => Promise<number>
     checkAccepted: () => Promise<number>
     /** The email check; `count` overrides the setting for this one check. */
@@ -125,10 +122,8 @@ export type JobAppApi = {
   }
   email: {
     detail: (runId: number) => Promise<EmailRunDetail | null>
-    undo: (changeId: number) => Promise<void>
-    waiting: () => Promise<EmailWaiting[]>
-    add: (waitingId: number) => Promise<number>
-    ignore: (waitingId: number) => Promise<void>
+    /** Undoes one change an email made: its Activity row's id. */
+    undo: (activityId: number) => Promise<void>
   }
   settings: {
     get: () => Promise<Settings>
@@ -160,14 +155,15 @@ export const CHANNELS = [
   'chrome:signIn',
   'chrome:info',
   'home',
-  'tracker:page',
+  'tracker:companies',
   'tracker:get',
   'tracker:setStatus',
   'tracker:setNotes',
   'tracker:setWorkMode',
   'tracker:setLinks',
+  'tracker:setReqId',
   'tracker:add',
-  'tracker:companies',
+  'tracker:restore',
   'companies:get',
   'companies:names',
   'companies:setStage',
@@ -175,13 +171,9 @@ export const CHANNELS = [
   'companies:setNeverShow',
   'companies:rename',
   'companies:merge',
-  'discarded:page',
-  'discarded:restore',
-  'discarded:neverShow',
-  'discarded:addNeverShow',
-  'discarded:removeNeverShow',
-  'contacts:ready',
-  'contacts:get',
+  'companies:neverShown',
+  'companies:addNeverShow',
+  'outreach:setState',
   'runs:page',
   'runs:get',
   'runs:answer',
@@ -198,9 +190,6 @@ export const CHANNELS = [
   'flows:email',
   'email:detail',
   'email:undo',
-  'email:waiting',
-  'email:add',
-  'email:ignore',
   'settings:get',
   'settings:setPreferences',
   'settings:setProfile',

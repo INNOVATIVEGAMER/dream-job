@@ -90,7 +90,7 @@ export type FlowSpec<T> = {
   portal: string | null
   /** The portals whose playbooks the session gets; by default its own portal. */
   playbooks?: Portal[]
-  opportunityId?: number | null
+  jobId?: number | null
   /** Lines for this flow, added to the rules every session keeps. */
   system: string
   prompt: string
@@ -110,7 +110,7 @@ export type RunPlan = {
   title: string
   subtitle?: string | null
   portal: string | null
-  opportunityId?: number | null
+  jobId?: number | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sessions: FlowSpec<any>[]
   atOnce?: number
@@ -122,7 +122,7 @@ export type RunPlan = {
 
 /** A run of one session, named as the session is. */
 export function onePlan<T>(spec: FlowSpec<T>): RunPlan {
-  return { flow: spec.flow, title: spec.title, subtitle: spec.subtitle, portal: spec.portal, opportunityId: spec.opportunityId, sessions: [spec] }
+  return { flow: spec.flow, title: spec.title, subtitle: spec.subtitle, portal: spec.portal, jobId: spec.jobId, sessions: [spec] }
 }
 
 /** The lines every session keeps, whatever the flow. */
@@ -234,7 +234,7 @@ export class RunEngine {
     const path = await findClaude()
     if (!path) throw new Error('Claude Code was not found. Install it and sign in, then try again.')
 
-    const runId = this.deps.store.runs.start(plan.flow, plan.title, plan.portal, plan.opportunityId ?? null)
+    const runId = this.deps.store.runs.start(plan.flow, plan.title, plan.portal, plan.jobId ?? null)
     this.isStopping = false
     this.haltReason = null
     this.cards.clear()
@@ -249,7 +249,7 @@ export class RunEngine {
         title: spec.laneTitle ?? spec.title,
         subtitle: spec.subtitle ?? null,
         portal: spec.portal,
-        opportunityId: spec.opportunityId ?? null,
+        jobId: spec.jobId ?? null,
         status: 'queued',
         started: null,
         ended: null,
@@ -268,7 +268,7 @@ export class RunEngine {
       title: plan.title,
       subtitle: plan.subtitle ?? null,
       portal: plan.portal,
-      opportunityId: plan.opportunityId ?? null,
+      jobId: plan.jobId ?? null,
       status: 'running',
       started: new Date().toISOString(),
       model: null,

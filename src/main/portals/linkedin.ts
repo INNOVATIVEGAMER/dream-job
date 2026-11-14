@@ -263,8 +263,8 @@ export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; appl
           for (const card of result.cards) {
             const isOut =
               card.flags.includes('Applied') ||
-              store.discarded.has('linkedin', card.jobId) ||
-              !!store.opportunities.findExisting('linkedin', card.jobId, card.company, card.title) ||
+              !!store.jobs.byPortalId('linkedin', card.jobId) ||
+              !!store.jobs.findExisting({ company: card.company, role: card.title }) ||
               !!store.neverShow.match(card.company)
             if (isOut) left++
             else fresh.push(card)
@@ -293,7 +293,7 @@ export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; appl
       'linkedin',
       'read_job',
       'Read one LinkedIn posting by its job id: title, company, place, when posted, applicants, pay if shown, apply route (Easy Apply or the company site with its link), whether it is closed or already applied to, the company\'s industry and headcount with its stage bucket, the hiring team, and the description.',
-      { job_id: z.string().regex(/^\d+$/, 'A LinkedIn job id is digits only').describe('The job id from search_jobs or the row') },
+      { job_id: z.string().regex(/^\d+$/, 'A LinkedIn job id is digits only').describe('The job id from search_jobs or the job') },
       async ({ job_id }) => {
         await ctx.chrome.openPage(jobUrl(job_id))
         await waitFor(ctx, `document.querySelector('[componentkey^="JobDetails_AboutTheJob_"], #job-details, .jobs-description__content') || /No longer accepting|This job is no longer available|Page not found/i.test(document.body.innerText)`, 10_000)

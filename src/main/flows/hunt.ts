@@ -9,7 +9,7 @@ import { huntTools, postingLink } from '../portals'
 import { defineTool, onePlan } from '../runs/engine'
 import type { AnyTool, FlowSpec, RunContext, RunPlan } from '../runs/engine'
 import { applyPageTool } from './apply-page'
-import { applyOutcome, checkYears, MIN_YEARS, newEvidence, noteReads, postingFor, textsFor, YEARS_QUOTE } from './evidence'
+import { applyOutcome, checkReqId, checkYears, MIN_YEARS, newEvidence, noteReads, postingFor, REQ_ID, textsFor, YEARS_QUOTE } from './evidence'
 import type { Evidence } from './evidence'
 import { fitText, preferencesText } from './context'
 
@@ -132,7 +132,7 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
         role: z.string().min(1).max(200).describe('The posting\'s title'),
         company: z.string().min(1).max(200),
         stage: z.enum(STAGES),
-        mode: z.string().max(120).describe('Work mode and place, such as "Remote, India", "Hybrid, Bengaluru" or "Place not stated"'),
+        req_id: z.string().max(60).describe(REQ_ID),
         work_mode: z.enum(WORK_MODES).describe('remote, hybrid or onsite only as the posting states it; not-stated when it names only a place'),
         applicants: z.string().max(120).describe('As the portal shows it, or ""'),
         pay: z.string().max(200).describe('The band as shown, or "not shown"'),
@@ -149,29 +149,30 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
           if (!read) return refuse(`Read it with ${input.portal}_read_job first: its links and apply route come from that page.`)
           const apply = applyOutcome(evidence, read, null, input.apply_page_shows_job)
           if (typeof apply === 'string') return refuse(apply)
-          const years = checkYears(input.min_years, input.years_quote, textsFor(evidence, read, [apply.link, read.applyUrl]))
+          const texts = textsFor(evidence, read, [apply.link, read.applyUrl])
+          const years = checkYears(input.min_years, input.years_quote, texts)
           if (typeof years === 'string') return refuse(years)
+          const reqId = checkReqId(input.req_id, texts)
+          if (reqId && typeof reqId === 'object') return refuse(reqId.error)
           onDecided(`${input.portal}:${input.job_id}`)
           const applyLink = apply.link && !isPortalLink(apply.link) ? apply.link : null
-          if (store.opportunities.findExisting(input.portal, input.job_id, input.company, input.role, applyLink)) return say('Already in the tracker: left as it is.')
+          if (store.jobs.findExisting({ portalLink: read.postingLink, link: applyLink, company: input.company, role: input.role })) return say('Already in the tracker: left as it is.')
           const never = store.neverShow.match(input.company)
           if (never) return refuse(`${input.company} is on never show again (${never.why}). Leave it.`)
-          store.opportunities.addFound(
+          store.jobs.addFound(
             {
               company: input.company,
               role: input.role,
               stage: input.stage,
               portal: input.portal,
-              jobId: input.job_id,
-              link: apply.link ?? read.postingLink,
               portalLink: read.postingLink,
+              link: apply.link ?? read.postingLink,
+              reqId,
               postingState: apply.state,
               postingNote: apply.note,
-              mode: input.mode,
               workMode: input.work_mode,
               applicants: input.applicants,
               pay: input.pay,
-              experience: years.quote ?? 'not stated',
               minYears: years.value,
               applyRoute: apply.route,
               score: input.score,
@@ -182,7 +183,7 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
           )
           for (const tally of tallies) tally.added++
           ctx.count('added')
-          ctx.changed('opportunities')
+          ctx.changed('jobs')
           ctx.log('good', `Added ${input.company}, ${input.role} (score ${input.score})`)
           return say('Added.')
         }),
@@ -202,22 +203,12 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
       input =>
         guarded(async () => {
           onDecided(`${input.portal}:${input.job_id}`)
-          if (store.discarded.has(input.portal, input.job_id)) return say('Already discarded.')
-          store.discarded.add(
-            {
-              company: input.company,
-              role: input.role,
-              portal: input.portal,
-              jobId: input.job_id,
-              link: linkFor(input.portal, input.job_id, input.link),
-              line: input.line,
-              reason: input.reason,
-            },
-            ctx.runId,
-          )
+          const portalLink = linkFor(input.portal, input.job_id, input.link)
+          if (store.jobs.byPortalId(input.portal, input.job_id) ?? (portalLink ? store.jobs.byPortalLink(portalLink) : null)) return say('Already in the tracker: left as it is.')
+          store.jobs.addDiscarded({ company: input.company, role: input.role, portal: input.portal, portalLink, line: input.line, reason: input.reason }, ctx.runId)
           for (const tally of tallies) tally.discarded++
           ctx.count('discarded')
-          ctx.changed('discarded')
+          ctx.changed('jobs')
           ctx.log('step', `Discarded ${input.company}, ${input.role}: ${input.reason}`)
           return say('Discarded.')
         }),

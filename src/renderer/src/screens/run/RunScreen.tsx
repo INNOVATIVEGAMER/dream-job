@@ -17,8 +17,8 @@ import {
   XCircleIcon,
 } from '@phosphor-icons/react'
 
-import { WORK_MODE_NAMES } from '../../../../shared/types'
-import type { LaneStatus, RunEvent, RunLane, RunState, TrackerRow } from '../../../../shared/types'
+import { SOURCE_NAMES, WORK_MODE_NAMES } from '../../../../shared/types'
+import type { JobRow, LaneStatus, RunEvent, RunLane, RunState } from '../../../../shared/types'
 import { api } from '../../lib/api'
 import { useData } from '../../lib/data'
 import { duration, portalName, tokens } from '../../lib/format'
@@ -122,7 +122,7 @@ function Now({ lane }: { lane: RunLane }): JSX.Element {
 
 /** The jobs a hunt added, best first, each opening its job page. */
 function Added({ runId, live }: { runId: number; live: boolean }): JSX.Element | null {
-  const jobs = useData(() => api.runs.jobs(runId), [runId], ['opportunities'])
+  const jobs = useData(() => api.runs.jobs(runId), [runId], ['jobs'])
   const list = jobs.data ?? []
   if (!list.length) return live ? null : <span className="nx:typography-body-small nx:text-muted-foreground">Nothing new fit this time.</span>
   return (
@@ -139,10 +139,10 @@ function Added({ runId, live }: { runId: number; live: boolean }): JSX.Element |
         </TableRow>
       </TableHeader>
       <TableBody>
-        {list.map((job: TrackerRow) => (
+        {list.map((job: JobRow) => (
           <TableRow key={job.id}>
             <TableCell>
-              <button type="button" className="nx:flex nx:gap-2 nx:min-w-0 nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:text-left" onClick={() => go(`/opportunity/${job.id}`)}>
+              <button type="button" className="nx:flex nx:gap-2 nx:min-w-0 nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:text-left" onClick={() => go(`/job/${job.id}`)}>
                 <span className="nx:typography-label-default nx:text-foreground nx:whitespace-nowrap">{job.company}</span>
                 <span className="nx:typography-body-small nx:text-muted-foreground nx:truncate">{job.role}</span>
               </button>
@@ -152,7 +152,7 @@ function Added({ runId, live }: { runId: number; live: boolean }): JSX.Element |
                 {WORK_MODE_NAMES[job.workMode]}
               </Badge>
             </TableCell>
-            <TableCell className="nx:typography-body-small">{portalName(job.portal)}</TableCell>
+            <TableCell className="nx:typography-body-small">{SOURCE_NAMES[job.portal] ?? job.portal}</TableCell>
             <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{job.score ?? ''}</TableCell>
             <TableCell className="nx:text-end">
               <StatusBadge status={job.status} />
@@ -164,9 +164,15 @@ function Added({ runId, live }: { runId: number; live: boolean }): JSX.Element |
   )
 }
 
+/** Sends connection requests at the company of the job a run was about. */
+async function requestsForJob(jobId: number): Promise<void> {
+  const detail = await attempt(() => api.tracker.get(jobId))
+  if (detail) await sendRequests([detail.job.companyId])
+}
+
 /** What comes next once a run has ended, by flow. */
-function NextSteps({ run, company }: { run: RunState; company: string | null }): JSX.Element | null {
-  const found = useData(() => (run.flow === 'hunt' ? api.runs.jobs(run.id) : Promise.resolve([] as TrackerRow[])), [run.id, run.flow], ['opportunities'])
+function NextSteps({ run }: { run: RunState }): JSX.Element | null {
+  const found = useData(() => (run.flow === 'hunt' ? api.runs.jobs(run.id) : Promise.resolve([] as JobRow[])), [run.id, run.flow], ['jobs'])
   const foundIds = (found.data ?? []).filter(job => job.status === 'found').map(job => job.id)
   switch (run.flow) {
     case 'apply':
@@ -175,13 +181,13 @@ function NextSteps({ run, company }: { run: RunState; company: string | null }):
           <Button startIcon={<PaperPlaneTiltIcon />} onClick={() => go('/tracker/found')}>
             Pick more to apply to
           </Button>
-          {run.opportunityId && (
-            <Button variant="outline" onClick={() => go(`/opportunity/${run.opportunityId}`)}>
+          {run.jobId && (
+            <Button variant="outline" onClick={() => go(`/job/${run.jobId}`)}>
               Open job
             </Button>
           )}
-          {company && (
-            <Button variant="ghost" startIcon={<UserPlusIcon />} onClick={() => void sendRequests([company])}>
+          {run.jobId && (
+            <Button variant="ghost" startIcon={<UserPlusIcon />} onClick={() => void requestsForJob(run.jobId!)}>
               Send connection requests
             </Button>
           )}
@@ -205,8 +211,17 @@ function NextSteps({ run, company }: { run: RunState; company: string | null }):
           See what changed
         </Button>
       )
-    case 'connect':
     case 'referral':
+      return run.jobId ? (
+        <Button variant="outline" onClick={() => go(`/job/${run.jobId}`)}>
+          Open job
+        </Button>
+      ) : (
+        <Button variant="outline" startIcon={<TableIcon />} onClick={() => go('/tracker/outreached')}>
+          Open outreached jobs
+        </Button>
+      )
+    case 'connect':
       return (
         <Button variant="outline" startIcon={<TableIcon />} onClick={() => go('/tracker/applied')}>
           Open applied jobs
@@ -218,9 +233,7 @@ function NextSteps({ run, company }: { run: RunState; company: string | null }):
 }
 
 function Outcome({ run }: { run: RunState }): JSX.Element {
-  const lane = run.lanes[0]
   const tone = run.status === 'done' ? 'nx:text-success-subtle-foreground' : run.status === 'failed' ? 'nx:text-error-subtle-foreground' : 'nx:text-muted-foreground'
-  const company = run.flow === 'apply' && lane ? lane.title : null
   return (
     <Card>
       <CardHeader>
@@ -234,7 +247,7 @@ function Outcome({ run }: { run: RunState }): JSX.Element {
       </CardHeader>
       <CardFooter>
         <div className="nx:flex nx:flex-wrap nx:gap-2">
-          <NextSteps run={run} company={company} />
+          <NextSteps run={run} />
         </div>
       </CardFooter>
     </Card>
@@ -263,8 +276,8 @@ function OneSession({ run }: { run: RunState }): JSX.Element {
         <>
           {run.subtitle && (
             <Group title={run.flow === 'apply' ? 'Job' : 'This run'}>
-              {run.opportunityId ? (
-                <button type="button" className="nx:flex nx:flex-col nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:text-left" onClick={() => go(`/opportunity/${run.opportunityId}`)}>
+              {run.jobId ? (
+                <button type="button" className="nx:flex nx:flex-col nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:text-left" onClick={() => go(`/job/${run.jobId}`)}>
                   <span className="nx:typography-label-default nx:text-foreground">{run.subtitle}</span>
                   <span className="nx:typography-body-small nx:text-muted-foreground">{lane.title}</span>
                 </button>
@@ -350,8 +363,8 @@ function ManySessions({ run }: { run: RunState }): JSX.Element {
                     {one.started && one.ended ? duration(new Date(one.ended).getTime() - new Date(one.started).getTime()) : ''}
                   </TableCell>
                   <TableCell className="nx:text-end">
-                    {one.opportunityId && (
-                      <Button variant="ghost" size="sm" onClick={() => go(`/opportunity/${one.opportunityId}`)}>
+                    {one.jobId && (
+                      <Button variant="ghost" size="sm" onClick={() => go(`/job/${one.jobId}`)}>
                         Open job
                       </Button>
                     )}
@@ -412,14 +425,14 @@ function ManySessions({ run }: { run: RunState }): JSX.Element {
         <div className="nx:max-w-[720px] nx:flex nx:flex-col nx:gap-5">
           <div className="nx:flex nx:items-start nx:justify-between nx:gap-2">
             <div className="nx:flex nx:flex-col nx:min-w-0">
-              {lane.opportunityId ? (
-                <button type="button" className="nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:text-left nx:typography-label-default nx:text-foreground" onClick={() => go(`/opportunity/${lane.opportunityId}`)}>
+              {lane.jobId ? (
+                <button type="button" className="nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:text-left nx:typography-label-default nx:text-foreground" onClick={() => go(`/job/${lane.jobId}`)}>
                   {lane.subtitle ?? lane.title}
                 </button>
               ) : (
                 <span className="nx:typography-label-default">{lane.title}</span>
               )}
-              <Numbers items={[lane.opportunityId ? lane.title : lane.subtitle, lane.portal ? portalName(lane.portal) || lane.portal : null].filter(Boolean) as string[]} />
+              <Numbers items={[lane.jobId ? lane.title : lane.subtitle, lane.portal ? portalName(lane.portal) || lane.portal : null].filter(Boolean) as string[]} />
             </div>
             {isActive(lane.status) && (
               <Button variant="ghost" size="sm" startIcon={<BrowserIcon />} onClick={() => void showTab(lane.key)}>

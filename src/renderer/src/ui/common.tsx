@@ -3,8 +3,8 @@ import type { JSX, ReactNode } from 'react'
 
 import { InfoIcon, WarningIcon } from '@phosphor-icons/react'
 
-import { CONTACT_STATE_NAMES } from '../../../shared/types'
-import type { RunStatus } from '../../../shared/types'
+import { OUTREACH_STATE_NAMES, PERSON_STATE_NAMES, STATUS_NAMES } from '../../../shared/types'
+import type { OutreachState, PersonState, RunStatus, Status } from '../../../shared/types'
 import { messageOf } from '../lib/api'
 import { go } from '../lib/router'
 import {
@@ -187,28 +187,31 @@ export function Numbers({ items }: { items: ReactNode[] }): JSX.Element {
   )
 }
 
-const STATUS_VARIANT: Record<string, 'information' | 'default' | 'success' | 'error' | 'secondary' | 'warning'> = {
+type Variant = 'information' | 'default' | 'success' | 'error' | 'secondary' | 'warning'
+
+const JOB_VARIANT: Record<Status, Variant> = {
   found: 'information',
+  discarded: 'secondary',
   applied: 'default',
-  outreach: 'default',
-  replied: 'success',
-  screen: 'success',
-  onsite: 'success',
+  outreached: 'default',
+  referred: 'success',
+  interview: 'success',
   offer: 'success',
   rejected: 'error',
   dead: 'secondary',
-  // A person's status.
-  pending: 'secondary',
-  accepted: 'success',
 }
+const PERSON_VARIANT: Record<PersonState, Variant> = { requested: 'secondary', connected: 'success' }
+const OUTREACH_VARIANT: Record<OutreachState, Variant> = { sent: 'default', replied: 'information', referred: 'success', declined: 'secondary' }
 
-const STATUS_LABEL: Record<string, string> = CONTACT_STATE_NAMES
+// A job's status, a person's connection, and an ask share the one badge; "referred" reads the same in both.
+const STATUS_VARIANT: Record<string, Variant> = { ...OUTREACH_VARIANT, ...PERSON_VARIANT, ...JOB_VARIANT, left: 'secondary' }
+const STATUS_LABEL: Record<string, string> = { ...OUTREACH_STATE_NAMES, ...PERSON_STATE_NAMES, ...STATUS_NAMES, left: 'Left' }
 
-/** A job's or a person's status as a badge: colour and word together. */
+/** A job's status, a person's connection or where an ask stands, as a badge: colour and word together. `left` is someone who left the company. */
 export function StatusBadge({ status }: { status: string }): JSX.Element {
   return (
     <Badge variant={STATUS_VARIANT[status] ?? 'secondary'} fill="light" isCaps={false}>
-      {STATUS_LABEL[status] ?? status[0]?.toUpperCase() + status.slice(1)}
+      {STATUS_LABEL[status] ?? (status ? status[0]!.toUpperCase() + status.slice(1) : '')}
     </Badge>
   )
 }

@@ -31,14 +31,15 @@ const api: JobAppApi = {
   },
   home: call('home'),
   tracker: {
-    page: call('tracker:page'),
+    companies: call('tracker:companies'),
     get: call('tracker:get'),
     setStatus: call('tracker:setStatus'),
     setNotes: call('tracker:setNotes'),
     setWorkMode: call('tracker:setWorkMode'),
     setLinks: call('tracker:setLinks'),
+    setReqId: call('tracker:setReqId'),
     add: call('tracker:add'),
-    companies: call('tracker:companies'),
+    restore: call('tracker:restore'),
   },
   companies: {
     get: call('companies:get'),
@@ -48,17 +49,11 @@ const api: JobAppApi = {
     setNeverShow: call('companies:setNeverShow'),
     rename: call('companies:rename'),
     merge: call('companies:merge'),
+    neverShown: call('companies:neverShown'),
+    addNeverShow: call('companies:addNeverShow'),
   },
-  discarded: {
-    page: call('discarded:page'),
-    restore: call('discarded:restore'),
-    neverShow: call('discarded:neverShow'),
-    addNeverShow: call('discarded:addNeverShow'),
-    removeNeverShow: call('discarded:removeNeverShow'),
-  },
-  contacts: {
-    ready: call('contacts:ready'),
-    get: call('contacts:get'),
+  outreach: {
+    setState: call('outreach:setState'),
   },
   runs: {
     page: call('runs:page'),
@@ -81,9 +76,6 @@ const api: JobAppApi = {
   email: {
     detail: call('email:detail'),
     undo: call('email:undo'),
-    waiting: call('email:waiting'),
-    add: call('email:add'),
-    ignore: call('email:ignore'),
   },
   settings: {
     get: call('settings:get'),

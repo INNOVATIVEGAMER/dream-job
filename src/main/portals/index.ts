@@ -70,6 +70,21 @@ export const READ_BY: Record<Portal, 'id' | 'link'> = {
   weekday: 'link',
 }
 
+/**
+ * A posting's id on its portal, read back from the posting link the app
+ * built from it: for the portals whose read_job finds a posting by id.
+ */
+export function portalIdOf(portal: Portal, portalLink: string | null | undefined): string | null {
+  if (!portalLink || READ_BY[portal] !== 'id') return null
+  const patterns: Partial<Record<Portal, RegExp>> = {
+    linkedin: /\/jobs\/view\/(\d+)/,
+    instahyre: /\/job-([^/?#]+)/,
+    jsgurujobs: /\/jobs\/([^/?#]+)/,
+    workatastartup: /\/jobs\/([^/?#]+)/,
+  }
+  return portalLink.match(patterns[portal] ?? /$^/)?.[1] ?? null
+}
+
 /** A posting's link from its portal and job id, where the id alone makes one. */
 export function postingLink(portal: Portal, jobId: string): string | null {
   switch (portal) {

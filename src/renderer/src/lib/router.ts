@@ -7,7 +7,7 @@ function subscribe(listener: () => void): () => void {
 
 const read = (): string => window.location.hash.replace(/^#/, '') || '/'
 
-/** The current screen as path parts: `#/opportunity/12` is `['opportunity', '12']`. */
+/** The current screen as path parts: `#/job/12` is `['job', '12']`. */
 export function useRoute(): string[] {
   const path = useSyncExternalStore(subscribe, read)
   return path.split('/').filter(Boolean)

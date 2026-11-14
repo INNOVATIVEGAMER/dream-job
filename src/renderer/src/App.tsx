@@ -6,14 +6,13 @@ import { api } from './lib/api'
 import { useData } from './lib/data'
 import { useRoute } from './lib/router'
 import { CompanyScreen } from './screens/Company'
-import { Discarded } from './screens/Discarded'
 import { EmailDone } from './screens/EmailDone'
 import { EmailStart } from './screens/EmailStart'
 import { Home } from './screens/Home'
 import { HuntStart } from './screens/HuntStart'
+import { JobScreen } from './screens/Job'
+import { NeverShow } from './screens/NeverShow'
 import { Onboarding } from './screens/onboarding/Onboarding'
-import { Opportunity } from './screens/Opportunity'
-import { ReferralStart } from './screens/ReferralStart'
 import { RunScreen } from './screens/run/RunScreen'
 import { Runs } from './screens/Runs'
 import { Settings } from './screens/settings/Settings'
@@ -26,10 +25,10 @@ function Screen({ route }: { route: string[] }): JSX.Element {
   switch (section) {
     case 'tracker':
       return <Tracker adding={first === 'new'} view={(TRACKER_VIEWS as readonly string[]).includes(first ?? '') ? (first as TrackerView) : 'all'} />
-    case 'opportunity':
-      return <Opportunity id={Number(first)} />
+    case 'job':
+      return <JobScreen id={Number(first)} />
     case 'company':
-      return <CompanyScreen id={Number(first)} />
+      return <CompanyScreen id={Number(first)} asking={second === 'ask'} />
     case 'hunt':
       return <HuntStart />
     case 'email':
@@ -38,10 +37,8 @@ function Screen({ route }: { route: string[] }): JSX.Element {
       return <RunScreen />
     case 'runs':
       return <Runs selected={first ? Number(first) : null} />
-    case 'message':
-      return <ReferralStart company={first ? decodeURIComponent(first) : undefined} />
-    case 'discarded':
-      return <Discarded tab={first === 'never' ? 'never' : 'discarded'} />
+    case 'never-show':
+      return <NeverShow />
     case 'settings':
       return <Settings tab={first ?? 'preferences'} sub={second} />
     default:

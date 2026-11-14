@@ -146,24 +146,6 @@ export const DEFAULT_PORTALS = Object.fromEntries(
   ]),
 ) as PortalSettings
 
-/**
- * Fills the approved message for one person. The words are the user's; only
- * the four slots change. Throws when a slot has no value, so a message never
- * goes out with a gap in it.
- */
-export function fillTemplate(template: string, values: { name: string; role: string; company: string; jobLink: string }): string {
-  const filled: Record<string, string> = {
-    '{name}': values.name.trim(),
-    '{role}': values.role.trim(),
-    '{company}': values.company.trim(),
-    '{job link}': values.jobLink.trim(),
-  }
-  for (const [slot, value] of Object.entries(filled)) {
-    if (template.includes(slot) && !value) throw new Error(`The message needs ${slot}, and there is none for this person.`)
-  }
-  return template.replace(/\{name\}|\{role\}|\{company\}|\{job link\}/g, slot => filled[slot] ?? slot)
-}
-
 /** The user's settings, form answers and site sign-ins. */
 export class SettingsStore {
   constructor(private readonly db: DatabaseSync) {}

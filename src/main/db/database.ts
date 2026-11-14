@@ -1,8 +1,9 @@
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import type { SQLInputValue } from 'node:sqlite'
 
-import { workModeOf } from '../../shared/types'
+import { PORTALS, workModeOf } from '../../shared/types'
 
 /** Today as YYYY-MM-DD in local time, the form the tracker's date columns use. */
 export function today(at = new Date()): string {
@@ -327,7 +328,255 @@ const MIGRATIONS: Migration[] = [
     db.exec(`UPDATE contacts SET state = 'accepted', accepted_at = COALESCE(accepted_at, messaged_at, referred_at, sent)
       WHERE state IN ('messaged', 'referred')`)
   },
+
+  // The rebuild: jobs (discarded postings too), people with the positions they hold,
+  // outreach, one history in activity, and one row per email. See rebuildSchema.
+  db => rebuildSchema(db),
 ]
+
+const STATUS_MOVES: Record<string, string> = {
+  found: 'found',
+  applied: 'applied',
+  outreach: 'outreached',
+  replied: 'interview',
+  screen: 'interview',
+  onsite: 'interview',
+  offer: 'offer',
+  rejected: 'rejected',
+  dead: 'dead',
+}
+
+/** A source as the new list names it: a portal, or `manual` for anything else, such as "apple careers". */
+function sourceOf(portal: string): string {
+  const value = portal.trim().toLowerCase()
+  const known = PORTALS.find(one => value === one || value.startsWith(`${one} `))
+  return known ?? 'manual'
+}
+
+/**
+ * The data model the app is rebuilt on. Jobs take the opportunities and the
+ * discarded postings (as status discarded); people take the contacts, each with
+ * a current position at their company; the history of jobs and people moves to
+ * activity; the emails the check read become one table. Company names stay on
+ * companies only.
+ */
+function rebuildSchema(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE jobs (
+      id INTEGER PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies (id),
+      role TEXT NOT NULL,
+      status TEXT NOT NULL,
+      found TEXT NOT NULL,
+      portal TEXT NOT NULL,
+      portal_link TEXT UNIQUE,
+      link TEXT,
+      req_id TEXT,
+      apply_route TEXT,
+      posting_state TEXT,
+      posting_checked TEXT,
+      posting_note TEXT,
+      work_mode TEXT NOT NULL DEFAULT 'not-stated',
+      pay TEXT,
+      min_years INTEGER,
+      applicants TEXT NOT NULL DEFAULT '',
+      score INTEGER,
+      score_reasons TEXT,
+      discard_reason TEXT,
+      discard_line TEXT,
+      notes TEXT NOT NULL DEFAULT '',
+      updated_at TEXT
+    );
+    CREATE INDEX jobs_company ON jobs (company_id);
+    CREATE INDEX jobs_status ON jobs (status);
+
+    CREATE TABLE people (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      headline TEXT NOT NULL DEFAULT '',
+      profile_url TEXT NOT NULL UNIQUE,
+      state TEXT NOT NULL,
+      added TEXT NOT NULL
+    );
+
+    CREATE TABLE positions (
+      id INTEGER PRIMARY KEY,
+      person_id INTEGER NOT NULL REFERENCES people (id),
+      company_id INTEGER NOT NULL REFERENCES companies (id),
+      current INTEGER NOT NULL DEFAULT 1,
+      UNIQUE (person_id, company_id)
+    );
+    CREATE INDEX positions_company ON positions (company_id);
+
+    CREATE TABLE outreach (
+      id INTEGER PRIMARY KEY,
+      job_id INTEGER NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+      person_id INTEGER NOT NULL REFERENCES people (id),
+      message TEXT NOT NULL,
+      resume INTEGER NOT NULL DEFAULT 0,
+      state TEXT NOT NULL DEFAULT 'sent',
+      sent TEXT NOT NULL,
+      UNIQUE (job_id, person_id)
+    );
+    CREATE INDEX outreach_person ON outreach (person_id);
+
+    CREATE TABLE emails (
+      id INTEGER PRIMARY KEY,
+      gmail_id TEXT NOT NULL UNIQUE,
+      thread_id TEXT NOT NULL,
+      run_id INTEGER,
+      seen_at TEXT NOT NULL,
+      outcome TEXT NOT NULL DEFAULT 'skipped',
+      company_id INTEGER REFERENCES companies (id),
+      job_id INTEGER REFERENCES jobs (id) ON DELETE SET NULL,
+      person_id INTEGER REFERENCES people (id),
+      subject TEXT,
+      sender TEXT,
+      date TEXT,
+      link TEXT
+    );
+    CREATE INDEX emails_run ON emails (run_id);
+
+    CREATE TABLE activity (
+      id INTEGER PRIMARY KEY,
+      at TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      job_id INTEGER REFERENCES jobs (id) ON DELETE CASCADE,
+      person_id INTEGER REFERENCES people (id),
+      company_id INTEGER REFERENCES companies (id),
+      from_state TEXT,
+      to_state TEXT,
+      text TEXT NOT NULL,
+      run_id INTEGER,
+      email_id INTEGER REFERENCES emails (id),
+      undone_at TEXT
+    );
+    CREATE INDEX activity_job ON activity (job_id);
+    CREATE INDEX activity_person ON activity (person_id);
+    CREATE INDEX activity_company ON activity (company_id);
+    CREATE INDEX activity_email ON activity (email_id);
+  `)
+
+  // Jobs keep their ids, so runs and their history still point at them.
+  const insertJob = db.prepare(`INSERT INTO jobs (id, company_id, role, status, found, portal, portal_link, link, apply_route, posting_state,
+    posting_checked, posting_note, work_mode, pay, min_years, applicants, score, score_reasons, notes, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const links = new Set<string>()
+  for (const row of db.prepare('SELECT * FROM opportunities ORDER BY id').all()) {
+    const o = row as Record<string, string | number | null>
+    const portalLink = (o['portal_link'] as string | null) || null
+    if (portalLink) links.add(portalLink)
+    insertJob.run(
+      o['id'] as number,
+      o['company_id'] as number,
+      o['role'] as string,
+      STATUS_MOVES[String(o['status'])] ?? 'found',
+      o['found'] as string,
+      sourceOf(String(o['portal'] ?? '')),
+      portalLink,
+      (o['link'] as string | null) || null,
+      o['apply_route'] ?? null,
+      o['posting_state'] ?? null,
+      o['posting_checked'] ?? null,
+      o['posting_note'] ?? null,
+      (o['work_mode'] as string | null) ?? 'not-stated',
+      o['pay'] ?? null,
+      o['min_years'] ?? null,
+      String(o['applicants'] ?? ''),
+      o['score'] ?? null,
+      o['score_reasons'] ?? null,
+      String(o['notes'] ?? ''),
+      (o['updated_at'] as string | null) ?? (o['last_touch'] as string | null),
+    )
+  }
+
+  const addActivity = db.prepare(`INSERT INTO activity (at, kind, job_id, person_id, company_id, from_state, to_state, text, run_id, email_id, undone_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+
+  // Discarded postings become jobs; one the tracker already holds is left as it is.
+  const insertDiscarded = db.prepare(`INSERT INTO jobs (company_id, role, status, found, portal, portal_link, link, discard_reason, discard_line, updated_at)
+    VALUES (?, ?, 'discarded', ?, ?, ?, NULL, ?, ?, ?)`)
+  for (const row of db.prepare('SELECT * FROM discarded ORDER BY at, id').all()) {
+    const d = row as Record<string, string | number | null>
+    const portalLink = (d['link'] as string | null) || null
+    if (portalLink && links.has(portalLink)) continue
+    if (portalLink) links.add(portalLink)
+    const at = String(d['at'])
+    const result = insertDiscarded.run(
+      d['company_id'] as number,
+      d['role'] as string,
+      at.slice(0, 10),
+      sourceOf(String(d['portal'] ?? '')),
+      portalLink,
+      d['reason'] as string,
+      d['line'] as string,
+      at,
+    )
+    addActivity.run(at, 'status', Number(result.lastInsertRowid), null, null, null, 'discarded', `Discarded by run ${d['run_id'] ?? '?'}`, d['run_id'] ?? null, null, null)
+  }
+
+  // A job's history: status changes read from their words, the rest as notes.
+  for (const row of db.prepare('SELECT opportunity_id, at, text, run_id FROM opportunity_events ORDER BY id').all()) {
+    const e = row as { opportunity_id: number; at: string; text: string; run_id: number | null }
+    const set = e.text.match(/^Status set to (\w+)/)
+    const found = /^Found by run/.test(e.text)
+    const to = set ? (STATUS_MOVES[set[1]!] ?? set[1]!) : found ? 'found' : null
+    addActivity.run(e.at, to ? 'status' : 'note', e.opportunity_id, null, null, null, to, e.text, e.run_id, null, null)
+  }
+
+  // People keep their ids; each holds a current position at the company recorded for them.
+  const insertPerson = db.prepare('INSERT INTO people (id, name, headline, profile_url, state, added) VALUES (?, ?, ?, ?, ?, ?)')
+  const insertPosition = db.prepare('INSERT INTO positions (person_id, company_id, current) VALUES (?, ?, 1)')
+  for (const row of db.prepare('SELECT * FROM contacts ORDER BY id').all()) {
+    const c = row as Record<string, string | number | null>
+    const id = c['id'] as number
+    const name = String(c['name'])
+    const companyId = c['company_id'] as number
+    const sent = (c['sent'] as string | null) || null
+    insertPerson.run(id, name, String(c['role'] ?? ''), c['profile_url'] as string, c['state'] === 'accepted' ? 'connected' : 'requested', sent ?? today())
+    insertPosition.run(id, companyId)
+    if (sent) addActivity.run(sent, 'request-sent', null, id, companyId, null, 'requested', `Request sent to ${name}`, c['run_id'] ?? null, null, null)
+    if (c['accepted_at']) addActivity.run(c['accepted_at'], 'connected', null, id, companyId, 'requested', 'connected', `${name} connected`, null, null, null)
+    if (c['messaged_at']) addActivity.run(c['messaged_at'], 'note', null, id, companyId, null, null, `Referral message sent to ${name}`, null, null, null)
+    if (c['referred_at']) addActivity.run(c['referred_at'], 'note', null, id, companyId, null, null, `${name} referred you`, null, null, null)
+  }
+
+  // Emails the check read, one row each; a change it made becomes activity that names its email.
+  const insertEmail = db.prepare(`INSERT INTO emails (gmail_id, thread_id, run_id, seen_at, outcome, company_id, job_id, person_id, subject, sender, date, link)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  for (const row of db.prepare('SELECT key, thread_id, run_id, seen_at, opened FROM email_seen').all()) {
+    const e = row as { key: string; thread_id: string; run_id: number | null; seen_at: string; opened: number }
+    insertEmail.run(e.key, e.thread_id, e.run_id, e.seen_at, e.opened ? 'matched' : 'skipped', null, null, null, null, null, null, null)
+  }
+  for (const row of db.prepare('SELECT * FROM email_changes ORDER BY id').all()) {
+    const c = row as Record<string, string | number | null>
+    const isJob = c['kind'] !== 'contact'
+    const targetId = c['target_id'] as number
+    const exists = db.prepare(`SELECT 1 FROM ${isJob ? 'jobs' : 'people'} WHERE id = ?`).get(targetId)
+    if (!exists) continue
+    const companyId = isJob
+      ? ((db.prepare('SELECT company_id FROM jobs WHERE id = ?').get(targetId) as { company_id: number }).company_id)
+      : ((db.prepare('SELECT company_id FROM positions WHERE person_id = ? LIMIT 1').get(targetId) as { company_id: number } | undefined)?.company_id ?? null)
+    const email = insertEmail.run(`change-${c['id']}`, '', c['run_id'] ?? null, c['at'] as string, 'matched', companyId,
+      isJob ? targetId : null, isJob ? null : targetId, c['email_subject'] as string, c['email_from'] as string, c['email_date'] as string, c['email_link'] as string)
+    const from = isJob ? (STATUS_MOVES[String(c['from_state'])] ?? c['from_state']) : c['from_state'] === 'pending' ? 'requested' : 'connected'
+    const to = isJob ? (STATUS_MOVES[String(c['to_state'])] ?? c['to_state']) : c['to_state'] === 'pending' ? 'requested' : 'connected'
+    addActivity.run(...([c['at'], isJob ? 'status' : 'connected', isJob ? targetId : null, isJob ? null : targetId, isJob ? null : companyId,
+      from ?? null, to ?? null, String(c['note'] ?? ''), c['run_id'] ?? null, Number(email.lastInsertRowid), c['undone_at'] ?? null] as SQLInputValue[]))
+  }
+
+  db.exec(`
+    ALTER TABLE runs RENAME COLUMN opportunity_id TO job_id;
+    DROP TABLE opportunity_events;
+    DROP TABLE opportunities;
+    DROP TABLE discarded;
+    DROP TABLE contacts;
+    DROP TABLE email_seen;
+    DROP TABLE email_changes;
+    DROP TABLE email_waiting;
+    DROP TABLE never_show;
+  `)
+}
 
 export const SCHEMA_VERSION = MIGRATIONS.length
 
@@ -340,6 +589,11 @@ export function openDatabase(path: string): DatabaseSync {
   const db = new DatabaseSync(path)
   db.exec('PRAGMA foreign_keys = ON')
   const version = Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version)
+  // A database with data in it is copied before it changes shape, so a migration can always be undone by hand.
+  if (version > 0 && version < MIGRATIONS.length) {
+    const copy = `${path.replace(/\.db$/, '')}.before-v${MIGRATIONS.length}.db`
+    if (!existsSync(copy)) db.exec(`VACUUM INTO '${copy.replace(/'/g, "''")}'`)
+  }
   for (let i = version; i < MIGRATIONS.length; i++) {
     db.exec('BEGIN')
     try {

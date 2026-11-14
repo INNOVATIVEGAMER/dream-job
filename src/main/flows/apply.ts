@@ -2,18 +2,18 @@ import { z } from 'zod'
 
 import { AT_ONCE, DISCARD_REASONS, PORTALS } from '../../shared/types'
 import { cleanLink, isPortalLink } from '../../shared/links'
-import type { Opportunity, Portal } from '../../shared/types'
+import type { Job, Portal } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
 import type { Store } from '../db/store'
-import { applyTools } from '../portals'
+import { applyTools, portalIdOf } from '../portals'
 import { defineTool, onePlan } from '../runs/engine'
 import type { AnyTool, FlowSpec, RunContext, RunPlan } from '../runs/engine'
 import { answersText, preferencesText, profileText, WRITING_RULES } from './context'
 
 const Output = z.object({
   outcome: z.enum(['applied', 'already-applied', 'not-applied', 'closed']),
-  summary: z.string().describe('One line for the row: what happened'),
+  summary: z.string().describe('One line for the job: what happened'),
   discard: z
     .object({ line: z.string().describe('The posting\'s own words that rule it out, exactly'), reason: z.enum(DISCARD_REASONS) })
     .nullable()
@@ -22,24 +22,25 @@ const Output = z.object({
 
 type Answer = z.infer<typeof Output>
 
-/** The row's portal, when it is one the app has tools for. */
-function portalOf(row: Opportunity): Portal | null {
+/** The job's portal, when it is one the app has tools for. */
+function portalOf(row: Job): Portal | null {
   const key = row.portal.toLowerCase()
   return (PORTALS as readonly string[]).includes(key) ? (key as Portal) : null
 }
 
-function howToApply(portal: Portal | null, row: Opportunity): string[] {
+function howToApply(portal: Portal | null, row: Job): string[] {
+  const jobId = portal ? portalIdOf(portal, row.portalLink) : null
   // The hunt saved the company's own apply page: the application goes there.
   if (row.link && !isPortalLink(row.link)) {
     return [
       `- Start with open_page on ${row.link}: the company's own apply page, where the application goes, and the final word on the job. Closed, expired or gone there: finish with "closed".`,
-      portal === 'linkedin' && row.jobId ? `- Only if that page is gone and you need to know whether LinkedIn still lists it: linkedin_read_job (job id ${row.jobId}).` : '',
+      portal === 'linkedin' && jobId ? `- Only if that page is gone and you need to know whether LinkedIn still lists it: linkedin_read_job (job id ${jobId}).` : '',
     ].filter(Boolean)
   }
   switch (portal) {
     case 'linkedin':
       return [
-        `- Start with linkedin_read_job (job id ${row.jobId}): it says whether the posting is open, already applied to, and how to apply.`,
+        `- Start with linkedin_read_job (job id ${jobId}): it says whether the posting is open, already applied to, and how to apply.`,
         '- Easy Apply: linkedin_easy_apply_fill with no values opens the form. Fill it page by page, then send it from the review page with linkedin_easy_apply_submit.',
         '- No Easy Apply: open_page with the company-site link read_job gives, and apply there.',
       ]
@@ -51,7 +52,7 @@ function howToApply(portal: Portal | null, row: Opportunity): string[] {
       ]
     case 'workatastartup':
       return [
-        `- Start with workatastartup_read_job (job id ${row.jobId}): it says whether the posting is there, already applied to, and what the application asks.`,
+        `- Start with workatastartup_read_job (job id ${jobId}): it says whether the posting is there, already applied to, and what the application asks.`,
         `- Then workatastartup_open_apply opens the form: a message to the founders and the company's own questions. Fill it with type_text and choose_option, and send it with submit_form: every written answer waits for the user first.`,
       ]
     case 'weekday':
@@ -63,12 +64,12 @@ function howToApply(portal: Portal | null, row: Opportunity): string[] {
     case 'jsgurujobs':
     case 'onlyfrontendjobs':
       return [
-        `- Start with ${portal}_read_job (${portal === 'jsgurujobs' ? `job id ${row.jobId}` : `link ${row.portalLink ?? row.link}`}): it gives the company's own posting, where the application goes.`,
+        `- Start with ${portal}_read_job (${portal === 'jsgurujobs' ? `job id ${jobId}` : `link ${row.portalLink ?? row.link}`}): it gives the company's own posting, where the application goes.`,
         '- Then open_page that link and apply there.',
       ]
     case 'instahyre':
       return [
-        `- Start with instahyre_read_job (job id ${row.jobId}): it says whether the posting is there and already applied to.`,
+        `- Start with instahyre_read_job (job id ${jobId}): it says whether the posting is there and already applied to.`,
         '- Then instahyre_apply: one step that sends the user\'s Instahyre profile, with nothing to write. Instahyre rarely shows pay, so there is no band to check.',
       ]
     default:
@@ -76,22 +77,23 @@ function howToApply(portal: Portal | null, row: Opportunity): string[] {
   }
 }
 
-function system(store: Store, row: Opportunity): string {
+function system(store: Store, row: Job): string {
   const prefs = store.settings.preferences()
   const resume = store.settings.resume()
   const portal = portalOf(row)
+  const jobId = portal ? portalIdOf(portal, row.portalLink) : null
   return [
     'This run applies to one posting for the user and submits the application. Applications are submitted directly; no one confirms each one.',
     '',
     'The posting:',
     `Company: ${row.company}`,
     `Role: ${row.role}`,
-    `Portal: ${row.portal}${row.jobId ? `, job id ${row.jobId}` : ''}`,
+    `Portal: ${row.portal}${jobId ? `, job id ${jobId}` : ''}`,
     `Where the application goes: ${row.link ?? 'none recorded'}`,
     row.portalLink && row.portalLink !== row.link ? `Found on ${row.portal}: ${row.portalLink}` : '',
     row.applyRoute ? `Apply route when found: ${row.applyRoute}` : '',
     row.pay ? `Pay when found: ${row.pay}` : '',
-    row.experience ? `Experience asked: ${row.experience}` : '',
+    row.minYears !== null ? `Experience asked: at least ${row.minYears} years` : '',
     row.notes ? `Notes: ${row.notes}` : '',
     '',
     'How:',
@@ -159,7 +161,7 @@ const ROUTE_WORDS: Record<NonNullable<ApplyRecord['sent']>['route'], string> = {
   weekday: 'on Weekday',
 }
 
-/** What went in the application, for the row's notes. */
+/** What went in the application, for the job's notes. */
 function noteOf(record: ApplyRecord, summary: string): string {
   const sent = record.sent!
   return [
@@ -173,16 +175,16 @@ function noteOf(record: ApplyRecord, summary: string): string {
     .join('\n')
 }
 
-function finish(store: Store, row: Opportunity, record: ApplyRecord, answer: Answer, ctx: RunContext): string {
-  const rows = store.opportunities
+function finish(store: Store, row: Job, record: ApplyRecord, answer: Answer, ctx: RunContext): string {
+  const rows = store.jobs
   if (record.posting && !record.posting.closed) rows.setPosting(row.id, 'open', null)
-  // A row found before apply links were saved: keep where its application goes once read_job gives it.
+  // A job found before apply links were saved: keep where its application goes once read_job gives it.
   const posting = record.posting
   if (posting && (!row.link || isPortalLink(row.link))) {
     if (posting.route === 'company-site' && posting.applyUrl && !isPortalLink(posting.applyUrl)) rows.setLinks(row.id, { link: cleanLink(posting.applyUrl), applyRoute: posting.route })
     else if (posting.route !== 'company-site' && !row.link && row.portalLink) rows.setLinks(row.id, { link: row.portalLink, applyRoute: posting.route })
   }
-  ctx.changed('opportunities')
+  ctx.changed('jobs')
 
   // A submit the app saw go through settles it, whatever the answer says.
   if (record.sent) {
@@ -194,25 +196,25 @@ function finish(store: Store, row: Opportunity, record: ApplyRecord, answer: Ans
       rows.appendNote(row.id, `Run ${ctx.runId}: Claude reported applying, but the app did not see a submit go through.`)
       return 'Claude said it applied, but the app did not see a submit go through. Check Chrome, then set the status yourself.'
     case 'already-applied':
-      rows.setStatus(row.id, 'applied', ctx.runId)
+      rows.setStatus(row.id, 'applied', { runId: ctx.runId })
       rows.appendNote(row.id, `Already applied before this run. ${answer.summary}`)
-      return `Already applied to ${row.company}: the row is now applied.`
+      return `Already applied to ${row.company}: the job is now applied.`
     case 'closed':
       rows.setPosting(row.id, 'closed', answer.summary)
-      rows.setStatus(row.id, 'dead', ctx.runId)
-      return `${row.company} is no longer taking applications: the row is marked dead.`
+      rows.setStatus(row.id, 'dead', { runId: ctx.runId })
+      return `${row.company} is no longer taking applications: the job is marked dead.`
     default:
       if (answer.discard) {
-        store.discardRow(row.id, answer.discard.line, answer.discard.reason, ctx.runId)
-        ctx.changed('discarded')
-        return `Not applied, and moved to Discarded. ${answer.summary}`
+        rows.discard(row.id, answer.discard.line, answer.discard.reason, ctx.runId)
+        ctx.changed('jobs')
+        return `Not applied, and discarded. ${answer.summary}`
       }
       rows.appendNote(row.id, `Not applied (run ${ctx.runId}): ${answer.summary}`)
       return `Not applied. ${answer.summary}`
   }
 }
 
-export function applySpec(store: Store, row: Opportunity): FlowSpec<Answer> {
+export function applySpec(store: Store, row: Job): FlowSpec<Answer> {
   const record: ApplyRecord = { written: [], edited: false, facts: [], sent: null, posting: null }
   const portal = portalOf(row)
   return {
@@ -222,7 +224,7 @@ export function applySpec(store: Store, row: Opportunity): FlowSpec<Answer> {
     subtitle: row.role,
     portal: row.portal,
     playbooks: portal ? [portal] : [],
-    opportunityId: row.id,
+    jobId: row.id,
     system: system(store, row),
     prompt: 'Apply to this posting.',
     tools: ctx => [
@@ -237,19 +239,19 @@ export function applySpec(store: Store, row: Opportunity): FlowSpec<Answer> {
 }
 
 /** Applies to rows: one session per row, 5 at a time, each in its own tab. */
-export function applyPlan(store: Store, rows: Opportunity[]): RunPlan {
+export function applyPlan(store: Store, rows: Job[]): RunPlan {
   const sessions = rows.map(row => applySpec(store, row))
   if (sessions.length === 1) return onePlan(sessions[0]!)
   return {
     flow: 'apply',
-    title: `Apply to ${rows.length} rows`,
+    title: `Apply to ${rows.length} jobs`,
     subtitle: rows.map(row => row.company).join(', '),
     portal: null,
     sessions,
     atOnce: AT_ONCE,
-    unit: 'Rows done',
+    unit: 'Jobs done',
     finish: outcomes => {
-      const statuses = rows.map(row => store.opportunities.get(row.id)?.status)
+      const statuses = rows.map(row => store.jobs.row(row.id)?.status)
       const applied = statuses.filter(status => status === 'applied').length
       const dead = statuses.filter(status => status === 'dead').length
       const unfinished = outcomes.filter(outcome => outcome.status !== 'done').length

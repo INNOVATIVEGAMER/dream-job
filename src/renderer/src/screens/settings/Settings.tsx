@@ -30,6 +30,8 @@ import {
 
 import { GMAIL_PLAYBOOK, PLAYBOOKS } from '../../../../shared/playbooks'
 import { yearsOfExperience } from '../../../../shared/profile'
+import { fillTemplate } from '../../../../shared/referral'
+import type { TemplateValues } from '../../../../shared/referral'
 import { EMAIL_COUNTS, GMAIL_TOOLS, isSignInSite, PORTAL_NAMES, PORTAL_TOOL_GROUP_NAMES, PORTAL_TOOLS, PORTALS, SIGN_IN_SITES, SITE_NAMES } from '../../../../shared/types'
 import type { EmailCount, EmailSettings, FormAnswer, Portal, PortalSetting, Preferences, Profile, Settings as SettingsValue, SignInSite, SiteState } from '../../../../shared/types'
 import { api } from '../../lib/api'
@@ -489,10 +491,43 @@ function PreferencesSection({ settings }: { settings: SettingsValue }): JSX.Elem
   )
 }
 
-const SLOTS = ['{name}', '{role}', '{company}', '{job link}'] as const
+const SLOTS = ['{name}', '{role}', '{company}', '{job id}', '{job link}'] as const
 
-/** The main process refuses anything in braces but the four slots. */
+/** The main process refuses anything in braces but the five slots. */
 const isTemplateValid = (template: string): boolean => (template.match(/\{[^}]*\}/g) ?? []).every(slot => (SLOTS as readonly string[]).includes(slot))
+
+/** Two made-up asks the previews fill: a job whose posting shows the company's own ID, and one that doesn't. */
+const SAMPLES: { title: string; values: TemplateValues }[] = [
+  {
+    title: 'Preview, for a job with an ID',
+    values: { name: 'Arjun', role: 'Senior Frontend Engineer', company: 'Northwind Labs', jobId: 'R-20431', jobLink: 'linkedin.com/jobs/view/4423880462' },
+  },
+  {
+    title: 'Preview, for a job with no ID',
+    values: { name: 'Leena', role: 'Frontend Engineer, Platform UI', company: 'Tailspin Data', jobId: '', jobLink: 'wellfound.com/jobs/3120587' },
+  },
+]
+
+/** The message as one person would get it, or why it can't be filled. */
+function Preview({ template, title, values }: { template: string; title: string; values: TemplateValues }): JSX.Element {
+  let text: string
+  let problem: string | null = null
+  try {
+    text = fillTemplate(template, values)
+  } catch (error) {
+    text = ''
+    problem = error instanceof Error ? error.message : String(error)
+  }
+  return (
+    <Group title={title}>
+      {problem ? (
+        <span className="nx:typography-body-small nx:text-error-subtle-foreground">{problem}</span>
+      ) : (
+        <div className="nx:rounded-md nx:bg-muted nx:p-4 nx:typography-body-small nx:whitespace-pre-wrap">{text.trim() || 'Nothing yet.'}</div>
+      )}
+    </Group>
+  )
+}
 
 function MessageSection({ settings }: { settings: SettingsValue }): JSX.Element {
   const status = useAppStatus()
@@ -511,7 +546,6 @@ function MessageSection({ settings }: { settings: SettingsValue }): JSX.Element 
       el?.setSelectionRange(at + slot.length, at + slot.length)
     })
   }
-  const preview = template.replace(/\{name\}|\{role\}|\{company\}|\{job link\}/g, slot => `[${slot.slice(1, -1)}]`)
 
   return (
     <>
@@ -527,7 +561,7 @@ function MessageSection({ settings }: { settings: SettingsValue }): JSX.Element 
           onChange={event => setTemplate(event.target.value)}
         />
         {!isTemplateValid(template) && (
-          <span className="nx:typography-body-small nx:text-error-subtle-foreground">Only the four slots below can be in braces. Not saved until then.</span>
+          <span className="nx:typography-body-small nx:text-error-subtle-foreground">Only the five slots below can be in braces. Not saved until then.</span>
         )}
         {isSending && <span className="nx:typography-body-small nx:text-muted-foreground">Locked while referral messages are going out.</span>}
         <div className="nx:flex nx:flex-wrap nx:items-center nx:gap-2">
@@ -538,6 +572,7 @@ function MessageSection({ settings }: { settings: SettingsValue }): JSX.Element 
             </Button>
           ))}
         </div>
+        <span className="nx:typography-body-small nx:text-muted-foreground">A line with {'{job id}'} is left out when the job has no ID.</span>
       </div>
       <Rows
         items={[
@@ -549,10 +584,10 @@ function MessageSection({ settings }: { settings: SettingsValue }): JSX.Element 
           }),
         ]}
       />
-      <Group title="Preview">
-        <div className="nx:rounded-md nx:bg-muted nx:p-4 nx:typography-body-small nx:whitespace-pre-wrap">{preview || 'Nothing yet.'}</div>
-        <span className="nx:typography-body-small nx:text-muted-foreground">Sent word for word. Only the slots change for each person.</span>
-      </Group>
+      {SAMPLES.map(sample => (
+        <Preview key={sample.title} template={template} title={sample.title} values={sample.values} />
+      ))}
+      <span className="nx:typography-body-small nx:text-muted-foreground">Sent word for word. Only the slots change for each person.</span>
     </>
   )
 }

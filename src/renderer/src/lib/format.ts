@@ -65,3 +65,12 @@ export const capitalize = (text: string): string => (text ? text[0]!.toUpperCase
 
 /** "1 posting" or "3 postings". */
 export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`
+
+/** "KM", from "Karan Mehta": an avatar's letters. */
+export const initials = (name: string): string =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]!.toUpperCase())
+    .join('')

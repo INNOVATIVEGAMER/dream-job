@@ -129,7 +129,7 @@ type Fact = { label: string; value: string }
 /** What a flow hears when a form is sent: where, which written answers went, and whether the user pressed it. */
 export type Sent = { route: 'easy-apply' | 'company-site' | 'wellfound' | 'instahyre' | 'workatastartup' | 'weekday'; written: WrittenAnswer[]; edited: boolean; facts: Fact[]; byUser: boolean }
 
-/** What an apply run's tools saw and sent, for the flow to save on the row. */
+/** What an apply run's tools saw and sent, for the flow to save on the job. */
 export type ApplyRecord = {
   written: WrittenAnswer[]
   edited: boolean

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import type { EmailRef } from '../../shared/types'
-import { EmailStore } from '../db/email'
+import { Emails } from '../db/emails'
 import type { AnyTool, RunContext } from '../runs/engine'
 import { clickPoint, markSite, portalTool, refuse, say, sleep, waitFor } from './common'
 
@@ -98,7 +98,7 @@ export type EmailRun = { listed: Map<number, Listed>; opened: Set<string>; skipp
 
 export const newEmailRun = (): EmailRun => ({ listed: new Map(), opened: new Set(), skipped: 0, base: BASE })
 
-/** Where a change or a kept job came from, for the result screen and the row's notes. */
+/** Where a change came from, for the result screen and the job's notes. */
 export const refOf = (email: Listed): EmailRef => ({
   subject: email.subject || '(no subject)',
   from: email.fromEmail ? `${email.fromName} <${email.fromEmail}>` : email.fromName,
@@ -147,8 +147,8 @@ export function gmailTools(ctx: RunContext, run: EmailRun, count: number): AnyTo
         const newest = rows.slice(0, count)
         const fresh: Listed[] = []
         for (const row of newest) {
-          const key = EmailStore.keyOf(row.threadId, row.date)
-          if (ctx.store.email.isSeen(key)) {
+          const key = Emails.keyOf(row.threadId, row.date)
+          if (ctx.store.emails.isSeen(key)) {
             run.skipped++
             continue
           }

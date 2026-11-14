@@ -5,9 +5,9 @@ import { dialog, ipcMain, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 import { z } from 'zod'
 
-import type { Channel, OpportunityDetail, RunDetail } from '../shared/api'
+import type { Channel, JobDetail, RunDetail } from '../shared/api'
 import { cleanLink } from '../shared/links'
-import { CONTACT_STATES, HUNT_WINDOWS, PORTALS, SIGN_IN_SITES, SIGN_IN_URLS, STAGES, TRACKER_VIEWS, WORK_MODES } from '../shared/types'
+import { HUNT_WINDOWS, OUTREACH_STATES, PORTALS, SIGN_IN_SITES, SIGN_IN_URLS, SOURCES, STAGES, STATUSES, TRACKER_VIEWS, WORK_MODES } from '../shared/types'
 import type { AppStatus, DataTopic, ResumeInfo } from '../shared/types'
 import type { ChromeController } from './browser/chrome'
 import { findChrome } from './browser/chrome'
@@ -37,20 +37,19 @@ const id = z.number().int().positive()
 const page = z.number().int().min(0).max(100_000)
 const short = (max = 200) => z.string().max(max)
 
-const TrackerQuery = z.object({ status: short(), stage: short(), portal: short(), search: short(), page })
 const CompanyQuery = z.object({ view: z.enum(TRACKER_VIEWS), stage: short(), portal: short(), search: short(), modes: z.array(z.enum(WORK_MODES)).max(WORK_MODES.length).default([]) })
-const DiscardedQuery = z.object({ reason: short(), search: short(), page })
 const RunQuery = z.object({ flow: short(), portal: short(), page })
-const NewRow = z.object({
+const httpsLink = z.string().trim().url('Enter the link to the posting or the apply page.').max(2000).refine(url => /^https?:\/\//i.test(url), 'Use an https link.')
+const NewJob = z.object({
   company: z.string().trim().min(1, 'Enter the company.').max(200),
-  role: z.string().trim().min(1, 'Enter the role.').max(200),
   stage: z.enum(STAGES),
-  portal: short(),
-  link: short(1000),
-  mode: short(),
+  role: z.string().trim().min(1, 'Enter the role.').max(200),
+  link: httpsLink,
+  reqId: short(60).default(''),
+  status: z.enum(STATUSES).refine(status => status !== 'discarded', 'A new job starts at found or later.'),
+  portal: z.enum(SOURCES),
   workMode: z.enum(WORK_MODES).optional(),
   notes: short(10_000),
-  status: z.enum(['found', 'applied', 'replied', 'screen', 'onsite']),
 })
 const CardAnswerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('approve'), texts: z.array(z.string().max(20_000)).max(20) }),
@@ -60,8 +59,9 @@ const CardAnswerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('answer'), texts: z.array(z.string().max(2000)).max(20), save: z.boolean() }),
 ])
 const HuntOptions = z.object({ portals: z.array(z.enum(PORTALS)).min(1, 'Pick at least one portal.'), window: z.enum(HUNT_WINDOWS) })
-const ConnectOptions = z.object({ companies: z.array(short()).min(1, 'Pick at least one company.').max(30), perCompany: z.number().int().min(1).max(30) })
-const ReferralOptions = z.object({ companies: z.array(short()).min(1, 'Pick at least one company.').max(30) })
+// No cap on how many: each run splits the work into sessions and works through them a few at a time.
+const ConnectOptions = z.object({ companyIds: z.array(id).min(1, 'Pick at least one company.'), perCompany: z.number().int().min(1).max(30) })
+const ReferralOptions = z.object({ jobId: id, personIds: z.array(id).min(1, 'Pick at least one person.'), resume: z.boolean() })
 
 /** Counts the pages of a PDF from its page objects: close enough to tell 1 page from 2. */
 function pdfPages(path: string): number | null {
@@ -99,88 +99,73 @@ export function registerIpc(deps: IpcDeps): void {
 
     home: () => store.home(),
 
-    'tracker:page': query => store.opportunities.page(TrackerQuery.parse(query)),
-    'tracker:get': (rowId): OpportunityDetail | null => {
-      const opportunity = store.opportunities.get(id.parse(rowId))
-      if (!opportunity) return null
-      const contacts = CONTACT_STATES.flatMap(state => store.contacts.atCompany(opportunity.company, state))
-      const company = opportunity.companyId ? store.companies.get(opportunity.companyId) : null
-      const jobs = opportunity.companyId ? (store.companies.detail(opportunity.companyId)?.jobs.length ?? 1) : 1
-      return { opportunity, events: store.opportunities.events(opportunity.id), contacts, company, companyJobs: jobs }
+    'tracker:companies': query => store.trackerList(CompanyQuery.parse(query)),
+    'tracker:get': (jobId): JobDetail | null => store.jobDetail(id.parse(jobId)),
+    'tracker:setStatus': (jobId, status) => {
+      store.jobs.setStatus(id.parse(jobId), z.enum(STATUSES).parse(status))
+      deps.sendData(['jobs'])
     },
-    'tracker:companies': query => store.companies.list(CompanyQuery.parse(query)),
+    'tracker:setNotes': (jobId, notes) => {
+      store.jobs.setNotes(id.parse(jobId), short(20_000).parse(notes))
+      deps.sendData(['jobs'])
+    },
+    'tracker:setLinks': (jobId, links) => {
+      const link = z.union([z.literal(''), httpsLink])
+      const { postingLink, applyLink } = z.object({ postingLink: link, applyLink: link }).parse(links)
+      store.jobs.setLinksByUser(id.parse(jobId), postingLink ? cleanLink(postingLink) : null, applyLink ? cleanLink(applyLink) : null)
+      deps.sendData(['jobs'])
+    },
+    'tracker:setReqId': (jobId, reqId) => {
+      store.jobs.setReqId(id.parse(jobId), short(60).parse(reqId))
+      deps.sendData(['jobs'])
+    },
+    'tracker:setWorkMode': (jobId, workMode) => {
+      store.jobs.setWorkMode(id.parse(jobId), z.enum(WORK_MODES).parse(workMode))
+      deps.sendData(['jobs'])
+    },
+    'tracker:add': input => {
+      const job = NewJob.parse(input)
+      const jobId = store.transaction(() => store.jobs.addManual({ ...job, link: cleanLink(job.link) }))
+      deps.sendData(['jobs'])
+      return jobId
+    },
+    'tracker:restore': jobId => {
+      store.jobs.restore(id.parse(jobId))
+      deps.sendData(['jobs'])
+    },
 
-    'companies:get': companyId => store.companies.detail(id.parse(companyId)),
+    'companies:get': companyId => store.companyDetail(id.parse(companyId)),
     'companies:names': () => store.companies.names(),
     'companies:setStage': (companyId, stage) => {
       store.companies.setStage(id.parse(companyId), z.enum(STAGES).parse(stage))
-      deps.sendData(['opportunities'])
+      deps.sendData(['jobs'])
     },
     'companies:setNotes': (companyId, notes) => {
       store.companies.setNotes(id.parse(companyId), short(20_000).parse(notes))
-      deps.sendData(['opportunities'])
+      deps.sendData(['jobs'])
     },
     'companies:setNeverShow': (companyId, on, why) => {
       store.companies.setNeverShow(id.parse(companyId), z.boolean().parse(on), short(500).parse(why ?? ''))
-      deps.sendData(['opportunities', 'discarded'])
+      deps.sendData(['jobs'])
     },
     'companies:rename': (companyId, name) => {
       store.companies.rename(id.parse(companyId), short().parse(name))
-      deps.sendData(['opportunities', 'contacts', 'discarded'])
+      deps.sendData(['jobs', 'people'])
     },
     'companies:merge': (fromId, intoId) => {
-      store.companies.merge(id.parse(fromId), id.parse(intoId))
-      deps.sendData(['opportunities', 'contacts', 'discarded'])
+      store.transaction(() => store.companies.merge(id.parse(fromId), id.parse(intoId)))
+      deps.sendData(['jobs', 'people'])
     },
-    'tracker:setStatus': (rowId, status) => {
-      store.opportunities.setStatus(id.parse(rowId), short().parse(status))
-      deps.sendData(['opportunities'])
-    },
-    'tracker:setNotes': (rowId, notes) => {
-      store.opportunities.setNotes(id.parse(rowId), short(20_000).parse(notes))
-      deps.sendData(['opportunities'])
-    },
-    'tracker:setLinks': (rowId, links) => {
-      const link = z.union([z.literal(''), z.string().trim().url().max(2000).refine(url => /^https?:\/\//i.test(url), 'Use an https link.')])
-      const { postingLink, applyLink } = z.object({ postingLink: link, applyLink: link }).parse(links)
-      store.opportunities.setLinksByUser(id.parse(rowId), postingLink ? cleanLink(postingLink) : null, applyLink ? cleanLink(applyLink) : null)
-      deps.sendData(['opportunities'])
-    },
-    'tracker:setWorkMode': (rowId, workMode) => {
-      store.opportunities.setWorkMode(id.parse(rowId), z.enum(WORK_MODES).parse(workMode))
-      deps.sendData(['opportunities'])
-    },
-    'tracker:add': input => {
-      const row = NewRow.parse(input)
-      const existing = store.opportunities.findExisting(row.portal, '', row.company, row.role)
-      if (existing) throw new Error(`${existing.company}, ${existing.role} is already in the tracker. One route per role.`)
-      const rowId = store.transaction(() => {
-        const added = store.opportunities.addManual(row)
-        if (row.status !== 'found') store.opportunities.setStatus(added, row.status)
-        return added
-      })
-      deps.sendData(['opportunities'])
-      return rowId
-    },
-
-    'discarded:page': query => store.discarded.page(DiscardedQuery.parse(query)),
-    'discarded:restore': postingId => {
-      const rowId = store.restoreDiscarded(id.parse(postingId))
-      deps.sendData(['discarded', 'opportunities'])
-      return rowId
-    },
-    'discarded:neverShow': () => store.neverShow.list(),
-    'discarded:addNeverShow': (company, why) => {
+    'companies:neverShown': () => store.neverShow.list(),
+    'companies:addNeverShow': (company, why) => {
       store.neverShow.add(short().parse(company), short(500).parse(why))
-      deps.sendData(['discarded'])
-    },
-    'discarded:removeNeverShow': rowId => {
-      store.neverShow.remove(id.parse(rowId))
-      deps.sendData(['discarded'])
+      deps.sendData(['jobs'])
     },
 
-    'contacts:ready': () => store.readyCompanies(),
-    'contacts:get': contactId => store.contacts.get(id.parse(contactId)),
+    'outreach:setState': (outreachId, state) => {
+      store.setOutreachState(id.parse(outreachId), z.enum(OUTREACH_STATES).parse(state))
+      deps.sendData(['jobs', 'people'])
+    },
 
     'runs:page': query => store.runs.page(RunQuery.parse(query)),
     'runs:get': (runId): RunDetail | null => {
@@ -190,31 +175,21 @@ export function registerIpc(deps: IpcDeps): void {
     'runs:answer': (cardId, answer) => deps.engine.answer(short().parse(cardId), CardAnswerSchema.parse(answer)),
     'runs:stop': () => deps.engine.stop(),
     'runs:showTab': key => deps.engine.showTab(short().parse(key)),
-    'runs:jobs': runId => store.opportunities.byRun(id.parse(runId)),
+    'runs:jobs': runId => store.jobs.byRun(id.parse(runId)),
 
     'flows:hunt': options => deps.flows.hunt(HuntOptions.parse(options)),
-    'flows:apply': rowIds => deps.flows.apply(z.array(id).min(1).max(200).parse(rowIds)),
-    'flows:checkPostings': rowIds => deps.flows.checkPostings(z.array(id).max(1000).parse(rowIds ?? [])),
+    'flows:apply': jobIds => deps.flows.apply(z.array(id).min(1, 'Pick at least one job.').parse(jobIds)),
+    'flows:checkPostings': jobIds => deps.flows.checkPostings(z.array(id).parse(jobIds ?? [])),
     'flows:connect': options => deps.flows.connect(ConnectOptions.parse(options)),
-    'flows:refreshPeople': companyIds => deps.flows.refreshPeople(z.array(id).min(1, 'Pick at least one company.').max(30).parse(companyIds)),
+    'flows:refreshPeople': companyIds => deps.flows.refreshPeople(z.array(id).min(1, 'Pick at least one company.').parse(companyIds)),
     'flows:referral': options => deps.flows.referral(ReferralOptions.parse(options)),
     'flows:checkAccepted': () => deps.flows.checkAccepted(),
     'flows:email': options => deps.flows.email(z.object({ count: z.number().int().optional() }).parse(options ?? {})),
 
     'email:detail': runId => store.emailDetail(id.parse(runId)),
-    'email:undo': changeId => {
-      store.undoEmailChange(id.parse(changeId))
-      deps.sendData(['email', 'opportunities', 'contacts'])
-    },
-    'email:waiting': () => store.email.waiting(),
-    'email:add': waitingId => {
-      const rowId = store.addEmailJob(id.parse(waitingId))
-      deps.sendData(['email', 'opportunities'])
-      return rowId
-    },
-    'email:ignore': waitingId => {
-      store.email.setWaiting(id.parse(waitingId), 'ignored')
-      deps.sendData(['email'])
+    'email:undo': activityId => {
+      store.undoEmailChange(id.parse(activityId))
+      deps.sendData(['email', 'jobs', 'people'])
     },
 
     'settings:get': () => store.settings.all(),

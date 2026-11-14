@@ -49,16 +49,44 @@ export type ClaudeStatus = {
 /* Tracker                                                             */
 /* ------------------------------------------------------------------ */
 
-/** The tracker's statuses, in the order an opportunity moves through them. */
-export const STATUSES = ['found', 'applied', 'outreach', 'replied', 'screen', 'onsite', 'offer', 'rejected', 'dead'] as const
+/**
+ * A job's life: found by a hunt or by you, or discarded when a hunt rules it
+ * out; then applied, outreached once its first referral message goes,
+ * referred when someone refers you, interview, and an end. Steps can be
+ * skipped, and rejected or dead can end a job at any stage.
+ */
+export const STATUSES = ['found', 'discarded', 'applied', 'outreached', 'referred', 'interview', 'offer', 'rejected', 'dead'] as const
 export type Status = (typeof STATUSES)[number]
+
+export const STATUS_NAMES: Record<Status, string> = {
+  found: 'Found',
+  discarded: 'Discarded',
+  applied: 'Applied',
+  outreached: 'Outreached',
+  referred: 'Referred',
+  interview: 'Interview',
+  offer: 'Offer',
+  rejected: 'Rejected',
+  dead: 'Dead',
+}
+
+export const isStatus = (value: string): value is Status => (STATUSES as readonly string[]).includes(value)
+
+/** Past applying and still in play: referral asks and connection requests point at these. */
+export const ACTIVE_STATUSES: readonly Status[] = ['applied', 'outreached', 'referred', 'interview', 'offer']
 
 export const STAGES = ['startup', 'scaleup', 'large'] as const
 export type Stage = (typeof STAGES)[number]
 
-/** The portals the app drives. Rows from before the app keep whatever source they came from. */
+/** The portals the app drives. */
 export const PORTALS = ['linkedin', 'wellfound', 'instahyre', 'jsgurujobs', 'onlyfrontendjobs', 'workatastartup', 'weekday'] as const
 export type Portal = (typeof PORTALS)[number]
+
+/** Where a job came from: one of the portals, or added by you. */
+export const SOURCES = [...PORTALS, 'manual'] as const
+export type Source = (typeof SOURCES)[number]
+
+export const isSource = (value: string): value is Source => (SOURCES as readonly string[]).includes(value)
 
 /** Portals whose own tools are built so far; the hunt runs only on these. */
 export const HUNT_PORTALS: readonly Portal[] = PORTALS
@@ -72,6 +100,8 @@ export const PORTAL_NAMES: Record<Portal, string> = {
   workatastartup: 'Work at a Startup',
   weekday: 'Weekday',
 }
+
+export const SOURCE_NAMES: Record<Source, string> = { ...PORTAL_NAMES, manual: 'Added by you' }
 
 /**
  * The sites the user signs in to in the app's Chrome: Google, for "Continue
@@ -121,83 +151,103 @@ export function workModeOf(text: string): WorkMode {
   return 'not-stated'
 }
 
-/** One opportunity as a table row shows it. */
-export type TrackerRow = {
+/** Whether the posting was open the last time a run read it, or could not be read. */
+export type PostingState = 'open' | 'closed' | 'unreadable'
+
+export const DISCARD_REASONS = ['below-floor', 'over-ceiling', 'skipped-role', 'location', 'closed', 'other'] as const
+export type DiscardReason = (typeof DISCARD_REASONS)[number]
+
+export const DISCARD_REASON_NAMES: Record<DiscardReason, string> = {
+  'below-floor': 'Below your floor',
+  'over-ceiling': 'Over your ceiling',
+  'skipped-role': 'A role you skip',
+  location: 'Location',
+  closed: 'Closed',
+  other: 'Other',
+}
+
+/** One job as the tracker's rows show it. Its company's name comes from Companies. */
+export type JobRow = {
   id: number
+  companyId: number
   company: string
   role: string
-  stage: string
-  score: number | null
-  status: string
-  lastTouch: string
-  nextAction: string
-  portal: string
-  jobId: string
+  status: Status
+  portal: Source
+  /** Where the application goes. */
   link: string | null
-  postingState: string | null
-  workMode: WorkMode
-  /** The fewest years of experience the job asks for, as read from the posting; null when it doesn't say or hasn't been read. */
-  minYears: number | null
-  /** The posting on the platform it was found on; `link` is where the application goes. Either may be missing on an old job. */
+  /** The posting on its portal; how a hunt recognises a posting it has seen. */
   portalLink: string | null
-  /** The company it belongs to. */
-  companyId?: number | null
+  postingState: PostingState | null
+  workMode: WorkMode
+  /** The fewest years of experience the job asks for, read from the posting; null when it doesn't say or hasn't been read. */
+  minYears: number | null
+  score: number | null
+  /** Why a hunt ruled it out, for a discarded job. */
+  discardReason: DiscardReason | null
+  /** The posting's own words that ruled it out, quoted exactly. */
+  discardLine: string | null
+  /** When anything last happened to it: its newest Activity row. */
+  updated: string
 }
 
-/** Everything about one opportunity, for its own screen. */
-export type Opportunity = TrackerRow & {
+/** Everything about one job, for its own page. */
+export type Job = JobRow & {
   found: string
-  mode: string
-  applicants: string
-  referral: string
-  notes: string
-  pay: string | null
-  experience: string | null
+  /** The company's own id for the job, as the posting states it; referral messages include it. */
+  reqId: string | null
   applyRoute: string | null
-  scoreReasons: string[]
   postingChecked: string | null
   postingNote: string | null
+  pay: string | null
+  applicants: string
+  scoreReasons: string[]
+  notes: string
 }
 
-/** One line of an opportunity's history. */
-export type OpportunityEvent = { id: number; at: string; text: string; runId: number | null }
-
-export type TrackerQuery = {
-  status: string
-  stage: string
-  /** A v1 portal, `other` for everything else, or `all`. */
-  portal: string
-  search: string
-  page: number
-}
-
-/** One page of the tracker, with the counts the filters show. */
-export type TrackerPage = {
-  rows: TrackerRow[]
-  /** Rows matching the filters. */
-  total: number
-  /** Rows in the whole tracker. */
-  all: number
-  counts: Record<string, number>
-  page: number
-  pages: number
-  pageSize: number
+/** A job you add by hand, such as one a recruiter called about. It needs a link. */
+export type NewJob = {
+  company: string
+  stage: Stage
+  role: string
+  link: string
+  reqId: string
+  status: Status
+  portal: Source
+  workMode?: WorkMode
+  notes: string
 }
 
 /* ------------------------------------------------------------------ */
-/* Companies: what every job, contact and email belongs to             */
+/* Companies: what every job, person and email belongs to              */
 /* ------------------------------------------------------------------ */
 
-/** The tracker's views, each a set of job statuses. */
-export const TRACKER_VIEWS = ['found', 'applied', 'interviewing', 'closed', 'all'] as const
+/** The tracker's views, each a set of job statuses. All leaves out Discarded. */
+export const TRACKER_VIEWS = ['found', 'applied', 'outreached', 'referred', 'interview', 'offer', 'closed', 'discarded', 'all'] as const
 export type TrackerView = (typeof TRACKER_VIEWS)[number]
 
-export const VIEW_STATUSES: Record<TrackerView, readonly Status[] | null> = {
+export const VIEW_STATUSES: Record<TrackerView, readonly Status[]> = {
   found: ['found'],
-  applied: ['applied', 'outreach', 'replied'],
-  interviewing: ['screen', 'onsite', 'offer'],
+  applied: ['applied'],
+  outreached: ['outreached'],
+  referred: ['referred'],
+  interview: ['interview'],
+  offer: ['offer'],
   closed: ['rejected', 'dead'],
-  all: null,
+  discarded: ['discarded'],
+  all: STATUSES.filter(status => status !== 'discarded'),
+}
+
+export const TRACKER_VIEW_NAMES: Record<TrackerView, string> = {
+  found: 'Found',
+  applied: 'Applied',
+  outreached: 'Outreached',
+  referred: 'Referred',
+  interview: 'Interview',
+  offer: 'Offer',
+  closed: 'Closed',
+  discarded: 'Discarded',
+  all: 'All',
 }
 
 /**
@@ -205,15 +255,7 @@ export const VIEW_STATUSES: Record<TrackerView, readonly Status[] | null> = {
  * applied to that haven't reached an interview. A closed posting kills a
  * found job, but only gets a note on one already applied to.
  */
-export const CHECK_STATUSES: readonly Status[] = ['found', 'applied', 'outreach', 'replied']
-
-export const TRACKER_VIEW_NAMES: Record<TrackerView, string> = {
-  found: 'Found',
-  applied: 'Applied',
-  interviewing: 'Interviewing',
-  closed: 'Closed',
-  all: 'All',
-}
+export const CHECK_STATUSES: readonly Status[] = ['found', 'applied', 'outreached', 'referred']
 
 export type Company = {
   id: number
@@ -230,20 +272,23 @@ export type Company = {
   added: string
 }
 
+/** Who you know at a company now: connections, and requests still out. */
+export type PeopleCount = { connected: number; requested: number }
+
 /** One company as the tracker lists it, with the jobs the view shows. */
 export type CompanyRow = {
   id: number
   name: string
   stage: string
   /** The status of its job furthest along; a closed job counts only when all are closed. */
-  status: string
+  status: Status
   bestScore: number | null
   updated: string
   /** All its jobs, whatever the view. */
   jobCount: number
-  referral: Record<ContactState, number>
+  people: PeopleCount
   neverShow: boolean
-  jobs: TrackerRow[]
+  jobs: JobRow[]
 }
 
 /** `modes` empty means every work mode. */
@@ -255,104 +300,88 @@ export type CompanyList = {
   counts: Record<TrackerView, number>
   totalCompanies: number
   totalJobs: number
+  discardedJobs: number
 }
 
-/** One line of a company's history: from one of its jobs, or its people. */
-export type CompanyEvent = { key: string; at: string; kind: 'job' | 'contact'; text: string; jobId: number | null; runId: number | null }
-
-export type CompanyDetail = { company: Company; jobs: TrackerRow[]; contacts: Contact[]; events: CompanyEvent[] }
-
-/** A row the user adds by hand, such as a recruiter who called. */
-export type NewOpportunity = {
-  company: string
-  role: string
-  stage: Stage
-  portal: string
-  link: string
-  mode: string
-  /** Not stated when left out. */
-  workMode?: WorkMode
-  notes: string
+/** One person at a company, as its page lists them: where they stand, and what each was asked. */
+export type CompanyPerson = Person & {
+  /** Whether they work there now; people who left stay listed after the current ones. */
+  current: boolean
+  /** When the request went, for someone not connected yet. */
+  requested: string | null
+  asked: { outreachId: number; jobId: number; role: string; state: OutreachState; sent: string }[]
 }
 
-/* ------------------------------------------------------------------ */
-/* Discarded and never show again                                      */
-/* ------------------------------------------------------------------ */
-
-export const DISCARD_REASONS = ['below-floor', 'over-ceiling', 'skipped-role', 'location', 'closed', 'other'] as const
-export type DiscardReason = (typeof DISCARD_REASONS)[number]
-
-export const DISCARD_REASON_NAMES: Record<DiscardReason, string> = {
-  'below-floor': 'Below your floor',
-  'over-ceiling': 'Over your ceiling',
-  'skipped-role': 'A role you skip',
-  location: 'Location',
-  closed: 'Closed',
-  other: 'Other',
-}
-
-export type DiscardedPosting = {
-  id: number
-  at: string
-  company: string
-  role: string
-  portal: string
-  jobId: string
-  link: string | null
-  /** The posting's own words that ruled it out, quoted exactly. */
-  line: string
-  reason: DiscardReason
-  runId: number | null
-}
-
-export type DiscardedQuery = { reason: string; search: string; page: number }
-
-export type DiscardedPage = { rows: DiscardedPosting[]; total: number; page: number; pages: number; pageSize: number }
+export type CompanyDetail = { company: Company; jobs: JobRow[]; people: CompanyPerson[]; activity: Activity[] }
 
 export type NeverShowCompany = { id: number; company: string; why: string; added: string }
 
 /* ------------------------------------------------------------------ */
-/* Contacts                                                            */
+/* People, where they work, and what they were asked                   */
 /* ------------------------------------------------------------------ */
 
-/**
- * Where a person stands with the user: a request sent, or connected. What
- * happens after (a referral message) is a date on the person, not a status.
- */
-export const CONTACT_STATES = ['pending', 'accepted'] as const
-export type ContactState = (typeof CONTACT_STATES)[number]
+/** The LinkedIn connection: a request sent, or connected. It follows the person wherever they work. */
+export const PERSON_STATES = ['requested', 'connected'] as const
+export type PersonState = (typeof PERSON_STATES)[number]
 
-export const CONTACT_STATE_NAMES: Record<ContactState, string> = { pending: 'Request sent', accepted: 'Connected' }
+export const PERSON_STATE_NAMES: Record<PersonState, string> = { requested: 'Request sent', connected: 'Connected' }
 
 /** New connection requests one click sends at each company. */
 export const REQUESTS_PER_COMPANY = 10
 
-export type Contact = {
+export type Person = {
   id: number
   name: string
-  role: string
-  company: string
+  headline: string
   profileUrl: string
-  sent: string
-  state: ContactState
-  acceptedAt: string | null
-  /** When the referral message went: it goes to each person once. */
-  messagedAt: string | null
-  referredAt: string | null
-  companyId?: number | null
+  state: PersonState
 }
 
-/** A company with accepted connections waiting for the referral message. */
-export type ReadyCompany = {
-  company: string
-  accepted: number
-  pending: number
-  /** Enough accepted for a batch; otherwise it waits, unless the user sends anyway. */
-  isReady: boolean
-  /** The applied row the message points at, when there is one. */
-  opportunityId: number | null
-  role: string | null
-  appliedOn: string | null
+/** Where a person works: one row per person and company. A move adds one; leaving closes it. */
+export type Position = { personId: number; companyId: number; current: boolean }
+
+/** Where a referral ask stands. You set it; the email check leaves it alone. */
+export const OUTREACH_STATES = ['sent', 'replied', 'referred', 'declined'] as const
+export type OutreachState = (typeof OUTREACH_STATES)[number]
+
+export const OUTREACH_STATE_NAMES: Record<OutreachState, string> = { sent: 'Sent', replied: 'Replied', referred: 'Referred', declined: 'Declined' }
+
+/** One referral message: a person at a company, asked about one of its jobs. */
+export type Outreach = {
+  id: number
+  jobId: number
+  personId: number
+  message: string
+  resume: boolean
+  state: OutreachState
+  sent: string
+}
+
+/** An ask as a job's page lists it, with the person it went to. */
+export type JobOutreach = Outreach & { name: string; headline: string; profileUrl: string; current: boolean }
+
+/* ------------------------------------------------------------------ */
+/* Activity: what happened, and what caused it                         */
+/* ------------------------------------------------------------------ */
+
+export const ACTIVITY_KINDS = ['status', 'request-sent', 'connected', 'outreach', 'joined', 'left', 'note'] as const
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number]
+
+/** One thing that happened to a job, a person or an outreach, with the run or email that caused it. */
+export type Activity = {
+  id: number
+  at: string
+  kind: ActivityKind
+  jobId: number | null
+  personId: number | null
+  /** For a person's rows, the company it happened at. */
+  companyId: number | null
+  fromState: string | null
+  toState: string | null
+  text: string
+  runId: number | null
+  emailId: number | null
+  undone: boolean
 }
 
 /* ------------------------------------------------------------------ */
@@ -433,7 +462,7 @@ export type Profile = {
 }
 
 export type ReferralMessage = {
-  /** The approved wording, with {name}, {role}, {company} and {job link} slots. */
+  /** The approved wording, with {name}, {role}, {company}, {job id} and {job link} slots. A line with {job id} drops out when the job has none. */
   template: string
   attachResume: boolean
 }
@@ -602,7 +631,7 @@ export type RunSummary = {
   flow: Flow
   title: string
   portal: string | null
-  opportunityId: number | null
+  jobId: number | null
   started: string
   ended: string | null
   status: RunStatus
@@ -694,7 +723,7 @@ export type RunLane = {
   title: string
   subtitle: string | null
   portal: string | null
-  opportunityId: number | null
+  jobId: number | null
   status: LaneStatus
   started: string | null
   ended: string | null
@@ -716,7 +745,7 @@ export type RunState = {
   title: string
   subtitle: string | null
   portal: string | null
-  opportunityId: number | null
+  jobId: number | null
   status: RunStatus
   started: string
   model: string | null
@@ -782,25 +811,29 @@ export type ResumeImport = {
 }
 
 /** The kinds of data a screen shows; main says which changed so screens reload. */
-export type DataTopic = 'opportunities' | 'discarded' | 'contacts' | 'runs' | 'settings' | 'answers' | 'sites' | 'email'
+export type DataTopic = 'jobs' | 'people' | 'runs' | 'settings' | 'answers' | 'sites' | 'email'
 
 /* ------------------------------------------------------------------ */
 /* Email check                                                         */
 /* ------------------------------------------------------------------ */
 
-/** The email a change or a waiting job came from. */
+/** An email, as a change names it. */
 export type EmailRef = { subject: string; from: string; date: string; link: string }
 
-/** One change an email check made: a tracker row's status, or a contact's state. */
+/** What the check did with an email: skipped (not about anything you track) or matched (about a job or a person you track). */
+export const EMAIL_OUTCOMES = ['skipped', 'matched'] as const
+export type EmailOutcome = (typeof EMAIL_OUTCOMES)[number]
+
+/** One change an email check made, from the Activity rows that name their email. */
 export type EmailChange = {
+  /** The Activity row's id: undoing the change undoes it. */
   id: number
-  runId: number | null
   at: string
-  kind: 'row' | 'contact'
+  kind: 'job' | 'person'
   targetId: number
-  /** The row's company, or the contact's name. */
+  /** The job's company, or the person's name. */
   title: string
-  /** The row's role, or the contact's company. */
+  /** The job's role, or the person's company. */
   subtitle: string
   from: string
   to: string
@@ -809,26 +842,15 @@ export type EmailChange = {
   undone: boolean
 }
 
-/** An email about a job the tracker does not have, kept for the user. */
-export type EmailWaiting = {
-  id: number
-  runId: number | null
-  at: string
-  company: string
-  role: string
-  summary: string
-  email: EmailRef
-  state: 'waiting' | 'added' | 'ignored'
-}
-
 /** One email check: what it read and what it changed. */
 export type EmailRunDetail = {
   run: RunSummary
+  /** Emails it looked at. */
   listed: number
-  opened: number
+  /** Of those, about a job or person you track. */
+  matched: number
   changes: EmailChange[]
-  waiting: EmailWaiting[]
 }
 
 /** Home's line on the email check. */
-export type EmailSummary = { lastRunId: number | null; lastChecked: string | null; moved: number; waiting: number }
+export type EmailSummary = { lastRunId: number | null; lastChecked: string | null; moved: number }

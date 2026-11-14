@@ -65,8 +65,8 @@ function RunPage({ id }: { id: number }): JSX.Element {
               See what changed
             </Button>
           )}
-          {summary.opportunityId && (
-            <Button variant="outline" size="sm" onClick={() => go(`/opportunity/${summary.opportunityId}`)}>
+          {summary.jobId && (
+            <Button variant="outline" size="sm" onClick={() => go(`/job/${summary.jobId}`)}>
               Open job
             </Button>
           )}

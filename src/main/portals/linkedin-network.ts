@@ -2,10 +2,9 @@ import { basename } from 'node:path'
 
 import { z } from 'zod'
 
+import { fillTemplate, firstName } from '../../shared/referral'
 import type { Company } from '../../shared/types'
 import { namedResume, say } from '../browser/tools'
-import { profileKey } from '../db/contacts'
-import { fillTemplate } from '../db/settings'
 import type { AnyTool, RunContext } from '../runs/engine'
 import { clickPoint, markSite, portalTool, refuse, SCROLL_TO_END, sleep, waitFor } from './common'
 
@@ -275,15 +274,6 @@ const linesOf = (text: string): string[] =>
     .map(line => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
 
-/** The first name a message opens with: the first real word of the name, not an initial or a title. */
-export function firstName(full: string): string {
-  const words = full.replace(/\(.*?\)|,.*$/g, ' ').split(/\s+/).filter(Boolean)
-  const isInitial = (one: string): boolean => /^\p{L}\.?$/u.test(one)
-  const isTitle = (one: string): boolean => /^(dr|mr|mrs|ms|prof|er|ca|adv)\.?$/i.test(one)
-  const word = words.find(one => /^\p{L}/u.test(one) && !isInitial(one) && !isTitle(one)) ?? words[0] ?? ''
-  return word.charAt(0).toUpperCase() + word.slice(1)
-}
-
 async function clearBox(ctx: RunContext): Promise<void> {
   await ctx.chrome
     .evaluate(`(() => { const { ed } = ${BOX}; if (!ed) return; ed.focus(); document.execCommand('selectAll'); document.execCommand('delete'); })()`, true)
@@ -319,12 +309,16 @@ async function connectionsAt(ctx: RunContext, companyId: string): Promise<{ peop
   return { people, signedOut: false }
 }
 
+/** What a referral session sends: the message about one job, to the people picked. */
+export type MessagePlan = { jobId: number; personIds: number[]; resume: boolean }
+
 /**
- * LinkedIn's network tools for the referral track. Connect gets find_people
- * and send_blank_request; checking gets list_new_connections; a company's
- * refresh gets company_connections; the referral run gets send_referral_message.
+ * LinkedIn's network tools for the referral track. A connect session at one
+ * company gets find_people and send_blank_request; checking gets
+ * list_new_connections; a company's refresh gets company_connections; a
+ * referral session gets send_referral_message for one job.
  */
-export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean; check?: boolean; message?: boolean; people?: Company }): AnyTool[] {
+export function linkedinNetworkTools(ctx: RunContext, which: { connect?: Company; check?: boolean; message?: MessagePlan; people?: Company }): AnyTool[] {
   const tools: AnyTool[] = []
   const { store } = ctx
 
@@ -335,7 +329,7 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
         ctx,
         'linkedin',
         'company_connections',
-        `Read the user's LinkedIn connections who work at ${company.name} now. Each one becomes a connected person at the company, and requests they had pending move to connected. Answers who was added and who accepted.`,
+        `Read the user's LinkedIn connections who work at ${company.name} now. Each one is recorded as working there and connected, and requests they had pending move to connected. Answers who was added and who accepted.`,
         {},
         async () => {
           const slug = await companySlug(ctx, company)
@@ -353,23 +347,28 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
 
           const added: string[] = []
           const accepted: string[] = []
-          for (const person of result.people) {
-            const url = profileUrl(person.vanity)
-            const known = store.contacts.byProfile(url)
-            if (known) {
-              if (known.state === 'pending') {
-                store.contacts.setState(known.id, 'accepted')
+          const joined: string[] = []
+          store.transaction(() => {
+            for (const found of result.people) {
+              const url = profileUrl(found.vanity)
+              const known = store.people.byProfile(url)
+              if (!known) {
+                store.people.addConnected({ name: found.name, headline: found.headline, profileUrl: url, companyId: company.id }, ctx.runId)
+                added.push(found.name)
+                continue
+              }
+              store.people.setHeadline(known.id, found.headline)
+              if (store.people.join(known.id, company.id, ctx.runId)) joined.push(known.name)
+              if (known.state === 'requested') {
+                store.people.setState(known.id, 'connected', { runId: ctx.runId, companyId: company.id })
                 accepted.push(known.name)
               }
-              continue
             }
-            store.contacts.addAccepted({ name: person.name, role: person.headline, company: company.name, profileUrl: url }, ctx.runId)
-            added.push(person.name)
-          }
-          if (added.length || accepted.length) {
+          })
+          if (added.length || accepted.length || joined.length) {
             ctx.count('added', added.length)
             ctx.count('accepted', accepted.length)
-            ctx.changed('contacts')
+            ctx.changed('people')
           }
           ctx.log('good', `${company.name}: ${result.people.length} connections there, ${added.length} new, ${accepted.length} accepted`)
           return say(
@@ -377,7 +376,10 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
               `${result.people.length} of the user's connections work at ${company.name} (/company/${slug}/).`,
               added.length ? `Added as connected: ${added.join('; ')}.` : 'Nobody new to add.',
               accepted.length ? `Accepted a request: ${accepted.join('; ')}.` : 'No pending request was accepted.',
-            ].join('\n'),
+              joined.length ? `Now recorded at ${company.name} too: ${joined.join('; ')}.` : '',
+            ]
+              .filter(Boolean)
+              .join('\n'),
           )
         },
       ),
@@ -385,27 +387,29 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
   }
 
   if (which.connect) {
+    const company = which.connect
     tools.push(
       portalTool(
         ctx,
         'linkedin',
         'find_people',
-        'List people at a company on LinkedIn whose profiles match the keywords, such as a field or a title: name, degree, headline, and whether a connection request can go. People already in the app\'s contacts are left out. Give the company\'s LinkedIn page (read_job gives it) or, without one, its name.',
+        'List people at a company on LinkedIn whose profiles match the keywords, such as a field or a title: name, degree, headline, and whether a connection request can go. People the user already knows are left out. Give the company\'s LinkedIn page (read_job gives it) or, without one, its name.',
         {
           company: z.string().min(1).max(200).describe('The company\'s name'),
           company_page: z.string().max(300).optional().describe('Its LinkedIn page link, linkedin.com/company/<slug>/...'),
           keywords: z.string().max(100).describe('Words their profiles should match, such as "frontend engineer"'),
           more: z.number().int().min(0).max(4).optional().describe('How many times to load more results, 0 by default'),
         },
-        async ({ company, company_page, keywords, more }) => {
-          let slug = company_page ? slugOf(company_page) : null
+        async ({ company: name, company_page, keywords, more }) => {
+          let slug = company_page ? slugOf(company_page) : company.linkedinUrl ? slugOf(company.linkedinUrl) : null
           if (!slug) {
-            await ctx.chrome.openPage(`https://www.linkedin.com/search/results/companies/?${new URLSearchParams({ keywords: company }).toString()}`)
+            await ctx.chrome.openPage(`https://www.linkedin.com/search/results/companies/?${new URLSearchParams({ keywords: name }).toString()}`)
             await waitFor(ctx, `document.querySelector('main a[href*="/company/"]')`, 8000)
-            const found = await ctx.chrome.evaluate<{ slug?: string | null; none?: boolean; seen?: string[] }>(COMPANY_SEARCH(company))
-            if (!found.slug) return refuse(`No LinkedIn company page matched "${company}". Pass its page as company_page, or skip this company.`)
+            const found = await ctx.chrome.evaluate<{ slug?: string | null; none?: boolean; seen?: string[] }>(COMPANY_SEARCH(name))
+            if (!found.slug) return refuse(`No LinkedIn company page matched "${name}". Pass its page as company_page, or finish.`)
             slug = found.slug
           }
+          if (!company.linkedinUrl) store.companies.setLinks(company.id, { linkedinUrl: `https://www.linkedin.com/company/${slug}/` })
           await ctx.chrome.openPage(`https://www.linkedin.com/company/${slug}/people/?${new URLSearchParams({ keywords }).toString()}`)
           await waitFor(ctx, `document.querySelector('main li a[href*="/in/"]') || /Page not found|0 associated members|No results/i.test(document.body.innerText)`, 10_000)
           for (let i = 0; i < (more ?? 0); i++) {
@@ -418,10 +422,10 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
           markSite(ctx, 'linkedin', result.signedOut ? 'signed-out' : 'signed-in')
           if (result.signedOut) return refuse('LinkedIn is signed out in the app\'s Chrome. Call hand_to_user with what "sign-in", then try again.')
           if (result.notFound) return refuse(`LinkedIn has no company page at /company/${slug}/.`)
-          const fresh = result.people.filter(person => !store.contacts.isKnown(profileUrl(person.vanity)))
+          const fresh = result.people.filter(person => !store.people.isKnown(profileUrl(person.vanity)))
           return say(
             [
-              `${company} on LinkedIn (/company/${slug}/), people matching "${keywords}": ${result.people.length} shown, ${fresh.length} not yet in contacts.`,
+              `${name} on LinkedIn (/company/${slug}/), people matching "${keywords}": ${result.people.length} shown, ${fresh.length} the user doesn't know yet.`,
               ...fresh.map(person =>
                 [`${person.vanity}`, person.name, person.degree || 'degree unknown', person.headline, person.action === 'connect' || person.action === 'follow' ? 'can connect' : person.action === 'pending' ? 'request already pending' : person.degree === '1st' ? 'already connected' : person.action]
                   .filter(Boolean)
@@ -436,22 +440,26 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
         ctx,
         'linkedin',
         'send_blank_request',
-        'Send one person a LinkedIn connection request with no note: never a note, whatever the dialog suggests. Someone already connected is recorded as accepted, and a request already pending as pending, without sending anything.',
+        `Send one person at ${company.name} a LinkedIn connection request with no note: never a note, whatever the dialog suggests. Someone already connected is recorded as connected, and a request already pending as sent, without sending anything.`,
         {
           profile: z.string().max(300).describe('Their profile link, or the vanity name find_people gives'),
           name: z.string().min(1).max(120),
-          headline: z.string().max(300).describe('Their headline, for the contact record'),
-          company: z.string().min(1).max(200).describe('The company they are at, as the tracker names it'),
+          headline: z.string().max(300).describe('Their headline, for the record'),
         },
-        async ({ profile, name, headline, company }) => {
+        async ({ profile, name, headline }) => {
           // LinkedIn's limit holds for the whole account: once one session meets it, none sends again.
           const halted = ctx.halted()
           if (halted) return refuse(`${halted}. Stop sending requests and finish.`)
           const vanity = vanityOf(profile)
           if (!vanity) return refuse('That is not a LinkedIn profile.')
           const url = profileUrl(vanity)
-          if (store.contacts.isKnown(url)) return say(`${name} is already in contacts.`)
-          const contact = { name, role: headline, company, profileUrl: url }
+          const person = { name, headline, profileUrl: url, companyId: company.id }
+          const known = store.people.byProfile(url)
+          if (known) {
+            const joined = store.people.join(known.id, company.id, ctx.runId)
+            if (joined) ctx.changed('people')
+            return say(`${name} is already someone the user knows${joined ? `, now recorded at ${company.name} too` : ''}.`)
+          }
 
           await ctx.chrome.openPage(`https://www.linkedin.com/preload/custom-invite/?${new URLSearchParams({ vanityName: vanity }).toString()}`)
           await waitFor(ctx, `[...document.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]')].some(d => d.getBoundingClientRect().width > 0)`, 6000)
@@ -475,10 +483,10 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
               if (!after.send && after.dismiss) await clickPoint(ctx, after.dismiss)
               return refuse(`The request to ${name} did not go. LinkedIn says: "${(after.text ?? '').slice(0, 160)}". Skipped.`)
             }
-            store.contacts.addPending(contact, ctx.runId)
+            store.people.addRequested(person, ctx.runId)
             ctx.count('sent')
-            ctx.changed('contacts')
-            ctx.log('good', `Request sent to ${name} at ${company}`)
+            ctx.changed('people')
+            ctx.log('good', `Request sent to ${name} at ${company.name}`)
             return say(`Sent: a blank request to ${name}.`)
           }
           if (!invite.none) {
@@ -491,24 +499,24 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
           const page = await ctx.chrome.evaluate<Profile>(PROFILE_SCRIPT)
           if (page.signedOut) return refuse('LinkedIn is signed out in the app\'s Chrome. Call hand_to_user with what "sign-in", then try again.')
           if (page.degree === '1st') {
-            store.contacts.addAccepted(contact, ctx.runId)
+            store.people.addConnected(person, ctx.runId)
             ctx.count('accepted')
-            ctx.changed('contacts')
+            ctx.changed('people')
             return say(`${name} is already a connection: recorded as connected, ready for the referral message.`)
           }
           if (page.pending) {
-            store.contacts.addPending(contact, ctx.runId)
-            ctx.changed('contacts')
-            return say(`A request to ${name} was already pending: recorded as pending.`)
+            store.people.addRequested(person, ctx.runId)
+            ctx.changed('people')
+            return say(`A request to ${name} was already pending: recorded as sent.`)
           }
           return refuse(`LinkedIn offered no connection request for ${name}. Skipped.`)
         },
         {
           steps: ({ name, profile }) => [`In Chrome, open ${name}'s profile (${profile})`, 'Press Connect, then Send without a note', 'Come back here and press Continue'],
-          afterUser: async ({ profile, name, headline, company }) => {
+          afterUser: async ({ profile, name, headline }) => {
             const vanity = vanityOf(profile)
-            if (vanity) store.contacts.addPending({ name, role: headline, company, profileUrl: profileUrl(vanity) }, ctx.runId)
-            ctx.changed('contacts')
+            if (vanity) store.people.addRequested({ name, headline, profileUrl: profileUrl(vanity), companyId: company.id }, ctx.runId)
+            ctx.changed('people')
             return say(`The user sent the request to ${name}.`)
           },
         },
@@ -522,13 +530,13 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
         ctx,
         'linkedin',
         'list_new_connections',
-        'Read the user\'s newest LinkedIn connections, back to the oldest pending request, and move everyone who accepted from pending to accepted. Answers who accepted.',
+        'Read the user\'s newest LinkedIn connections, back to the oldest request still out, and move everyone who accepted to connected. Answers who accepted.',
         {},
         async () => {
-          const pending = store.contacts.pending()
-          if (pending.length === 0) return say('Nobody is pending: there is nothing to check.')
-          const oldest = pending.map(contact => contact.sent).sort()[0]!
-          const cutoff = new Date(`${oldest}T00:00:00`).getTime() - 2 * 86_400_000
+          const waiting = store.people.requested()
+          if (waiting.length === 0) return say('Nobody has a request out: there is nothing to check.')
+          const dates = waiting.map(person => Date.parse(person.requested ?? '')).filter(at => !Number.isNaN(at))
+          const cutoff = (dates.length ? Math.min(...dates) : Date.now()) - 2 * 86_400_000
 
           await ctx.chrome.openPage('https://www.linkedin.com/mynetwork/invite-connect/connections/')
           await waitFor(ctx, `/Connected on/.test((document.querySelector('main') || document.body).innerText) || ${SIGNED_OUT}`, 10_000)
@@ -552,20 +560,22 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
           }
 
           const accepted: string[] = []
-          for (const person of result.people) {
-            const contact = store.contacts.byProfile(profileUrl(person.vanity))
-            if (!contact || contact.state !== 'pending') continue
-            store.contacts.setState(contact.id, 'accepted')
-            accepted.push(`${contact.name} at ${contact.company}`)
-          }
-          store.contacts.markChecked()
+          store.transaction(() => {
+            for (const found of result.people) {
+              const person = store.people.byProfile(profileUrl(found.vanity))
+              if (!person || person.state !== 'requested') continue
+              store.people.setState(person.id, 'connected', { runId: ctx.runId })
+              accepted.push(person.name)
+            }
+            store.people.markChecked(new Date().toISOString())
+          })
           if (accepted.length) {
             ctx.count('accepted', accepted.length)
-            ctx.changed('contacts')
+            ctx.changed('people')
             ctx.log('good', `${accepted.length} accepted`)
           }
           return say(
-            [`Read ${result.people.length} newest connections against ${pending.length} pending requests.`, accepted.length ? `Accepted: ${accepted.join('; ')}.` : 'Nobody new accepted.'].join('\n'),
+            [`Read ${result.people.length} newest connections against ${waiting.length} requests out.`, accepted.length ? `Accepted: ${accepted.join('; ')}.` : 'Nobody new accepted.'].join('\n'),
           )
         },
       ),
@@ -573,39 +583,51 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
   }
 
   if (which.message) {
+    const plan = which.message
+    /** The message for one person, filled from the user's approved wording. */
+    const messageFor = (personId: number): { message: string; job: NonNullable<ReturnType<typeof store.jobs.get>>; name: string } | string => {
+      const job = store.jobs.get(plan.jobId)
+      if (!job) return 'That job is no longer in the tracker. Finish now.'
+      const person = store.people.get(personId)
+      if (!person) return `There is no person ${personId}.`
+      const referral = store.settings.referral()
+      if (!referral.template.trim()) return 'The user has not saved a referral message in Settings. Finish now.'
+      try {
+        const message = fillTemplate(referral.template, { name: firstName(person.name), role: job.role, company: job.company, jobId: job.reqId ?? '', jobLink: job.link || job.portalLink || '' })
+        return { message, job, name: person.name }
+      } catch (error) {
+        return `${error instanceof Error ? error.message : String(error)} Skipped.`
+      }
+    }
+
     tools.push(
       portalTool(
         ctx,
         'linkedin',
         'send_referral_message',
-        'Send the user\'s approved referral message to one accepted contact, by contact id. The app fills the four slots, types the message word for word, attaches the resume when the user asked for it, and sends. You write nothing.',
-        { contact_id: z.number().int().positive() },
-        async ({ contact_id }) => {
-          const contact = store.contacts.get(contact_id)
-          if (!contact) return refuse(`There is no contact ${contact_id}.`)
-          if (contact.state !== 'accepted') return refuse(`${contact.name} has not accepted the request yet: only connections get the message.`)
-          if (contact.messagedAt) return refuse(`${contact.name} already got the referral message on ${contact.messagedAt}. Skipped.`)
-          const row = store.appliedRow(contact.company)
-          if (!row) return refuse(`There is no applied row at ${contact.company} for the message to point at.`)
-          const referral = store.settings.referral()
-          if (!referral.template.trim()) return refuse('The user has not saved a referral message in Settings. Finish now.')
-          let message: string
-          try {
-            message = fillTemplate(referral.template, { name: firstName(contact.name), role: row.role, company: row.company, jobLink: row.link || row.portalLink || '' })
-          } catch (error) {
-            return refuse(`${error instanceof Error ? error.message : String(error)} Skipped.`)
-          }
-          const resume = referral.attachResume ? namedResume(ctx) : null
-          if (referral.attachResume && !resume) return refuse('The message attaches the resume, and there is none in Settings. Finish now.')
+        'Send the user\'s approved referral message to one person, by their id from the list. The app fills the slots, types the message word for word, attaches the resume when the user asked for it, and sends. You write nothing.',
+        { person_id: z.number().int().positive() },
+        async ({ person_id }) => {
+          if (!plan.personIds.includes(person_id)) return refuse(`Person ${person_id} is not on this run's list.`)
+          const person = store.people.get(person_id)
+          if (!person) return refuse(`There is no person ${person_id}.`)
+          if (person.state !== 'connected') return refuse(`${person.name} has not accepted the request yet: only connections get the message.`)
+          const filled = messageFor(person_id)
+          if (typeof filled === 'string') return refuse(filled)
+          const { message, job } = filled
+          if (!store.people.currentCompanies(person.id).includes(job.companyId)) return refuse(`${person.name} no longer works at ${job.company}. Skipped.`)
+          if (store.outreach.find(job.id, person.id)) return refuse(`${person.name} was already asked about ${job.role}. Skipped.`)
+          const resume = plan.resume ? namedResume(ctx) : null
+          if (plan.resume && !resume) return refuse('The message attaches the resume, and there is none in Settings. Finish now.')
 
-          const vanity = vanityOf(contact.profileUrl)
-          if (!vanity) return refuse(`${contact.name}'s profile link is not a LinkedIn profile.`)
+          const vanity = vanityOf(person.profileUrl)
+          if (!vanity) return refuse(`${person.name}'s profile link is not a LinkedIn profile.`)
           await ctx.chrome.openPage(profileUrl(vanity))
           const page = await ctx.chrome.evaluate<Profile>(PROFILE_SCRIPT)
           if (page.signedOut) return refuse('LinkedIn is signed out in the app\'s Chrome. Call hand_to_user with what "sign-in", then try again.')
-          if (page.degree !== '1st') return refuse(`${contact.name} is not a 1st-degree connection on LinkedIn (${page.degree || 'unknown'}). Skipped.`)
-          if (!page.message) return refuse(`${contact.name}'s profile has no Message button. Skipped.`)
-          const shownName = page.name || contact.name
+          if (page.degree !== '1st') return refuse(`${person.name} is not a 1st-degree connection on LinkedIn (${page.degree || 'unknown'}). Skipped.`)
+          if (!page.message) return refuse(`${person.name}'s profile has no Message button. Skipped.`)
+          const shownName = page.name || person.name
 
           await clickPoint(ctx, page.message)
           if (!(await waitFor(ctx, `${ROOT}.querySelector('.msg-form__contenteditable, [contenteditable="true"][aria-label^="Write a message"]')`, 10_000))) {
@@ -613,8 +635,8 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
           }
           await sleep(800)
           const editor = await ctx.chrome.evaluate<{ found: boolean; text?: string }>(EDITOR_SCRIPT(shownName.split(' ')[0] ?? shownName))
-          if (!editor.found) return refuse(`No message box to ${contact.name} opened. Skipped.`)
-          if (linesOf(editor.text ?? '').length) return refuse(`There is an unsent draft to ${contact.name} in LinkedIn. It is the user's: left as it is, and skipped.`)
+          if (!editor.found) return refuse(`No message box to ${person.name} opened. Skipped.`)
+          if (linesOf(editor.text ?? '').length) return refuse(`There is an unsent draft to ${person.name} in LinkedIn. It is the user's: left as it is, and skipped.`)
 
           // Type it as written: each line, with Shift+Enter between lines so nothing sends early.
           await ctx.chrome.evaluate(`(() => { const { ed } = ${BOX}; if (ed) ed.focus(); })()`, true)
@@ -655,39 +677,33 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
             `(() => { const { ed } = ${BOX}; const text = ${OVERLAY_TEXT}; return (!ed || !ed.innerText.trim()) && text.includes(${JSON.stringify(marker)}) && !/failed to send|message not sent|couldn.t send/i.test(text); })()`,
             15_000,
           )
-          if (!went) return refuse(`LinkedIn did not show the message to ${contact.name} as sent. Check Chrome before trying again: it may have gone.`)
+          if (!went) return refuse(`LinkedIn did not show the message to ${person.name} as sent. Check Chrome before trying again: it may have gone.`)
 
-          store.contacts.markMessaged(contact.id)
-          store.opportunities.setReferral(row.id, `Referral asked: ${contact.name}`)
-          store.opportunities.appendNote(row.id, `Referral message sent to ${contact.name} (${contact.role}).`)
-          if (row.status === 'applied') store.opportunities.setStatus(row.id, 'outreach', ctx.runId)
+          store.recordOutreach({ jobId: job.id, personId: person.id, message, resume: !!resume }, ctx.runId)
+          store.jobs.appendNote(job.id, `Referral message sent to ${person.name} (${person.headline}).`)
           ctx.count('messaged')
-          ctx.changed('contacts', 'opportunities')
-          ctx.log('good', `Message sent to ${contact.name} at ${contact.company}`)
+          ctx.changed('people', 'jobs')
+          ctx.log('good', `Message sent to ${person.name} about ${job.role}`)
           const after = await ctx.chrome.evaluate<Box>(BOX_SCRIPT).catch(() => ({ close: null }) as Box)
           if (after.close) await clickPoint(ctx, after.close).catch(() => undefined)
-          return say(`Sent to ${contact.name}.`)
+          return say(`Sent to ${person.name}.`)
         },
         {
-          steps: ({ contact_id }) => {
-            const contact = store.contacts.get(contact_id)
-            const row = contact ? store.appliedRow(contact.company) : null
-            const referral = store.settings.referral()
-            let message = ''
-            try {
-              message = contact && row ? fillTemplate(referral.template, { name: firstName(contact.name), role: row.role, company: row.company, jobLink: row.link || row.portalLink || '' }) : ''
-            } catch {
-              message = ''
-            }
+          steps: ({ person_id }) => {
+            const filled = messageFor(person_id)
+            const person = store.people.get(person_id)
             return [
-              `In Chrome, open ${contact?.name ?? 'their'}'s profile and press Message`,
-              message ? `Send this, word for word${referral.attachResume ? ', with your resume attached' : ''}: ${message}` : 'Send your saved referral message',
+              `In Chrome, open ${person?.name ?? 'their'}'s profile and press Message`,
+              typeof filled === 'string' ? 'Send your saved referral message' : `Send this, word for word${plan.resume ? ', with your resume attached' : ''}: ${filled.message}`,
               'Come back here and press Continue',
             ]
           },
-          afterUser: async ({ contact_id }) => {
-            store.contacts.markMessaged(contact_id)
-            ctx.changed('contacts')
+          afterUser: async ({ person_id }) => {
+            const filled = messageFor(person_id)
+            if (typeof filled !== 'string' && !store.outreach.find(filled.job.id, person_id)) {
+              store.recordOutreach({ jobId: filled.job.id, personId: person_id, message: filled.message, resume: plan.resume }, ctx.runId)
+            }
+            ctx.changed('people', 'jobs')
             return say('The user sent the message themselves.')
           },
         },

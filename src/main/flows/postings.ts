@@ -2,10 +2,10 @@ import { z } from 'zod'
 
 import { isPortalLink, linkKey } from '../../shared/links'
 import { AT_ONCE, CHECK_STATUSES, PORTALS, WORK_MODES } from '../../shared/types'
-import type { Opportunity, Portal } from '../../shared/types'
+import type { Job, Portal } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { Store } from '../db/store'
-import { huntTools, READ_BY } from '../portals'
+import { huntTools, portalIdOf, READ_BY } from '../portals'
 import { defineTool, onePlan } from '../runs/engine'
 import type { AnyTool, FlowSpec, RunContext, RunPlan } from '../runs/engine'
 import { applyPageTool } from './apply-page'
@@ -22,33 +22,33 @@ type Tally = { checked: number; closed: number; closedApplied: number; linked: n
 
 const NO_TALLY = (): Tally => ({ checked: 0, closed: 0, closedApplied: 0, linked: 0, unreadable: 0 })
 
-function portalOf(row: Opportunity): Portal | null {
+function portalOf(row: Job): Portal | null {
   const key = row.portal.toLowerCase()
   return (PORTALS as readonly string[]).includes(key) ? (key as Portal) : null
 }
 
 /** The company's apply page already saved on a job, if any. */
-const savedApplyOf = (row: Opportunity): string | null => (row.link && !isPortalLink(row.link) ? row.link : null)
+const savedApplyOf = (row: Job): string | null => (row.link && !isPortalLink(row.link) ? row.link : null)
 
 /** A job the check can read: on a portal by its id or posting link, or by its saved apply page. */
-export function isCheckable(row: Opportunity): boolean {
+export function isCheckable(row: Job): boolean {
   const portal = portalOf(row)
-  const byPortal = !!portal && READ_BY[portal] === 'id' && !!row.jobId
+  const byPortal = !!portal && READ_BY[portal] === 'id' && !!portalIdOf(portal, row.portalLink)
   const byLink = (!!portal && READ_BY[portal] === 'link' && !!row.portalLink) || !!savedApplyOf(row)
   return (CHECK_STATUSES as readonly string[]).includes(row.status) && (byPortal || byLink)
 }
 
-function rowLine(row: Opportunity): string {
+function rowLine(row: Job): string {
   const portal = portalOf(row)
   const reads = [
-    portal && READ_BY[portal] === 'id' && row.jobId ? `${portal}_read_job, job id ${row.jobId}` : '',
+    portal && READ_BY[portal] === 'id' && portalIdOf(portal, row.portalLink) ? `${portal}_read_job, job id ${portalIdOf(portal, row.portalLink)}` : '',
     portal && READ_BY[portal] === 'link' && row.portalLink ? `${portal}_read_job, link ${row.portalLink}` : '',
     savedApplyOf(row) ? `apply page saved: ${savedApplyOf(row)}` : '',
   ].filter(Boolean)
   return `- Job ${row.id}: ${row.company}, ${row.role}, ${row.status === 'found' ? 'not applied to yet' : 'already applied to'} (${reads.join('; ')})`
 }
 
-function system(rows: Opportunity[]): string {
+function system(rows: Job[]): string {
   return [
     'This session checks jobs already in the tracker, some waiting to be applied to and some already applied to, against where their application goes. Nothing is applied to, clicked or sent.',
     '',
@@ -71,7 +71,7 @@ function system(rows: Opportunity[]): string {
   ].join('\n')
 }
 
-function recordTool(ctx: RunContext, store: Store, rows: Opportunity[], evidence: Evidence, done: Set<number>, bump: (key: keyof Tally) => void): AnyTool {
+function recordTool(ctx: RunContext, store: Store, rows: Job[], evidence: Evidence, done: Set<number>, bump: (key: keyof Tally) => void): AnyTool {
   return defineTool(
     'record_check',
     'Save what you found for one job. A closed job not yet applied to is marked dead; one already applied to keeps its status and gets a note.',
@@ -82,7 +82,6 @@ function recordTool(ctx: RunContext, store: Store, rows: Opportunity[], evidence
       apply_page_shows_job: z
         .boolean()
         .describe('For a job that applies off the portal: whether the apply page you read shows this job (false for a sign-in wall, a bot check, or a page without it). true when it applies on the portal'),
-      mode: z.string().max(120).describe('Work mode and place as the final page gives them, such as "Hybrid, Bengaluru", or "" to keep what was recorded'),
       work_mode: z.enum(WORK_MODES).nullable().describe('As the final page states it, or null to keep what was recorded'),
       min_years: z.number().int().min(0).max(40).nullable().describe(MIN_YEARS),
       years_quote: z.string().max(300).describe(YEARS_QUOTE),
@@ -96,7 +95,8 @@ function recordTool(ctx: RunContext, store: Store, rows: Opportunity[], evidence
 
         // Everything saved rests on pages this session read: a page that never opened gives nothing.
         const savedApply = savedApplyOf(row)
-        const read = postingFor(evidence, portalOf(row), row.jobId || null, [row.portalLink, row.link])
+        const portal = portalOf(row)
+        const read = postingFor(evidence, portal, portal ? portalIdOf(portal, row.portalLink) : null, [row.portalLink, row.link])
         const appliedRead = !!savedApply && evidence.pages.read.has(linkKey(savedApply))
         if (!read && !appliedRead) return refuse("Nothing for this job was read in this session. Read it first; if its page won't open, leave it unrecorded.")
         // Pages are kept under both the link asked for and where it landed, so these find the apply page either way.
@@ -112,18 +112,17 @@ function recordTool(ctx: RunContext, store: Store, rows: Opportunity[], evidence
         const years = checkYears(input.min_years, input.years_quote, texts)
         if (typeof years === 'string') return refuse(years)
 
-        const jobs = store.opportunities
+        const jobs = store.jobs
         const isFound = row.status === 'found'
         const isNewLink = !!apply?.link && linkKey(apply.link) !== linkKey(row.link ?? '')
         store.transaction(() => {
           jobs.setLinks(row.id, { link: apply?.link ?? null, portalLink: read?.postingLink ?? null, applyRoute: apply?.route ?? read?.route ?? null })
           if (input.work_mode && input.work_mode !== row.workMode) jobs.setWorkMode(row.id, input.work_mode)
-          if (years.value !== null && years.quote) jobs.setMinYears(row.id, years.value, years.quote)
-          if (input.mode.trim() && input.mode.trim() !== row.mode) jobs.setMode(row.id, input.mode.trim())
+          if (years.value !== null && years.quote) jobs.setMinYears(row.id, years.value)
           if (input.state === 'closed') {
             jobs.setPosting(row.id, 'closed', line)
             if (isFound) {
-              jobs.setStatus(row.id, 'dead', ctx.runId)
+              jobs.setStatus(row.id, 'dead', { runId: ctx.runId })
               jobs.appendNote(row.id, `Closed, found by the posting check (run ${ctx.runId}): "${line}"`)
             } else {
               // Applied already: a closed posting usually means no new applications, not that this one is over.
@@ -141,7 +140,7 @@ function recordTool(ctx: RunContext, store: Store, rows: Opportunity[], evidence
         else if (apply?.state === 'unreadable') bump('unreadable')
         if (isNewLink) bump('linked')
         ctx.progress('Jobs checked', done.size, rows.length)
-        ctx.changed('opportunities')
+        ctx.changed('jobs')
         ctx.log(
           input.state === 'closed' ? 'warn' : 'good',
           `${row.company}: ${
@@ -172,7 +171,7 @@ const tallyLine = (tally: Tally, of: number): string =>
     .filter(Boolean)
     .join(' ')
 
-function checkSpec(store: Store, rows: Opportunity[], total: Tally, lane: string): FlowSpec<z.infer<typeof Output>> {
+function checkSpec(store: Store, rows: Job[], total: Tally, lane: string): FlowSpec<z.infer<typeof Output>> {
   const own = NO_TALLY()
   const portals = [...new Set(rows.map(portalOf).filter((portal): portal is Portal => !!portal))]
   return {
@@ -205,9 +204,9 @@ function checkSpec(store: Store, rows: Opportunity[], total: Tally, lane: string
 }
 
 /** Checks found and applied jobs against their apply pages: a session per batch of jobs, 5 at a time, each in its own tab. */
-export function checkPostingsPlan(store: Store, rows: Opportunity[]): RunPlan {
+export function checkPostingsPlan(store: Store, rows: Job[]): RunPlan {
   const total = NO_TALLY()
-  const batches: Opportunity[][] = []
+  const batches: Job[][] = []
   for (let i = 0; i < rows.length; i += BATCH) batches.push(rows.slice(i, i + BATCH))
   const sessions = batches.map((batch, i) => checkSpec(store, batch, total, batches.length > 1 ? `Jobs ${i * BATCH + 1} to ${i * BATCH + batch.length}` : 'Jobs'))
   if (sessions.length === 1) return onePlan(sessions[0]!)

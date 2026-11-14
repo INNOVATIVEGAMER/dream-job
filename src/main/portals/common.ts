@@ -129,10 +129,10 @@ export function stageFromSize(size: string): Stage | null {
   return 'large'
 }
 
-/** Whether the user has seen this posting already: tracked, discarded or on never show again. */
+/** Whether the user has seen this posting already: a job in the tracker (discarded ones too), or a company never shown. */
 export function isKnown(ctx: RunContext, portal: Portal, jobId: string, company: string, title: string): boolean {
   const { store } = ctx
-  return store.discarded.has(portal, jobId) || !!store.opportunities.findExisting(portal, jobId, company, title) || !!store.neverShow.match(company)
+  return !!store.jobs.byPortalId(portal, jobId) || !!store.jobs.findExisting({ company, role: title }) || !!store.neverShow.match(company)
 }
 
 /** One line on the stage bucket, for a read_job answer. */
