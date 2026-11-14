@@ -20,6 +20,7 @@ export const PLAYBOOKS: Record<Portal, string[]> = {
     'A connection request goes through LinkedIn\'s "Add a note to your invitation?" dialog; send_blank_request always picks Send without a note.',
     'When LinkedIn says the invitation limit is reached, stop sending and finish.',
     'Your connections list runs newest first, each with the date they connected: list_new_connections reads it back to the oldest pending request.',
+    'company_connections searches people at one company filtered to the user\'s 1st-degree connections: everyone it lists is connected.',
     'The referral message goes from the person\'s profile, through Message. The app types the approved wording, checks it word for word, attaches the resume, and sends.',
   ],
   wellfound: [

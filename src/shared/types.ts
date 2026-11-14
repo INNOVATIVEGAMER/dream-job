@@ -315,8 +315,17 @@ export type NeverShowCompany = { id: number; company: string; why: string; added
 /* Contacts                                                            */
 /* ------------------------------------------------------------------ */
 
-export const CONTACT_STATES = ['pending', 'accepted', 'messaged', 'referred'] as const
+/**
+ * Where a person stands with the user: a request sent, or connected. What
+ * happens after (a referral message) is a date on the person, not a status.
+ */
+export const CONTACT_STATES = ['pending', 'accepted'] as const
 export type ContactState = (typeof CONTACT_STATES)[number]
+
+export const CONTACT_STATE_NAMES: Record<ContactState, string> = { pending: 'Request sent', accepted: 'Connected' }
+
+/** New connection requests one click sends at each company. */
+export const REQUESTS_PER_COMPANY = 10
 
 export type Contact = {
   id: number
@@ -327,38 +336,10 @@ export type Contact = {
   sent: string
   state: ContactState
   acceptedAt: string | null
+  /** When the referral message went: it goes to each person once. */
   messagedAt: string | null
   referredAt: string | null
-  thankedAt?: string | null
-}
-
-/** Contacts, company first: the views over people. */
-export const CONTACT_VIEWS = ['ready', 'pending', 'accepted', 'messaged', 'referred', 'all'] as const
-export type ContactView = (typeof CONTACT_VIEWS)[number]
-
-/** One company as Contacts lists it: the job applied for, where its people stand, and the people in the view. */
-export type ContactCompany = {
-  id: number
-  name: string
-  jobId: number | null
-  role: string | null
-  counts: Record<ContactState, number>
-  isReady: boolean
-  people: Contact[]
-}
-
-export type ContactCompanies = { companies: ContactCompany[]; counts: Record<ContactView, number>; people: number; companyCount: number }
-
-export type ContactQuery = { state: string; company: string; search: string; page: number }
-
-export type ContactPage = {
-  rows: Contact[]
-  total: number
-  counts: Record<ContactState, number>
-  companies: string[]
-  page: number
-  pages: number
-  pageSize: number
+  companyId?: number | null
 }
 
 /** A company with accepted connections waiting for the referral message. */
@@ -530,6 +511,7 @@ export const PORTAL_TOOLS: Record<Portal, PortalToolInfo[]> = {
     { name: 'find_people', label: 'Find people at a company', detail: 'In your field, and the hiring team', group: 'connect' },
     { name: 'send_blank_request', label: 'Send blank connection requests', detail: 'Never with a note', group: 'connect' },
     { name: 'list_new_connections', label: 'Check who accepted', detail: 'Reads your newest connections', group: 'connect' },
+    { name: 'company_connections', label: 'Read your connections at a company', detail: 'Adds them, and marks accepted requests', group: 'connect' },
     {
       name: 'send_referral_message',
       label: 'Send your referral message',
@@ -770,10 +752,7 @@ export type HomeSummary = {
   counts: Record<string, number>
   /** Companies in the tracker. */
   companyCount: number
-  nextFound: TrackerRow | null
   foundCount: number
-  contactCounts: Record<ContactState, number>
-  pendingCompanies: number
   needsYou: NeedsYou[]
   recentRuns: RunSummary[]
   lastHunt: RunSummary | null

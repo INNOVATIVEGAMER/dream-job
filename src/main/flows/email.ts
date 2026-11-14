@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import { GMAIL_PLAYBOOK } from '../../shared/playbooks'
 import { STATUSES } from '../../shared/types'
-import type { Contact, ContactState } from '../../shared/types'
+import type { Contact } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import { companyKey } from '../db/database'
 import type { Store } from '../db/store'
@@ -54,7 +54,7 @@ function system(store: Store, count: number): string {
     '- Confirmation that an application arrived changes nothing, unless the row is still found: then applied.',
     '- Details for a row already at the right status (a new interview time, who the interviewer is): note_row.',
     '- A note says who wrote, what they said, and any date and time, in a line or two. Never a whole email.',
-    '- LinkedIn\'s "[name] accepted your invitation": update_contact to accepted. A message from a contact saying they referred the user: update_contact to referred. Any other message from someone at a tracked company: note_row on that company\'s row, saying who wrote and what they asked.',
+    '- LinkedIn\'s "[name] accepted your invitation": update_contact. A message from someone saying they referred the user, or any other message from someone at a tracked company: note_row on that company\'s row, saying who wrote and what they said.',
     '- An email about a job the tracker does not have, such as a recruiter writing about a role: add_waiting. Never add rows yourself.',
     '- If you cannot tell which row an email is about, leave it.',
     '',
@@ -126,15 +126,14 @@ function recordTools(ctx: RunContext, run: EmailRun): AnyTool[] {
     ),
     defineTool(
       'update_contact',
-      'Move a contact on because of an email you read: accepted (they accepted the user\'s invitation) or referred (they say they referred the user). Find them by name; when several match, the tool lists them and you call again with contact_id.',
+      'Mark a contact connected because an email you read says they accepted the user\'s invitation. Find them by name; when several match, the tool lists them and you call again with contact_id.',
       {
         email: emailNumber,
         name: z.string().min(1).max(120).describe('The person\'s name as the email gives it'),
         contact_id: z.number().int().positive().optional().describe('Only when the tool asked you to choose'),
-        state: z.enum(['accepted', 'referred']),
         note: noteText,
       },
-      ({ email: number, name, contact_id, state, note }) =>
+      ({ email: number, name, contact_id, note }) =>
         guarded(async () => {
           const email = openedEmail(run, number)
           if (typeof email === 'string') return refuse(email)
@@ -149,25 +148,16 @@ function recordTools(ctx: RunContext, run: EmailRun): AnyTool[] {
             contact = matches[0]!
           }
           if (!contact) return refuse(`There is no contact ${contact_id}.`)
-          const order = ['pending', 'accepted', 'messaged', 'referred'] as ContactState[]
-          if (order.indexOf(state) <= order.indexOf(contact.state)) return say(`${contact.name} is already ${contact.state}: nothing to change.`)
+          if (contact.state === 'accepted') return say(`${contact.name} is already connected: nothing to change.`)
           const ref = refOf(email)
-          const before = contact.state
           store.transaction(() => {
-            store.contacts.setState(contact!.id, state)
-            store.email.addChange({ runId: ctx.runId, kind: 'contact', targetId: contact!.id, from: before, to: state, note, email: ref })
-            if (state === 'referred') {
-              const row = store.appliedRow(contact!.company)
-              if (row) {
-                store.opportunities.setReferral(row.id, `Referred by ${contact!.name}`)
-                store.opportunities.appendNote(row.id, `${contact!.name} says they referred you: "${ref.subject}" (${ref.date}). ${note}`)
-              }
-            }
+            store.contacts.setState(contact!.id, 'accepted')
+            store.email.addChange({ runId: ctx.runId, kind: 'contact', targetId: contact!.id, from: 'pending', to: 'accepted', note, email: ref })
           })
           ctx.count('contacts')
-          ctx.changed('contacts', 'opportunities', 'email')
-          ctx.log('good', `${contact.name} at ${contact.company}: ${before} to ${state}`)
-          return say(`${contact.name} is now ${state}.`)
+          ctx.changed('contacts', 'email')
+          ctx.log('good', `${contact.name} at ${contact.company}: connected`)
+          return say(`${contact.name} is now connected.`)
         }),
     ),
     defineTool(

@@ -14,9 +14,9 @@ import {
   PaperPlaneTiltIcon,
   TableIcon,
   UserPlusIcon,
-  UsersThreeIcon,
 } from '@phosphor-icons/react'
 
+import { REQUESTS_PER_COMPANY } from '../../../shared/types'
 import { api } from '../lib/api'
 import { go } from '../lib/router'
 import { attempt } from './common'
@@ -27,28 +27,27 @@ export async function checkPostings(ids: number[]): Promise<void> {
   if (await attempt(() => api.flows.checkPostings(ids))) go('/run')
 }
 
-/** Starts an Apply run for the best-scored found job, then shows it. */
-export async function applyToNext(): Promise<void> {
-  const home = await attempt(() => api.home())
-  if (!home?.nextFound) return void attempt(() => Promise.reject(new Error('Nothing is found and waiting to apply.')))
-  if (await attempt(() => api.flows.apply([home.nextFound!.id]))) go('/run')
+/** Sends new blank connection requests at each company, up to the usual number each, then shows the run. Answers whether it started. */
+export async function sendRequests(companies: string[]): Promise<boolean> {
+  const runId = await attempt(() => api.flows.connect({ companies, perCompany: REQUESTS_PER_COMPANY }))
+  if (runId) go('/run')
+  return !!runId
 }
 
 type Command = { key: string; label: string; icon: ReactNode; shortcut?: string; run: () => void }
 
 const RUN: Command[] = [
   { key: 'hunt', label: 'Start a hunt', icon: <MagnifyingGlassIcon />, shortcut: 'H', run: () => go('/hunt') },
-  { key: 'apply', label: 'Apply to next found', icon: <PaperPlaneTiltIcon />, shortcut: 'A', run: () => void applyToNext() },
+  { key: 'apply', label: 'Pick found jobs to apply to', icon: <PaperPlaneTiltIcon />, shortcut: 'A', run: () => go('/tracker/found') },
   { key: 'check', label: 'Check postings of found and applied jobs', icon: <ListChecksIcon />, run: () => void checkPostings([]) },
   { key: 'email', label: 'Check email', icon: <EnvelopeIcon />, shortcut: 'E', run: () => go('/email') },
-  { key: 'connect', label: 'Send connection requests', icon: <UserPlusIcon />, shortcut: 'R', run: () => go('/contacts/connect') },
-  { key: 'message', label: 'Message accepted connections', icon: <ChatCircleIcon />, shortcut: 'M', run: () => go('/contacts/message') },
+  { key: 'connect', label: 'Pick companies to send connection requests', icon: <UserPlusIcon />, shortcut: 'R', run: () => go('/tracker/applied') },
+  { key: 'message', label: 'Message connections', icon: <ChatCircleIcon />, shortcut: 'M', run: () => go('/message') },
 ]
 
 const PAGES: Command[] = [
   { key: 'home', label: 'Go to Home', icon: <HouseIcon />, run: () => go('/') },
   { key: 'tracker', label: 'Go to Tracker', icon: <TableIcon />, run: () => go('/tracker') },
-  { key: 'contacts', label: 'Go to Contacts', icon: <UsersThreeIcon />, run: () => go('/contacts') },
   { key: 'discarded', label: 'Go to Discarded', icon: <ArchiveIcon />, run: () => go('/discarded') },
   { key: 'runs', label: 'Go to Run history', icon: <ClockCounterClockwiseIcon />, run: () => go('/runs') },
   { key: 'settings', label: 'Open Settings', icon: <GearIcon />, run: () => go('/settings') },

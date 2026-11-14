@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 
 import {
   ArrowSquareOutIcon,
+  ArrowsClockwiseIcon,
   CaretDownIcon,
   CaretRightIcon,
   CircleDashedIcon,
@@ -13,18 +14,19 @@ import {
   MagnifyingGlassIcon,
   PaperPlaneTiltIcon,
   PlusIcon,
+  UserPlusIcon,
   WarningIcon,
   XIcon,
 } from '@phosphor-icons/react'
 
-import { AT_ONCE, CHECK_STATUSES, PORTAL_NAMES, PORTALS, STAGES, STATUSES, TRACKER_VIEW_NAMES, TRACKER_VIEWS, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
+import { AT_ONCE, CHECK_STATUSES, PORTAL_NAMES, PORTALS, REQUESTS_PER_COMPANY, STAGES, STATUSES, TRACKER_VIEW_NAMES, TRACKER_VIEWS, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
 import type { CompanyQuery, CompanyRow, Preferences, TrackerRow, TrackerView, WorkMode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { capitalize, portalName } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
-import { applyToNext, checkPostings } from '../ui/CommandMenu'
+import { checkPostings, sendRequests } from '../ui/CommandMenu'
 import { attempt, ErrorNote, Hidden, Loading, Page, StatusBadge } from '../ui/common'
 import {
   Badge,
@@ -115,6 +117,19 @@ function Modes({ jobs }: { jobs: TrackerRow[] }): JSX.Element {
         <ModeBadge key={mode} mode={mode} />
       ))}
     </div>
+  )
+}
+
+/** Who the user knows at a company: connections first, then requests still out. */
+function People({ row }: { row: CompanyRow }): JSX.Element {
+  const { accepted, pending } = row.referral
+  if (!accepted && !pending) return <span className="nx:text-muted-foreground">–</span>
+  return (
+    <span className="nx:whitespace-nowrap">
+      {accepted > 0 && <span>{accepted} connected</span>}
+      {accepted > 0 && pending > 0 && <span className="nx:text-muted-foreground"> · </span>}
+      {pending > 0 && <span className="nx:text-muted-foreground">{pending} sent</span>}
+    </span>
   )
 }
 
@@ -228,6 +243,10 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
   // Check postings reads the jobs on screen: the view, with its filters.
   const shownCheckable = companies.flatMap(row => row.jobs.filter(isCheckable).map(job => job.id))
   const pickedCompanies = new Set(pickedJobs.map(job => job.companyId)).size
+  // Requests go to every picked company, before or after applying.
+  const canConnect = query.view === 'found' || query.view === 'applied'
+  const pickedRows = companies.filter(row => row.jobs.some(job => picked.has(job.id)))
+  const pickedNames = pickedRows.map(row => row.name)
   const pick = (ids: number[], on: boolean): void =>
     setPicked(current => {
       const next = new Set(current)
@@ -245,6 +264,15 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
       setPicked(new Set())
       go('/run')
     }
+  }
+  const connectPicked = async (): Promise<void> => {
+    if (await sendRequests(pickedNames)) setPicked(new Set())
+  }
+  // Refreshing stays on the tracker: the People column fills in as each company is read.
+  const refreshPicked = async (): Promise<void> => {
+    const n = pickedRows.length
+    const runId = await attempt(() => api.flows.refreshPeople(pickedRows.map(row => row.id)), `Reading your LinkedIn connections at ${n === 1 ? pickedRows[0]!.name : `${n} companies`}`)
+    if (runId) setPicked(new Set())
   }
   const setStatusPicked = async (next: string): Promise<void> => {
     await attempt(async () => {
@@ -270,9 +298,6 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
           </Button>
           <Button variant="outline" size="sm" startIcon={<PlusIcon />} onClick={() => setAdding(true)}>
             Add job
-          </Button>
-          <Button size="sm" startIcon={<PaperPlaneTiltIcon />} disabled={isBusy || !data?.counts.found} onClick={() => void applyToNext()}>
-            Apply to next
           </Button>
         </>
       }
@@ -393,6 +418,7 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                 <TableHead>Mode</TableHead>
                 <TableHead className="nx:text-end">Min exp</TableHead>
                 <TableHead>Stage</TableHead>
+                <TableHead>People</TableHead>
                 <TableHead className="nx:text-end">Score</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>
@@ -431,6 +457,9 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                     </TableCell>
                     <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap">{yearsText(sameYears(row.jobs))}</TableCell>
                     <TableCell className="nx:typography-body-small">{capitalize(row.stage)}</TableCell>
+                    <TableCell className="nx:typography-body-small">
+                      <People row={row} />
+                    </TableCell>
                     <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{row.bestScore ?? ''}</TableCell>
                     <TableCell>
                       <StatusBadge status={row.status} />
@@ -471,6 +500,7 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                           </TableCell>
                           <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap">{yearsText(job.minYears)}</TableCell>
                           <TableCell />
+                          <TableCell />
                           <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{job.score ?? ''}</TableCell>
                           <TableCell>
                             <StatusBadge status={job.status} />
@@ -509,15 +539,43 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                 {pickedJobs.length} {pickedJobs.length === 1 ? 'job' : 'jobs'} at {pickedCompanies} {pickedCompanies === 1 ? 'company' : 'companies'}
               </span>
               <ToolbarSeparator />
-              <ToolbarButton
-                size="sm"
-                disabled={isBusy || pickedFound.length === 0}
-                onClick={() => void applyPicked()}
-                title={pickedFound.length > 1 ? `${Math.min(AT_ONCE, pickedFound.length)} at a time, each in its own tab` : undefined}
-              >
-                <PaperPlaneTiltIcon />
-                <span>Apply to {pickedFound.length}</span>
-              </ToolbarButton>
+              {/* Apply is the next step for found jobs only, so it shows once any are picked. */}
+              {pickedFound.length > 0 && (
+                <ToolbarButton
+                  size="sm"
+                  disabled={isBusy}
+                  onClick={() => void applyPicked()}
+                  title={pickedFound.length > 1 ? `${Math.min(AT_ONCE, pickedFound.length)} at a time, each in its own tab` : undefined}
+                >
+                  <PaperPlaneTiltIcon />
+                  <span>Apply to {pickedFound.length}</span>
+                </ToolbarButton>
+              )}
+              {canConnect && pickedNames.length > 0 && (
+                <ToolbarButton
+                  size="sm"
+                  disabled={isBusy}
+                  onClick={() => void connectPicked()}
+                  title={`Up to ${REQUESTS_PER_COMPANY} new LinkedIn requests at each company, never with a note`}
+                >
+                  <UserPlusIcon />
+                  <span>
+                    Send requests at {pickedNames.length} {pickedNames.length === 1 ? 'company' : 'companies'}
+                  </span>
+                </ToolbarButton>
+              )}
+              {canConnect && pickedRows.length > 0 && (
+                <ToolbarButton
+                  size="sm"
+                  variant="ghost"
+                  disabled={isBusy}
+                  onClick={() => void refreshPicked()}
+                  title="Reads your LinkedIn connections at each company, and who accepted your requests"
+                >
+                  <ArrowsClockwiseIcon />
+                  <span>Refresh connections</span>
+                </ToolbarButton>
+              )}
               <ToolbarButton size="sm" variant="ghost" disabled={isBusy || pickedCheckable.length === 0} onClick={() => void checkPostings(pickedCheckable.map(job => job.id)).then(() => setPicked(new Set()))}>
                 <ListChecksIcon />
                 <span>Check {pickedCheckable.length}</span>

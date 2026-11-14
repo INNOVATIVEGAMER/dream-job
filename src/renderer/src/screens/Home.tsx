@@ -21,7 +21,7 @@ import { useData } from '../lib/data'
 import { when } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
-import { applyToNext, openCommandMenu } from '../ui/CommandMenu'
+import { openCommandMenu } from '../ui/CommandMenu'
 import { attempt, Group, Hidden, Loading, Page, RunStatusBadge } from '../ui/common'
 import {
   Button,
@@ -86,7 +86,6 @@ export function Home(): JSX.Element {
   const home = useData(() => api.home(), [], ['opportunities', 'contacts', 'runs', 'settings', 'sites', 'email'])
   const summary = home.data
   const run = status?.run
-  const isBusy = run?.status === 'running' || run?.status === 'waiting'
 
   if (!summary) return <Page title="Home"><Loading /></Page>
 
@@ -187,9 +186,9 @@ export function Home(): JSX.Element {
         {search}
         <div className="nx:flex nx:flex-wrap nx:gap-2">
           <Quick label="New hunt" icon={<MagnifyingGlassIcon />} shortcut="H" onClick={() => go('/hunt')} />
-          <Quick label="Apply to next" icon={<PaperPlaneTiltIcon />} shortcut="A" disabled={isBusy || !summary.nextFound} onClick={() => void applyToNext()} />
+          <Quick label="Pick jobs to apply" icon={<PaperPlaneTiltIcon />} shortcut="A" disabled={!summary.foundCount} onClick={() => go('/tracker/found')} />
           <Quick label="Check email" icon={<EnvelopeIcon />} shortcut="E" onClick={() => go('/email')} />
-          <Quick label="Send requests" icon={<UserPlusIcon />} shortcut="R" onClick={() => go('/contacts/connect')} />
+          <Quick label="Pick companies to connect" icon={<UserPlusIcon />} shortcut="R" onClick={() => go('/tracker/applied')} />
         </div>
       </div>
 

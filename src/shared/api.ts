@@ -1,7 +1,5 @@
 import type {
   AppStatus,
-  ContactCompanies,
-  ContactView,
   Company,
   CompanyDetail,
   CompanyList,
@@ -9,8 +7,6 @@ import type {
   BrowserInfo,
   CardAnswer,
   Contact,
-  ContactPage,
-  ContactQuery,
   DataTopic,
   DiscardedPage,
   DiscardedQuery,
@@ -48,17 +44,6 @@ import type {
 export type OpportunityDetail = { opportunity: Opportunity; events: OpportunityEvent[]; contacts: Contact[]; company: Company | null; companyJobs: number }
 
 export type RunDetail = { summary: RunSummary; events: RunEvent[] }
-
-/** A company the user applied to, with where its connection requests stand. */
-export type AppliedCompany = {
-  company: string
-  role: string
-  appliedOn: string
-  opportunityId: number
-  pending: number
-  accepted: number
-  total: number
-}
 
 export type HuntOptions = { portals: Portal[]; window: HuntWindow }
 export type ConnectOptions = { companies: string[]; perCompany: number }
@@ -110,13 +95,8 @@ export type JobAppApi = {
     removeNeverShow: (id: number) => Promise<void>
   }
   contacts: {
-    /** Contacts, company first. */
-    byCompany: (view: ContactView, search: string) => Promise<ContactCompanies>
-    page: (query: ContactQuery) => Promise<ContactPage>
     ready: () => Promise<ReadyCompany[]>
-    applied: () => Promise<AppliedCompany[]>
     get: (id: number) => Promise<Contact | null>
-    markThanked: (id: number) => Promise<void>
   }
   runs: {
     page: (query: RunQuery) => Promise<RunPage>
@@ -134,7 +114,10 @@ export type JobAppApi = {
     apply: (opportunityIds: number[]) => Promise<number>
     /** Reads found jobs' apply pages: closed ones are marked dead, and each keeps the company's link. No ids: every found job. */
     checkPostings: (opportunityIds: number[]) => Promise<number>
+    /** New blank requests at each company, found or applied: one session per company. */
     connect: (options: ConnectOptions) => Promise<number>
+    /** Reads the user's LinkedIn connections at each company: adds them, and marks requests that were accepted. One session per company. */
+    refreshPeople: (companyIds: number[]) => Promise<number>
     referral: (options: ReferralOptions) => Promise<number>
     checkAccepted: () => Promise<number>
     /** The email check; `count` overrides the setting for this one check. */
@@ -197,12 +180,8 @@ export const CHANNELS = [
   'discarded:neverShow',
   'discarded:addNeverShow',
   'discarded:removeNeverShow',
-  'contacts:byCompany',
-  'contacts:page',
   'contacts:ready',
-  'contacts:applied',
   'contacts:get',
-  'contacts:markThanked',
   'runs:page',
   'runs:get',
   'runs:answer',
@@ -213,6 +192,7 @@ export const CHANNELS = [
   'flows:apply',
   'flows:checkPostings',
   'flows:connect',
+  'flows:refreshPeople',
   'flows:referral',
   'flows:checkAccepted',
   'flows:email',

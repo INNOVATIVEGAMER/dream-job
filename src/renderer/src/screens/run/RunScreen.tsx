@@ -8,13 +8,11 @@ import {
   DotOutlineIcon,
   EnvelopeIcon,
   HandPalmIcon,
-  ListChecksIcon,
   MinusCircleIcon,
   PaperPlaneTiltIcon,
   StopIcon,
   TableIcon,
   UserPlusIcon,
-  UsersThreeIcon,
   WarningIcon,
   XCircleIcon,
 } from '@phosphor-icons/react'
@@ -26,7 +24,7 @@ import { useData } from '../../lib/data'
 import { duration, portalName, tokens } from '../../lib/format'
 import { go } from '../../lib/router'
 import { useAppStatus } from '../../lib/status'
-import { applyToNext } from '../../ui/CommandMenu'
+import { sendRequests } from '../../ui/CommandMenu'
 import { attempt, Group, Hidden, Numbers, Page, RunStatusBadge, StatusBadge } from '../../ui/common'
 import {
   Badge,
@@ -174,8 +172,8 @@ function NextSteps({ run, company }: { run: RunState; company: string | null }):
     case 'apply':
       return (
         <>
-          <Button startIcon={<PaperPlaneTiltIcon />} onClick={() => void applyToNext()}>
-            Apply to next found
+          <Button startIcon={<PaperPlaneTiltIcon />} onClick={() => go('/tracker/found')}>
+            Pick more to apply to
           </Button>
           {run.opportunityId && (
             <Button variant="outline" onClick={() => go(`/opportunity/${run.opportunityId}`)}>
@@ -183,7 +181,7 @@ function NextSteps({ run, company }: { run: RunState; company: string | null }):
             </Button>
           )}
           {company && (
-            <Button variant="ghost" startIcon={<UserPlusIcon />} onClick={() => go(`/contacts/connect/${encodeURIComponent(company)}`)}>
+            <Button variant="ghost" startIcon={<UserPlusIcon />} onClick={() => void sendRequests([company])}>
               Send connection requests
             </Button>
           )}
@@ -197,14 +195,9 @@ function NextSteps({ run, company }: { run: RunState; company: string | null }):
       ) : null
     case 'check':
       return (
-        <>
-          <Button startIcon={<PaperPlaneTiltIcon />} onClick={() => void applyToNext()}>
-            Apply to next found
-          </Button>
-          <Button variant="outline" startIcon={<ListChecksIcon />} onClick={() => go('/tracker/found')}>
-            Open found jobs
-          </Button>
-        </>
+        <Button startIcon={<PaperPlaneTiltIcon />} onClick={() => go('/tracker/found')}>
+          Pick jobs to apply to
+        </Button>
       )
     case 'email':
       return (
@@ -215,8 +208,8 @@ function NextSteps({ run, company }: { run: RunState; company: string | null }):
     case 'connect':
     case 'referral':
       return (
-        <Button variant="outline" startIcon={<UsersThreeIcon />} onClick={() => go('/contacts')}>
-          Open contacts
+        <Button variant="outline" startIcon={<TableIcon />} onClick={() => go('/tracker/applied')}>
+          Open applied jobs
         </Button>
       )
     default:

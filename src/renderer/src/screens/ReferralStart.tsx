@@ -47,7 +47,7 @@ export function ReferralStart({ company }: { company?: string }): JSX.Element {
     )
   }, [ready.data, company])
 
-  if (!ready.data || !settings.data) return <Page title="Message accepted" crumbs={[{ label: 'Contacts', to: '/contacts' }]}><Loading /></Page>
+  if (!ready.data || !settings.data) return <Page title="Message connections" crumbs={[{ label: 'Tracker', to: '/tracker/applied' }]}><Loading /></Page>
 
   const template = settings.data.referral.template.trim()
   const list = ready.data.filter(one => one.opportunityId)
@@ -61,8 +61,8 @@ export function ReferralStart({ company }: { company?: string }): JSX.Element {
 
   return (
     <Page
-      title="Message accepted"
-      crumbs={[{ label: 'Contacts', to: '/contacts' }]}
+      title="Message connections"
+      crumbs={[{ label: 'Tracker', to: '/tracker/applied' }]}
       narrow
       actions={
         <Button variant="ghost" size="sm" startIcon={<ArrowsClockwiseIcon />} disabled={isBusy} onClick={() => void check()}>
@@ -86,12 +86,12 @@ export function ReferralStart({ company }: { company?: string }): JSX.Element {
       <div className="nx:flex nx:flex-col nx:gap-2">
         <div className="nx:flex nx:items-center nx:gap-1">
           <span className="nx:typography-label-default">Companies</span>
-          <Tip text="Ready: 3 people there accepted, or nobody there is still pending." />
+          <Tip text="Ready: 3 people there are connected, or no request there is still out." />
         </div>
         {list.length === 0 ? (
-          <span className="nx:typography-body-small nx:text-muted-foreground">Nobody has accepted yet.</span>
+          <span className="nx:typography-body-small nx:text-muted-foreground">Nobody there is connected yet.</span>
         ) : (
-          <Table aria-label="Companies with accepted connections" density="compact">
+          <Table aria-label="Companies with connections to message" density="compact">
             <TableHeader>
               <TableRow>
                 <TableSelectionHead>
@@ -102,7 +102,7 @@ export function ReferralStart({ company }: { company?: string }): JSX.Element {
                   />
                 </TableSelectionHead>
                 <TableHead>Company</TableHead>
-                <TableHead>Accepted</TableHead>
+                <TableHead>Connected</TableHead>
                 <TableHead>Applied for</TableHead>
               </TableRow>
             </TableHeader>
@@ -121,7 +121,7 @@ export function ReferralStart({ company }: { company?: string }): JSX.Element {
                     <TableCell className="nx:typography-label-default">{one.company}</TableCell>
                     <TableCell className="nx:typography-body-small">
                       <span className="nx:flex nx:items-center nx:gap-2">
-                        {one.accepted} accepted
+                        {one.accepted} connected
                         {one.isReady ? (
                           <Badge variant="success" fill="light" isCaps={false}>
                             Ready

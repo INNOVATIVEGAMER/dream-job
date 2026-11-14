@@ -2,6 +2,7 @@ import { basename } from 'node:path'
 
 import { z } from 'zod'
 
+import type { Company } from '../../shared/types'
 import { namedResume, say } from '../browser/tools'
 import { profileKey } from '../db/contacts'
 import { fillTemplate } from '../db/settings'
@@ -140,6 +141,60 @@ export const PROFILE_SCRIPT = String.raw`(() => {
 
 type Profile = { name: string; degree: string; headline: string; pending: boolean; message: { x: number; y: number } | null; notFound: boolean; signedOut: boolean }
 
+/** A company page's own id, from its "See all employees" search link: people search filters by it. */
+export const COMPANY_ID_SCRIPT = String.raw`(() => {
+  const ids = [];
+  for (const a of document.querySelectorAll('a[href*="currentCompany"]')) {
+    try {
+      const raw = new URL(a.href).searchParams.get('currentCompany') || '';
+      for (const m of raw.matchAll(/\d+/g)) if (!ids.includes(m[0])) ids.push(m[0]);
+    } catch (e) {}
+  }
+  return {
+    id: ids[0] || null,
+    notFound: /Page not found|This page doesn.t exist/i.test(document.body.innerText.slice(0, 2000)),
+    signedOut: ${SIGNED_OUT},
+  };
+})()`
+
+type Found = { vanity: string; name: string; headline: string }
+
+/**
+ * People search results: one card per person, read from the card's first
+ * profile link. Later links in a card are mutual connections, not the person.
+ */
+export const SEARCH_PEOPLE_SCRIPT = String.raw`(() => {
+  const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+  const main = document.querySelector('main') || document.body;
+  const isCard = e => e.tagName === 'LI' || e.getAttribute('role') === 'listitem';
+  const cards = [];
+  for (const a of main.querySelectorAll('a[href*="/in/"]')) {
+    let card = a.parentElement;
+    for (let i = 0; i < 12 && card && card !== main && !isCard(card); i++) card = card.parentElement;
+    if (card && card !== main && isCard(card) && !cards.includes(card)) cards.push(card);
+  }
+  const noise = /^•?\s*(1st|2nd|3rd\+?)$|degree connection|^View .*profile|^(Connect|Follow|Message|Pending)$|mutual connection|^Status is /i;
+  const people = [];
+  const seen = new Set();
+  for (const card of cards) {
+    const a = card.querySelector('a[href*="/in/"]');
+    let m = null;
+    try { m = new URL(a.href).pathname.match(/^\/in\/([^/]+)/); } catch (e) {}
+    if (!m || seen.has(m[1])) continue;
+    seen.add(m[1]);
+    const lines = card.innerText.split('\n').map(clean).map(l => l.replace(/\s*•\s*(1st|2nd|3rd\+?)$/, '')).filter(Boolean).filter(l => !noise.test(l));
+    people.push({ vanity: decodeURIComponent(m[1]), name: lines[0] || '', headline: lines[1] || '' });
+  }
+  return {
+    people: people.filter(p => p.name && !/^LinkedIn Member$/i.test(p.name)),
+    none: /No results found/i.test(main.innerText),
+    signedOut: ${SIGNED_OUT},
+  };
+})()`
+
+/** Pages of 1st-degree results read at most: ten people a page. */
+const CONNECTION_PAGES = 10
+
 type Connection = { vanity: string; name: string; headline: string; on: string }
 
 export const CONNECTIONS_SCRIPT = String.raw`(() => {
@@ -235,14 +290,99 @@ async function clearBox(ctx: RunContext): Promise<void> {
     .catch(() => undefined)
 }
 
+/** The company's LinkedIn slug: from its saved page, or LinkedIn's company search by name, which is then saved. */
+async function companySlug(ctx: RunContext, company: Company): Promise<string | null> {
+  const saved = company.linkedinUrl ? slugOf(company.linkedinUrl) : null
+  if (saved) return saved
+  await ctx.chrome.openPage(`https://www.linkedin.com/search/results/companies/?${new URLSearchParams({ keywords: company.name }).toString()}`)
+  await waitFor(ctx, `document.querySelector('main a[href*="/company/"]')`, 8000)
+  const found = await ctx.chrome.evaluate<{ slug?: string | null }>(COMPANY_SEARCH(company.name))
+  if (!found.slug) return null
+  ctx.store.companies.setLinks(company.id, { linkedinUrl: `https://www.linkedin.com/company/${found.slug}/` })
+  return found.slug
+}
+
+/** The user's 1st-degree connections who work at the company now, by LinkedIn's people search. */
+async function connectionsAt(ctx: RunContext, companyId: string): Promise<{ people: Found[]; signedOut: boolean }> {
+  const people: Found[] = []
+  for (let page = 1; page <= CONNECTION_PAGES; page++) {
+    const query = new URLSearchParams({ currentCompany: JSON.stringify([companyId]), network: JSON.stringify(['F']), origin: 'FACETED_SEARCH', ...(page > 1 ? { page: String(page) } : {}) })
+    await ctx.chrome.openPage(`https://www.linkedin.com/search/results/people/?${query.toString()}`)
+    await waitFor(ctx, `document.querySelector('main a[href*="/in/"]') || /No results found/i.test(document.body.innerText) || ${SIGNED_OUT}`, 10_000)
+    await sleep(800)
+    const result = await ctx.chrome.evaluate<{ people: Found[]; none: boolean; signedOut: boolean }>(SEARCH_PEOPLE_SCRIPT)
+    if (result.signedOut) return { people, signedOut: true }
+    const fresh = result.people.filter(person => !people.some(one => one.vanity === person.vanity))
+    if (result.none || fresh.length === 0) break
+    people.push(...fresh)
+  }
+  return { people, signedOut: false }
+}
+
 /**
  * LinkedIn's network tools for the referral track. Connect gets find_people
- * and send_blank_request; checking gets list_new_connections; the referral
- * run gets send_referral_message.
+ * and send_blank_request; checking gets list_new_connections; a company's
+ * refresh gets company_connections; the referral run gets send_referral_message.
  */
-export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean; check?: boolean; message?: boolean }): AnyTool[] {
+export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean; check?: boolean; message?: boolean; people?: Company }): AnyTool[] {
   const tools: AnyTool[] = []
   const { store } = ctx
+
+  if (which.people) {
+    const company = which.people
+    tools.push(
+      portalTool(
+        ctx,
+        'linkedin',
+        'company_connections',
+        `Read the user's LinkedIn connections who work at ${company.name} now. Each one becomes a connected person at the company, and requests they had pending move to connected. Answers who was added and who accepted.`,
+        {},
+        async () => {
+          const slug = await companySlug(ctx, company)
+          if (!slug) return refuse(`No LinkedIn company page matched "${company.name}". The user can add its LinkedIn page on the company, then refresh again. Finish now.`)
+          await ctx.chrome.openPage(`https://www.linkedin.com/company/${slug}/`)
+          await waitFor(ctx, `document.querySelector('a[href*="currentCompany"]') || /Page not found|This page doesn.t exist/i.test(document.body.innerText) || ${SIGNED_OUT}`, 10_000)
+          const page = await ctx.chrome.evaluate<{ id: string | null; notFound: boolean; signedOut: boolean }>(COMPANY_ID_SCRIPT)
+          markSite(ctx, 'linkedin', page.signedOut ? 'signed-out' : 'signed-in')
+          if (page.signedOut) return refuse('LinkedIn is signed out in the app\'s Chrome. Call hand_to_user with what "sign-in", then try again.')
+          if (page.notFound) return refuse(`LinkedIn has no company page at /company/${slug}/. Finish now.`)
+          if (!page.id) return refuse(`The LinkedIn page /company/${slug}/ gives no link to its employees, so its people cannot be searched. Finish now.`)
+
+          const result = await connectionsAt(ctx, page.id)
+          if (result.signedOut) return refuse('LinkedIn signed out during the search. Call hand_to_user with what "sign-in", then try again.')
+
+          const added: string[] = []
+          const accepted: string[] = []
+          for (const person of result.people) {
+            const url = profileUrl(person.vanity)
+            const known = store.contacts.byProfile(url)
+            if (known) {
+              if (known.state === 'pending') {
+                store.contacts.setState(known.id, 'accepted')
+                accepted.push(known.name)
+              }
+              continue
+            }
+            store.contacts.addAccepted({ name: person.name, role: person.headline, company: company.name, profileUrl: url }, ctx.runId)
+            added.push(person.name)
+          }
+          if (added.length || accepted.length) {
+            ctx.count('added', added.length)
+            ctx.count('accepted', accepted.length)
+            ctx.changed('contacts')
+          }
+          ctx.log('good', `${company.name}: ${result.people.length} connections there, ${added.length} new, ${accepted.length} accepted`)
+          return say(
+            [
+              `${result.people.length} of the user's connections work at ${company.name} (/company/${slug}/).`,
+              added.length ? `Added as connected: ${added.join('; ')}.` : 'Nobody new to add.',
+              accepted.length ? `Accepted a request: ${accepted.join('; ')}.` : 'No pending request was accepted.',
+            ].join('\n'),
+          )
+        },
+      ),
+    )
+  }
 
   if (which.connect) {
     tools.push(
@@ -354,7 +494,7 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
             store.contacts.addAccepted(contact, ctx.runId)
             ctx.count('accepted')
             ctx.changed('contacts')
-            return say(`${name} is already a connection: recorded as accepted, ready for the referral message.`)
+            return say(`${name} is already a connection: recorded as connected, ready for the referral message.`)
           }
           if (page.pending) {
             store.contacts.addPending(contact, ctx.runId)
@@ -443,7 +583,8 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
         async ({ contact_id }) => {
           const contact = store.contacts.get(contact_id)
           if (!contact) return refuse(`There is no contact ${contact_id}.`)
-          if (contact.state !== 'accepted') return refuse(`${contact.name} is ${contact.state}, not accepted: only accepted contacts get the message.`)
+          if (contact.state !== 'accepted') return refuse(`${contact.name} has not accepted the request yet: only connections get the message.`)
+          if (contact.messagedAt) return refuse(`${contact.name} already got the referral message on ${contact.messagedAt}. Skipped.`)
           const row = store.appliedRow(contact.company)
           if (!row) return refuse(`There is no applied row at ${contact.company} for the message to point at.`)
           const referral = store.settings.referral()
@@ -516,7 +657,7 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
           )
           if (!went) return refuse(`LinkedIn did not show the message to ${contact.name} as sent. Check Chrome before trying again: it may have gone.`)
 
-          store.contacts.setState(contact.id, 'messaged')
+          store.contacts.markMessaged(contact.id)
           store.opportunities.setReferral(row.id, `Referral asked: ${contact.name}`)
           store.opportunities.appendNote(row.id, `Referral message sent to ${contact.name} (${contact.role}).`)
           if (row.status === 'applied') store.opportunities.setStatus(row.id, 'outreach', ctx.runId)
@@ -545,7 +686,7 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
             ]
           },
           afterUser: async ({ contact_id }) => {
-            store.contacts.setState(contact_id, 'messaged')
+            store.contacts.markMessaged(contact_id)
             ctx.changed('contacts')
             return say('The user sent the message themselves.')
           },

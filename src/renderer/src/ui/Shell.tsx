@@ -9,7 +9,6 @@ import {
   HouseIcon,
   MagnifyingGlassIcon,
   TableIcon,
-  UsersThreeIcon,
   WarningIcon,
 } from '@phosphor-icons/react'
 
@@ -127,14 +126,13 @@ export function Shell({ section, children }: { section: string; children: ReactN
     { to: '/', label: 'Home', icon: <HouseIcon />, match: 'home' },
     { to: '/tracker', label: 'Tracker', icon: <TableIcon />, match: 'tracker', badge: home.data?.companyCount || undefined },
     { to: '/hunt', label: 'Hunt', icon: <MagnifyingGlassIcon />, match: 'hunt' },
-    { to: '/contacts', label: 'Contacts', icon: <UsersThreeIcon />, match: 'contacts', badge: home.data?.contactCounts.accepted || undefined },
   ]
   const records: NavItem[] = [
     { to: '/discarded', label: 'Discarded', icon: <ArchiveIcon />, match: 'discarded' },
     { to: '/runs', label: 'Run history', icon: <ClockCounterClockwiseIcon />, match: 'runs' },
   ]
-  // A company, a job, and the email check that moves jobs on all sit under Tracker.
-  const navSection = ['opportunity', 'company', 'email'].includes(section) ? 'tracker' : section
+  // A company, a job, its people, and the email check that moves jobs on all sit under Tracker.
+  const navSection = ['opportunity', 'company', 'email', 'message'].includes(section) ? 'tracker' : section
 
   return (
     <SidebarProvider>

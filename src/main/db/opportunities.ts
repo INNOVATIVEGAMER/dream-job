@@ -136,14 +136,6 @@ export class Opportunities {
       .map(row => ({ ...row }) as TrackerRow)
   }
 
-  /** The found rows, best score first: what Apply works through. */
-  found(limit = 50): TrackerRow[] {
-    return this.db
-      .prepare(`SELECT ${ROW} FROM opportunities WHERE status = 'found' ORDER BY score DESC, id ASC LIMIT ?`)
-      .all(limit)
-      .map(row => ({ ...row }) as TrackerRow)
-  }
-
   /**
    * A row already tracked for this posting: the same portal and job id, or
    * the same company and role. The hunt skips these.

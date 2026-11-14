@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 
-import { ArrowCounterClockwiseIcon, ArrowRightIcon, ArrowSquareOutIcon, PencilSimpleIcon, PlusIcon, TableIcon } from '@phosphor-icons/react'
+import { ArrowCounterClockwiseIcon, ArrowRightIcon, ArrowSquareOutIcon, PlusIcon, TableIcon } from '@phosphor-icons/react'
 
 import type { EmailChange, EmailWaiting } from '../../../shared/types'
 import { api } from '../lib/api'
@@ -36,6 +36,12 @@ function Change({ change }: { change: EmailChange }): JSX.Element {
   )
 }
 
+/** A contact's company page; contacts have no page of their own. */
+async function openContact(id: number): Promise<void> {
+  const contact = await attempt(() => api.contacts.get(id))
+  if (contact?.companyId) go(`/company/${contact.companyId}`)
+}
+
 function ChangeRow({ change }: { change: EmailChange }): JSX.Element {
   const canUndo = !change.undone && change.from !== change.to
   return (
@@ -44,7 +50,7 @@ function ChangeRow({ change }: { change: EmailChange }): JSX.Element {
         <button
           type="button"
           className="nx:flex nx:flex-col nx:max-w-[220px] nx:text-left nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer"
-          onClick={() => go(change.kind === 'row' ? `/opportunity/${change.targetId}` : '/contacts')}
+          onClick={() => (change.kind === 'row' ? go(`/opportunity/${change.targetId}`) : void openContact(change.targetId))}
         >
           <span className="nx:typography-label-default nx:text-foreground nx:whitespace-nowrap">{change.title}</span>
           <span className="nx:typography-body-small nx:text-muted-foreground nx:truncate">{change.subtitle}</span>
@@ -63,11 +69,6 @@ function ChangeRow({ change }: { change: EmailChange }): JSX.Element {
       </TableCell>
       <TableCell className="nx:text-end">
         <div className={`nx:flex nx:items-center nx:justify-end nx:gap-1 ${HOVER}`}>
-          {change.kind === 'contact' && change.to === 'referred' && !change.undone && (
-            <Button variant="outline" size="sm" startIcon={<PencilSimpleIcon />} onClick={() => go(`/contacts/${change.targetId}/thanks`)}>
-              Draft thanks
-            </Button>
-          )}
           <Button variant="ghost" size="icon-sm" aria-label="Open the email" onClick={() => void openEmail(change.email.link)}>
             <ArrowSquareOutIcon />
           </Button>

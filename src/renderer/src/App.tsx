@@ -6,8 +6,6 @@ import { api } from './lib/api'
 import { useData } from './lib/data'
 import { useRoute } from './lib/router'
 import { CompanyScreen } from './screens/Company'
-import { ConnectStart } from './screens/ConnectStart'
-import { Contacts } from './screens/Contacts'
 import { Discarded } from './screens/Discarded'
 import { EmailDone } from './screens/EmailDone'
 import { EmailStart } from './screens/EmailStart'
@@ -40,10 +38,8 @@ function Screen({ route }: { route: string[] }): JSX.Element {
       return <RunScreen />
     case 'runs':
       return <Runs selected={first ? Number(first) : null} />
-    case 'contacts':
-      if (first === 'connect') return <ConnectStart company={second ? decodeURIComponent(second) : undefined} />
-      if (first === 'message') return <ReferralStart company={second ? decodeURIComponent(second) : undefined} />
-      return <Contacts thanksId={first && second === 'thanks' ? Number(first) : null} />
+    case 'message':
+      return <ReferralStart company={first ? decodeURIComponent(first) : undefined} />
     case 'discarded':
       return <Discarded tab={first === 'never' ? 'never' : 'discarded'} />
     case 'settings':

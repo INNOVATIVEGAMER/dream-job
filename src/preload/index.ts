@@ -57,12 +57,8 @@ const api: JobAppApi = {
     removeNeverShow: call('discarded:removeNeverShow'),
   },
   contacts: {
-    byCompany: call('contacts:byCompany'),
-    page: call('contacts:page'),
     ready: call('contacts:ready'),
-    applied: call('contacts:applied'),
     get: call('contacts:get'),
-    markThanked: call('contacts:markThanked'),
   },
   runs: {
     page: call('runs:page'),
@@ -77,6 +73,7 @@ const api: JobAppApi = {
     apply: call('flows:apply'),
     checkPostings: call('flows:checkPostings'),
     connect: call('flows:connect'),
+    refreshPeople: call('flows:refreshPeople'),
     referral: call('flows:referral'),
     checkAccepted: call('flows:checkAccepted'),
     email: call('flows:email'),

@@ -12,6 +12,7 @@ import { useData } from '../lib/data'
 import { capitalize, day, portalName } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
+import { sendRequests } from '../ui/CommandMenu'
 import { attempt, DetailLayout, ErrorNote, Group, Loading, Numbers, Page, Props, Tip } from '../ui/common'
 import { Choice } from '../ui/fields'
 import {
@@ -152,7 +153,7 @@ export function Opportunity({ id }: { id: number }): JSX.Element {
             <DropdownMenuContent align="end">
               {companyTo && <DropdownMenuItem onSelect={() => go(companyTo)}>Open company</DropdownMenuItem>}
               <DropdownMenuItem onSelect={() => setIsEditingLinks(true)}>Edit links</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => go(`/contacts/connect/${encodeURIComponent(row.company)}`)}>Send connection requests</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void sendRequests([row.company])}>Send connection requests</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           {row.status === 'found' && (
@@ -280,7 +281,7 @@ export function Opportunity({ id }: { id: number }): JSX.Element {
                   </button>
                   <span className="nx:typography-body-small nx:text-muted-foreground">
                     {detail.data.companyJobs} {detail.data.companyJobs === 1 ? 'job' : 'jobs'}
-                    {contacts.length ? ` · ${accepted} accepted, ${pending} pending` : ' · no contacts yet'}
+                    {contacts.length ? ` · ${accepted} connected, ${pending} ${pending === 1 ? 'request' : 'requests'} sent` : ' · no people yet'}
                   </span>
                 </Group>
               </>

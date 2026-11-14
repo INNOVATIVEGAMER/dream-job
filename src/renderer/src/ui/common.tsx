@@ -3,6 +3,7 @@ import type { JSX, ReactNode } from 'react'
 
 import { InfoIcon, WarningIcon } from '@phosphor-icons/react'
 
+import { CONTACT_STATE_NAMES } from '../../../shared/types'
 import type { RunStatus } from '../../../shared/types'
 import { messageOf } from '../lib/api'
 import { go } from '../lib/router'
@@ -196,13 +197,18 @@ const STATUS_VARIANT: Record<string, 'information' | 'default' | 'success' | 'er
   offer: 'success',
   rejected: 'error',
   dead: 'secondary',
+  // A person's status.
+  pending: 'secondary',
+  accepted: 'success',
 }
 
-/** An opportunity's status as a badge: colour and word together. */
+const STATUS_LABEL: Record<string, string> = CONTACT_STATE_NAMES
+
+/** A job's or a person's status as a badge: colour and word together. */
 export function StatusBadge({ status }: { status: string }): JSX.Element {
   return (
     <Badge variant={STATUS_VARIANT[status] ?? 'secondary'} fill="light" isCaps={false}>
-      {status[0]?.toUpperCase() + status.slice(1)}
+      {STATUS_LABEL[status] ?? status[0]?.toUpperCase() + status.slice(1)}
     </Badge>
   )
 }

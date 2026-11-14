@@ -1,11 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-import type { AppliedCompany } from '../../shared/api'
-import { CONTACT_STATES } from '../../shared/types'
-import type { Contact, ContactCompanies, ContactCompany, ContactState, ContactView, DiscardReason, EmailChange, EmailRunDetail, EmailSummary, HomeSummary, NeedsYou, ReadyCompany, TrackerRow } from '../../shared/types'
+import type { DiscardReason, EmailChange, EmailRunDetail, EmailSummary, HomeSummary, NeedsYou, ReadyCompany, TrackerRow } from '../../shared/types'
 import { Companies, NeverShow } from './companies'
 import { Contacts } from './contacts'
-import { companyKey, openDatabase } from './database'
+import { openDatabase } from './database'
 import { Discarded } from './discarded'
 import { EmailStore } from './email'
 import { Opportunities } from './opportunities'
@@ -63,77 +61,20 @@ export class Store {
     return this.opportunities.forCompany(company).find(row => active.has(row.status)) ?? null
   }
 
+  /**
+   * The row connection requests at this company are for: the applied one, or
+   * else the newest found one. Requests can go before the user applies.
+   */
+  connectRow(company: string): TrackerRow | null {
+    return this.appliedRow(company) ?? this.opportunities.forCompany(company).find(row => row.status === 'found') ?? null
+  }
+
   /** Companies ready for the referral message, each with the applied row it points at. */
   readyCompanies(): ReadyCompany[] {
     return this.contacts.readyCompanies().map(entry => {
       const row = this.appliedRow(entry.company)
       return { ...entry, opportunityId: row?.id ?? null, role: row?.role ?? null, appliedOn: row ? row.lastTouch : null }
     })
-  }
-
-  /** Contacts, company first: each company with the job applied for and its people in the view. */
-  contactCompanies(view: ContactView, search: string): ContactCompanies {
-    const all = this.contacts.all()
-    const ready = new Set(this.contacts.readyCompanies().filter(entry => entry.isReady).map(entry => companyKey(entry.company)))
-    const byCompany = new Map<number, { name: string; people: Contact[] }>()
-    for (const contact of all as (Contact & { companyId: number | null })[]) {
-      if (!contact.companyId) continue
-      const entry = byCompany.get(contact.companyId) ?? { name: contact.company, people: [] }
-      entry.people.push(contact)
-      byCompany.set(contact.companyId, entry)
-    }
-    const wanted = search.trim().toLowerCase()
-    const counts = { ready: ready.size, pending: 0, accepted: 0, messaged: 0, referred: 0, all: all.length } as Record<ContactView, number>
-    for (const contact of all) counts[contact.state]++
-
-    const companies: ContactCompany[] = []
-    for (const [id, entry] of byCompany) {
-      const company = this.companies.get(id)
-      const name = company?.name ?? entry.name
-      const states = Object.fromEntries(CONTACT_STATES.map(state => [state, entry.people.filter(person => person.state === state).length])) as Record<ContactState, number>
-      const isReady = ready.has(companyKey(name))
-      if (view === 'ready' && !isReady) continue
-      let people = view === 'all' || view === 'ready' ? entry.people : entry.people.filter(person => person.state === view)
-      if (wanted && !name.toLowerCase().includes(wanted)) people = people.filter(person => person.name.toLowerCase().includes(wanted))
-      if (!people.length) continue
-      const row = this.appliedRow(name)
-      companies.push({ id, name, jobId: row?.id ?? null, role: row?.role ?? null, counts: states, isReady, people })
-    }
-    companies.sort((a, b) => Number(b.isReady) - Number(a.isReady) || b.counts.accepted - a.counts.accepted || a.name.localeCompare(b.name))
-    return { companies, counts, people: all.length, companyCount: byCompany.size }
-  }
-
-  /** Companies the user applied to, newest first, with where their connection requests stand. */
-  appliedCompanies(): AppliedCompany[] {
-    const active = new Set(['applied', 'outreach', 'replied', 'screen', 'onsite', 'offer'])
-    const byCompany = new Map<string, AppliedCompany>()
-    for (const row of this.allRows()) {
-      if (!active.has(row.status)) continue
-      const key = companyKey(row.company)
-      if (byCompany.has(key)) continue
-      byCompany.set(key, { company: row.company, role: row.role, appliedOn: row.lastTouch, opportunityId: row.id, pending: 0, accepted: 0, total: 0 })
-    }
-    for (const entry of byCompany.values()) {
-      const counts = { pending: 0, accepted: 0, total: 0 }
-      for (const state of ['pending', 'accepted', 'messaged', 'referred'] as const) {
-        const people = this.contacts.atCompany(entry.company, state).length
-        counts.total += people
-        if (state === 'pending') counts.pending = people
-        if (state === 'accepted') counts.accepted = people
-      }
-      Object.assign(entry, counts)
-    }
-    return [...byCompany.values()]
-  }
-
-  private allRows(): TrackerRow[] {
-    const rows: TrackerRow[] = []
-    for (let page = 0; ; page++) {
-      const result = this.opportunities.page({ status: 'all', stage: 'all', portal: 'all', search: '', page })
-      rows.push(...result.rows)
-      if (page >= result.pages - 1) break
-    }
-    return rows
   }
 
   /** Moves a discarded posting back into the tracker as found. */
@@ -192,8 +133,9 @@ export class Store {
         if (!row) throw new Error('That row is no longer in the tracker.')
         this.opportunities.setStatus(row.id, change.from, null)
         this.opportunities.appendNote(row.id, `Undid the move to ${change.to} from the email "${change.email.subject}".`)
-      } else {
-        this.contacts.revertState(change.targetId, change.from as never)
+      } else if (change.from === 'pending') {
+        // Older checks also recorded referrals between connected states: undoing those leaves the person connected.
+        this.contacts.revertState(change.targetId, 'pending')
       }
       this.email.markUndone(id)
     })
@@ -228,21 +170,8 @@ export class Store {
     }
   }
 
-  /**
-   * The job Apply to next takes: the best score in a work mode the user
-   * prefers, then one whose mode is not stated, then any other.
-   */
-  nextFound(): TrackerRow | null {
-    const modes = this.settings.preferences().modes
-    const rank = (job: TrackerRow): number => (job.workMode !== 'not-stated' && modes[job.workMode] ? 0 : job.workMode === 'not-stated' ? 1 : 2)
-    const found = this.opportunities.found(500)
-    return found.reduce<TrackerRow | null>((best, job) => (best === null || rank(job) < rank(best) ? job : best), null)
-  }
-
   home(): HomeSummary {
     const counts = this.opportunities.counts()
-    const found = this.nextFound()
-    const contactCounts = this.contacts.counts()
     const needsYou: NeedsYou[] = []
 
     for (const site of this.settings.sites()) {
@@ -255,9 +184,9 @@ export class Store {
       needsYou.push({
         id: `ready-${company.company}`,
         icon: 'users',
-        title: `${company.accepted} accepted at ${company.company}`,
+        title: `${company.accepted} connected at ${company.company}`,
         body: 'Ready for your referral message',
-        action: { label: 'Message', to: `#/contacts/message/${encodeURIComponent(company.company)}` },
+        action: { label: 'Message', to: `#/message/${encodeURIComponent(company.company)}` },
       })
     }
     const replied = this.opportunities.page({ status: 'replied', stage: 'all', portal: 'all', search: '', page: 0 }).rows
@@ -281,10 +210,7 @@ export class Store {
     return {
       counts,
       companyCount: this.companies.count(),
-      nextFound: found,
       foundCount: counts['found'] ?? 0,
-      contactCounts,
-      pendingCompanies: this.contacts.companyCount(),
       needsYou,
       recentRuns: this.runs.recent(4),
       lastHunt: this.runs.last('hunt'),

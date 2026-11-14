@@ -320,6 +320,13 @@ const MIGRATIONS: Migration[] = [
     db.exec(`UPDATE opportunities SET portal_link = 'https://www.instahyre.com/job-' || job_id || '/'
       WHERE portal_link IS NULL AND lower(portal) = 'instahyre' AND job_id GLOB '[0-9]*' AND job_id NOT GLOB '*[^0-9]*'`)
   },
+
+  // A person is a request sent or a connection. Messaged and referred were connections:
+  // they stay connected, and their dates stay as history.
+  db => {
+    db.exec(`UPDATE contacts SET state = 'accepted', accepted_at = COALESCE(accepted_at, messaged_at, referred_at, sent)
+      WHERE state IN ('messaged', 'referred')`)
+  },
 ]
 
 export const SCHEMA_VERSION = MIGRATIONS.length

@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 
 import {
   ArrowSquareOutIcon,
+  ArrowsClockwiseIcon,
   ChatCircleIcon,
   CheckCircleIcon,
   DotsThreeIcon,
@@ -12,6 +13,7 @@ import {
   UserPlusIcon,
 } from '@phosphor-icons/react'
 
+import { REQUESTS_PER_COMPANY, VIEW_STATUSES } from '../../../shared/types'
 import type { CompanyEvent, Contact } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useAutosave } from '../lib/autosave'
@@ -19,6 +21,7 @@ import { useData } from '../lib/data'
 import { capitalize, day, portalName, when } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
+import { sendRequests } from '../ui/CommandMenu'
 import { attempt, DetailLayout, ErrorNote, Group, Hidden, Loading, Numbers, Page, Props, StatusBadge, Tip } from '../ui/common'
 import { Choice, NamePicker } from '../ui/fields'
 import {
@@ -40,6 +43,7 @@ import {
   Input,
   Label,
   Separator,
+  Spinner,
   Switch,
   Table,
   TableBody,
@@ -57,6 +61,8 @@ const STAGES = [
   { value: 'large', label: 'Large' },
 ]
 
+const HOVER = 'nx:opacity-0 nx:group-hover:opacity-100 nx:focus-within:opacity-100 nx:transition-opacity'
+
 const initials = (name: string): string =>
   name
     .split(/\s+/)
@@ -65,15 +71,28 @@ const initials = (name: string): string =>
     .map(part => part[0]!.toUpperCase())
     .join('')
 
-export function Person({ contact }: { contact: Contact }): JSX.Element {
+/** When they connected, or when the request went; someone connected before the app knew them has neither. */
+function sinceText(contact: Contact): string {
+  if (contact.state === 'accepted') return contact.acceptedAt ? `Connected ${day(contact.acceptedAt)}` : ''
+  return contact.sent ? `Sent ${day(contact.sent)}` : ''
+}
+
+/** One person at the company: where they stand, since when, and their LinkedIn. */
+function Person({ contact }: { contact: Contact }): JSX.Element {
   return (
-    <div className="nx:flex nx:items-center nx:gap-2 nx:min-h-9">
+    <div className="nx:group nx:flex nx:items-center nx:gap-2 nx:min-h-9">
       <Avatar size="xs">
         <AvatarFallback>{initials(contact.name)}</AvatarFallback>
       </Avatar>
       <span className="nx:typography-label-default nx:whitespace-nowrap">{contact.name}</span>
       <span className="nx:typography-body-small nx:text-muted-foreground nx:truncate nx:flex-1">{contact.role}</span>
+      <span className="nx:typography-body-small nx:text-muted-foreground nx:tabular-nums nx:whitespace-nowrap">{sinceText(contact)}</span>
       <StatusBadge status={contact.state} />
+      <div className={HOVER}>
+        <Button variant="ghost" size="icon-sm" aria-label={`${contact.name} on LinkedIn`} onClick={() => void attempt(() => api.chrome.openUrl(contact.profileUrl))}>
+          <ArrowSquareOutIcon />
+        </Button>
+      </div>
     </div>
   )
 }
@@ -116,7 +135,9 @@ export function CompanyScreen({ id }: { id: number }): JSX.Element {
   const [name, setName] = useState('')
   const [into, setInto] = useState('')
   const [names, setNames] = useState<{ id: number; name: string }[]>([])
+  const [refreshRun, setRefreshRun] = useState<number | null>(null)
   const isBusy = status?.run?.status === 'running' || status?.run?.status === 'waiting'
+  const isRefreshing = isBusy && refreshRun !== null && status?.run?.id === refreshRun
 
   useEffect(() => {
     if (merging) void api.companies.names().then(setNames).catch(() => undefined)
@@ -133,7 +154,18 @@ export function CompanyScreen({ id }: { id: number }): JSX.Element {
 
   const { jobs, contacts, events } = detail.data
   const found = jobs.filter(job => job.status === 'found')
-  const accepted = contacts.filter(contact => contact.state === 'accepted').length
+  const connected = contacts.filter(contact => contact.state === 'accepted')
+  const requested = contacts.length - connected.length
+  const toMessage = connected.filter(contact => !contact.messagedAt).length
+  // Requests point at a job: one found, or one applied to that is still open.
+  const live = new Set<string>([...(VIEW_STATUSES.found ?? []), ...(VIEW_STATUSES.applied ?? []), ...(VIEW_STATUSES.interviewing ?? [])])
+  const canRequest = jobs.some(job => live.has(job.status))
+  const hasApplied = jobs.some(job => live.has(job.status) && job.status !== 'found')
+  // Refreshing stays on this page: the list fills in as the run finds people.
+  const refresh = async (): Promise<void> => {
+    const runId = await attempt(() => api.flows.refreshPeople([id]), `Reading your LinkedIn connections at ${company.name}`)
+    if (runId) setRefreshRun(runId)
+  }
 
   return (
     <Page
@@ -235,24 +267,44 @@ export function CompanyScreen({ id }: { id: number }): JSX.Element {
               title="People"
               action={
                 <div className="nx:flex nx:gap-1">
-                  {accepted > 0 && (
-                    <Button variant="ghost" size="sm" startIcon={<ChatCircleIcon />} onClick={() => go(`/contacts/message/${encodeURIComponent(company.name)}`)}>
-                      Message accepted
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    startIcon={isRefreshing ? <Spinner /> : <ArrowsClockwiseIcon />}
+                    disabled={isBusy}
+                    title="Reads your LinkedIn connections at this company, and who accepted your requests"
+                    onClick={() => void refresh()}
+                  >
+                    {isRefreshing ? 'Refreshing' : 'Refresh'}
+                  </Button>
+                  {toMessage > 0 && hasApplied && (
+                    <Button variant="ghost" size="sm" startIcon={<ChatCircleIcon />} onClick={() => go(`/message/${encodeURIComponent(company.name)}`)}>
+                      Message {toMessage}
                     </Button>
                   )}
-                  <Button variant="ghost" size="sm" startIcon={<UserPlusIcon />} onClick={() => go(`/contacts/connect/${encodeURIComponent(company.name)}`)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    startIcon={<UserPlusIcon />}
+                    disabled={isBusy || !canRequest}
+                    title={canRequest ? `Up to ${REQUESTS_PER_COMPANY} new people here, never with a note` : 'Requests point at a job: add one here first'}
+                    onClick={() => void sendRequests([company.name])}
+                  >
                     Send requests
                   </Button>
                 </div>
               }
             >
               {contacts.length === 0 ? (
-                <span className="nx:typography-body-small nx:text-muted-foreground">No one here yet.</span>
+                <span className="nx:typography-body-small nx:text-muted-foreground">No one here yet. Refresh finds your connections here; Send requests reaches new people.</span>
               ) : (
-                <div className="nx:flex nx:flex-col">
-                  {contacts.map(contact => (
-                    <Person key={contact.id} contact={contact} />
-                  ))}
+                <div className="nx:flex nx:flex-col nx:gap-1">
+                  <Numbers items={[`${connected.length} connected`, `${requested} ${requested === 1 ? 'request' : 'requests'} sent`]} />
+                  <div className="nx:flex nx:flex-col">
+                    {contacts.map(contact => (
+                      <Person key={contact.id} contact={contact} />
+                    ))}
+                  </div>
                 </div>
               )}
             </Group>

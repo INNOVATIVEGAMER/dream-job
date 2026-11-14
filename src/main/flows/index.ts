@@ -10,7 +10,7 @@ import { applyPlan } from './apply'
 import { emailSpec } from './email'
 import { huntPlan, plannedSearches } from './hunt'
 import { checkPostingsPlan, isCheckable } from './postings'
-import { checkSpec, connectPlan, referralPlan, referralReach } from './referral'
+import { checkSpec, connectPlan, peoplePlan, referralPlan, referralReach } from './referral'
 
 /**
  * Starts the flows. Each returns the new run's id at once; the run carries on
@@ -67,9 +67,17 @@ export class Flows {
 
   async connect(options: ConnectOptions): Promise<number> {
     if (!this.store.settings.portals().linkedin.enabled) throw new Error('LinkedIn is turned off in Settings, Portals.')
-    const companies = options.companies.filter(company => this.store.appliedRow(company))
-    if (companies.length === 0) throw new Error('Pick a company you have applied to: requests point at an application.')
+    const companies = options.companies.filter(company => this.store.connectRow(company))
+    if (companies.length === 0) throw new Error('Pick a company with a found or applied job: requests point at one.')
     return this.engine.start(connectPlan(this.store, companies, options.perCompany))
+  }
+
+  /** Reads the user's LinkedIn connections at each company, so its people and their statuses are current. */
+  async refreshPeople(companyIds: number[]): Promise<number> {
+    if (!this.store.settings.portals().linkedin.enabled) throw new Error('LinkedIn is turned off in Settings, Portals.')
+    const companies = [...new Set(companyIds)].map(id => this.store.companies.get(id)).filter(company => company !== null)
+    if (companies.length === 0) throw new Error('Those companies are no longer in the tracker.')
+    return this.engine.start(peoplePlan(this.store, companies))
   }
 
   async referral(options: ReferralOptions): Promise<number> {

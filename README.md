@@ -12,7 +12,7 @@ your Gmail.
 
 - **Hunt:** searches the portals for your target roles, scores every new posting against your profile, and adds the ones that fit to your tracker.
 - **Apply:** fills applications from your resume and saved answers, on LinkedIn Easy Apply, Wellfound, Instahyre and company career sites. Up to 5 at a time.
-- **Referrals:** sends blank connection requests to people at companies you applied to, then your own saved message, word for word, once they accept.
+- **Referrals:** finds the people you already know at a company, sends blank connection requests to new ones, then your own saved message, word for word, once they connect.
 - **Email check:** reads your newest emails and moves the tracker on: rejections, interviews, offers and replies.
 
 ## What always stays with you

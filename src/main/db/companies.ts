@@ -198,7 +198,7 @@ export class Companies {
         bestScore: own.reduce<number | null>((best, job) => (job.score !== null && (best === null || job.score > best) ? job.score : best), null),
         updated: own.reduce((latest, job) => (job.lastTouch > latest ? job.lastTouch : latest), ''),
         jobCount: own.length,
-        referral: referral.get(id) ?? { pending: 0, accepted: 0, messaged: 0, referred: 0 },
+        referral: referral.get(id) ?? { pending: 0, accepted: 0 },
         neverShow: company.neverShow,
         jobs: byCompany.get(id)!,
       }
@@ -250,7 +250,7 @@ export class Companies {
       .prepare(`SELECT company_id AS companyId, state, COUNT(*) AS n FROM contacts WHERE company_id IN (${ids.map(() => '?').join(', ')}) GROUP BY company_id, state`)
       .all(...ids)) {
       const { companyId, state, n } = row as { companyId: number; state: ContactState; n: number }
-      const counts = out.get(companyId) ?? { pending: 0, accepted: 0, messaged: 0, referred: 0 }
+      const counts = out.get(companyId) ?? { pending: 0, accepted: 0 }
       counts[state] = Number(n)
       out.set(companyId, counts)
     }
@@ -267,7 +267,7 @@ export class Companies {
         `SELECT id, name, role, company, profile_url AS profileUrl, sent, state, accepted_at AS acceptedAt,
            messaged_at AS messagedAt, referred_at AS referredAt
          FROM contacts WHERE company_id = ?
-         ORDER BY CASE state WHEN 'referred' THEN 0 WHEN 'accepted' THEN 1 WHEN 'messaged' THEN 2 ELSE 3 END, sent DESC`,
+         ORDER BY CASE state WHEN 'accepted' THEN 0 ELSE 1 END, sent DESC`,
       )
       .all(id)
       .map(row => ({ ...row }) as Contact)
