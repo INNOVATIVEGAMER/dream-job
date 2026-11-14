@@ -3,7 +3,8 @@ import type { JSX } from 'react'
 
 import { LinkIcon } from '@phosphor-icons/react'
 
-import type { Stage } from '../../../shared/types'
+import { WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
+import type { Stage, WorkMode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { go } from '../lib/router'
 import { attempt, Tip } from '../ui/common'
@@ -45,7 +46,9 @@ const SOURCE_OPTIONS = [
   { value: 'Other', label: 'Other' },
 ]
 
-const EMPTY = { company: '', role: '', stage: 'scaleup' as Stage, portal: 'Other', status: 'applied', link: '', mode: '', notes: '' }
+const MODE_OPTIONS = WORK_MODES.map(mode => ({ value: mode, label: WORK_MODE_NAMES[mode] }))
+
+const EMPTY = { company: '', role: '', stage: 'scaleup' as Stage, portal: 'Other', status: 'applied', link: '', mode: '', workMode: 'not-stated' as WorkMode, notes: '' }
 
 /** A job the hunt didn't find: a recruiter who called, a role a friend sent. Opens the job once added. */
 export function AddJobDialog({ open, onOpenChange, company }: { open: boolean; onOpenChange: (open: boolean) => void; company?: string }): JSX.Element {
@@ -90,10 +93,16 @@ export function AddJobDialog({ open, onOpenChange, company }: { open: boolean; o
                 </Field>
               )}
             </div>
-            <Field>
-              <FieldLabel htmlFor="add-role">Role</FieldLabel>
-              <Input id="add-role" value={form.role} onChange={event => set({ role: event.target.value })} />
-            </Field>
+            <div className="nx:grid nx:gap-3" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)' }}>
+              <Field>
+                <FieldLabel htmlFor="add-role">Role</FieldLabel>
+                <Input id="add-role" value={form.role} onChange={event => set({ role: event.target.value })} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="add-mode">Work mode</FieldLabel>
+                <Choice id="add-mode" value={form.workMode} options={MODE_OPTIONS} onChange={workMode => set({ workMode: workMode as WorkMode })} />
+              </Field>
+            </div>
             <Field>
               <FieldLabel htmlFor="add-link">Link</FieldLabel>
               <InputGroup>

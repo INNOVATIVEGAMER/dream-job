@@ -42,6 +42,7 @@ import type {
   TrackerPage,
   TrackerQuery,
   TrackerRow,
+  WorkMode,
 } from './types'
 
 export type OpportunityDetail = { opportunity: Opportunity; events: OpportunityEvent[]; contacts: Contact[]; company: Company | null; companyJobs: number }
@@ -84,6 +85,7 @@ export type JobAppApi = {
     get: (id: number) => Promise<OpportunityDetail | null>
     setStatus: (id: number, status: string) => Promise<void>
     setNotes: (id: number, notes: string) => Promise<void>
+    setWorkMode: (id: number, workMode: WorkMode) => Promise<void>
     add: (input: NewOpportunity & { status: string }) => Promise<number>
     /** The tracker, company first: each company with its jobs in the view. */
     companies: (query: CompanyQuery) => Promise<CompanyList>
@@ -128,6 +130,8 @@ export type JobAppApi = {
     hunt: (options: HuntOptions) => Promise<number>
     /** One session per row, 5 at a time. */
     apply: (opportunityIds: number[]) => Promise<number>
+    /** Reads found jobs' apply pages: closed ones are marked dead, and each keeps the company's link. No ids: every found job. */
+    checkPostings: (opportunityIds: number[]) => Promise<number>
     connect: (options: ConnectOptions) => Promise<number>
     referral: (options: ReferralOptions) => Promise<number>
     checkAccepted: () => Promise<number>
@@ -175,6 +179,7 @@ export const CHANNELS = [
   'tracker:get',
   'tracker:setStatus',
   'tracker:setNotes',
+  'tracker:setWorkMode',
   'tracker:add',
   'tracker:companies',
   'companies:get',
@@ -203,6 +208,7 @@ export const CHANNELS = [
   'runs:jobs',
   'flows:hunt',
   'flows:apply',
+  'flows:checkPostings',
   'flows:connect',
   'flows:referral',
   'flows:checkAccepted',

@@ -228,9 +228,20 @@ export class Store {
     }
   }
 
+  /**
+   * The job Apply to next takes: the best score in a work mode the user
+   * prefers, then one whose mode is not stated, then any other.
+   */
+  nextFound(): TrackerRow | null {
+    const modes = this.settings.preferences().modes
+    const rank = (job: TrackerRow): number => (job.workMode !== 'not-stated' && modes[job.workMode] ? 0 : job.workMode === 'not-stated' ? 1 : 2)
+    const found = this.opportunities.found(500)
+    return found.reduce<TrackerRow | null>((best, job) => (best === null || rank(job) < rank(best) ? job : best), null)
+  }
+
   home(): HomeSummary {
     const counts = this.opportunities.counts()
-    const found = this.opportunities.found(1)
+    const found = this.nextFound()
     const contactCounts = this.contacts.counts()
     const needsYou: NeedsYou[] = []
 
@@ -270,7 +281,7 @@ export class Store {
     return {
       counts,
       companyCount: this.companies.count(),
-      nextFound: found[0] ?? null,
+      nextFound: found,
       foundCount: counts['found'] ?? 0,
       contactCounts,
       pendingCompanies: this.contacts.companyCount(),

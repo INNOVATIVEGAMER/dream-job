@@ -35,6 +35,7 @@ const api: JobAppApi = {
     get: call('tracker:get'),
     setStatus: call('tracker:setStatus'),
     setNotes: call('tracker:setNotes'),
+    setWorkMode: call('tracker:setWorkMode'),
     add: call('tracker:add'),
     companies: call('tracker:companies'),
   },
@@ -73,6 +74,7 @@ const api: JobAppApi = {
   flows: {
     hunt: call('flows:hunt'),
     apply: call('flows:apply'),
+    checkPostings: call('flows:checkPostings'),
     connect: call('flows:connect'),
     referral: call('flows:referral'),
     checkAccepted: call('flows:checkAccepted'),

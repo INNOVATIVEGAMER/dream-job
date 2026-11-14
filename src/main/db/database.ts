@@ -2,6 +2,8 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
+import { workModeOf } from '../../shared/types'
+
 /** Today as YYYY-MM-DD in local time, the form the tracker's date columns use. */
 export function today(at = new Date()): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
@@ -284,6 +286,25 @@ const MIGRATIONS: Migration[] = [
         if (companyId) link.run(companyId, id)
       }
     }
+  },
+
+  // Each job's work mode as a fixed label, read from the mode text it already has.
+  db => {
+    addColumns(db, 'opportunities', { work_mode: "TEXT NOT NULL DEFAULT 'not-stated'" })
+    const set = db.prepare('UPDATE opportunities SET work_mode = ? WHERE id = ?')
+    for (const row of db.prepare('SELECT id, mode FROM opportunities').all()) {
+      const { id, mode } = row as { id: number; mode: string | null }
+      set.run(workModeOf(mode ?? ''), id)
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS opportunities_work_mode ON opportunities (work_mode)')
+  },
+
+  // Two links per job: where it was found on a portal, and where the application goes (`link`).
+  // Until now `link` held the portal's, so a portal link moves across as both.
+  db => {
+    addColumns(db, 'opportunities', { portal_link: 'TEXT' })
+    db.exec(`UPDATE opportunities SET portal_link = link
+      WHERE link LIKE '%linkedin.com/%' OR link LIKE '%wellfound.com/%' OR link LIKE '%angel.co/%' OR link LIKE '%instahyre.com/%'`)
   },
 ]
 

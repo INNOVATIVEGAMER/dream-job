@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { AT_ONCE, DISCARD_REASONS, PORTALS } from '../../shared/types'
+import { cleanLink, isPortalLink } from '../../shared/links'
 import type { Opportunity, Portal } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
@@ -28,6 +29,13 @@ function portalOf(row: Opportunity): Portal | null {
 }
 
 function howToApply(portal: Portal | null, row: Opportunity): string[] {
+  // The hunt saved the company's own apply page: the application goes there.
+  if (row.link && !isPortalLink(row.link)) {
+    return [
+      `- Start with open_page on ${row.link}: the company's own apply page, where the application goes, and the final word on the job. Closed, expired or gone there: finish with "closed".`,
+      portal === 'linkedin' && row.jobId ? `- Only if that page is gone and you need to know whether LinkedIn still lists it: linkedin_read_job (job id ${row.jobId}).` : '',
+    ].filter(Boolean)
+  }
   switch (portal) {
     case 'linkedin':
       return [
@@ -37,7 +45,7 @@ function howToApply(portal: Portal | null, row: Opportunity): string[] {
       ]
     case 'wellfound':
       return [
-        `- Start with wellfound_read_job (link ${row.link}): it says whether the posting is there, already applied to, and how to apply.`,
+        `- Start with wellfound_read_job (link ${row.portalLink ?? row.link}): it says whether the posting is there, already applied to, and how to apply.`,
         '- On Wellfound: wellfound_apply with no answers opens the form and reads it; call it again with every answer, including a short note to the company (a written answer), and it sends.',
         '- Applying on the company\'s site instead: open_page with that link, and apply there.',
       ]
@@ -62,7 +70,8 @@ function system(store: Store, row: Opportunity): string {
     `Company: ${row.company}`,
     `Role: ${row.role}`,
     `Portal: ${row.portal}${row.jobId ? `, job id ${row.jobId}` : ''}`,
-    `Link: ${row.link ?? 'none recorded'}`,
+    `Where the application goes: ${row.link ?? 'none recorded'}`,
+    row.portalLink && row.portalLink !== row.link ? `Found on ${row.portal}: ${row.portalLink}` : '',
     row.applyRoute ? `Apply route when found: ${row.applyRoute}` : '',
     row.pay ? `Pay when found: ${row.pay}` : '',
     row.experience ? `Experience asked: ${row.experience}` : '',
@@ -148,6 +157,9 @@ function noteOf(record: ApplyRecord, summary: string): string {
 function finish(store: Store, row: Opportunity, record: ApplyRecord, answer: Answer, ctx: RunContext): string {
   const rows = store.opportunities
   if (record.posting && !record.posting.closed) rows.setPosting(row.id, 'open', null)
+  // A row found before apply pages were saved: keep the company's link once read_job gives it.
+  const applyUrl = record.posting?.applyUrl
+  if (applyUrl && !isPortalLink(applyUrl) && (!row.link || isPortalLink(row.link))) rows.setLink(row.id, cleanLink(applyUrl), row.portalLink ?? row.link)
   ctx.changed('opportunities')
 
   // A submit the app saw go through settles it, whatever the answer says.

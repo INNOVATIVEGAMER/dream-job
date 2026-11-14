@@ -18,7 +18,7 @@ export function preferencesText(prefs: Preferences): string {
     `Roles wanted: ${prefs.targetRoles.join('; ') || 'none set'}`,
     `Roles skipped: ${prefs.skipRoles.join('; ') || 'none'}`,
     `Experience ceiling: ${prefs.ceilingYears === null ? 'none set' : `postings asking up to ${prefs.ceilingYears} years`}`,
-    `Work modes: ${modes.join(', ') || 'none set'}`,
+    `Work modes preferred: ${modes.join(', ') || 'any'}. A preference only: no posting is ruled out for its mode.`,
     `Country: ${prefs.country || 'not set'}. Cities for on-site and hybrid: ${prefs.cities.join(', ') || 'none listed'}`,
     `Needs visa sponsorship: ${prefs.needsVisa ? 'yes' : 'no'}`,
     floorText(prefs),

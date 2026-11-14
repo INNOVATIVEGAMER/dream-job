@@ -1,6 +1,6 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
-import { PORTALS, STAGES, TRACKER_VIEWS, VIEW_STATUSES } from '../../shared/types'
+import { PORTALS, STAGES, TRACKER_VIEWS, VIEW_STATUSES, WORK_MODES } from '../../shared/types'
 import type {
   Company,
   CompanyDetail,
@@ -24,11 +24,11 @@ const COMPANY = `id, name, stage, linkedin_url AS linkedinUrl, website, headcoun
   never_show AS neverShow, never_why AS neverWhy, never_since AS neverSince, added`
 
 const JOB = `id, company, role, stage, score, status, last_touch AS lastTouch,
-  next_action AS nextAction, portal, job_id AS jobId, link, posting_state AS postingState, company_id AS companyId`
+  next_action AS nextAction, portal, job_id AS jobId, link, posting_state AS postingState, work_mode AS workMode, company_id AS companyId`
 
 /** The same columns from a job joined to its company, whose name and stage win. */
 const JOINED = `o.id, c.name AS company, o.role, c.stage, o.score, o.status, o.last_touch AS lastTouch,
-  o.next_action AS nextAction, o.portal, o.job_id AS jobId, o.link, o.posting_state AS postingState, o.company_id AS companyId`
+  o.next_action AS nextAction, o.portal, o.job_id AS jobId, o.link, o.posting_state AS postingState, o.work_mode AS workMode, o.company_id AS companyId`
 
 /** Furthest along wins; a closed job counts only when every job at the company is closed. */
 const ORDER = ['found', 'applied', 'outreach', 'replied', 'screen', 'onsite', 'offer']
@@ -156,6 +156,11 @@ export class Companies {
     } else if (query.portal === 'other') {
       where.push(`lower(o.portal) NOT IN (${PORTALS.map(() => '?').join(', ')})`)
       params.push(...PORTALS)
+    }
+    const modes = query.modes.filter(mode => (WORK_MODES as readonly string[]).includes(mode))
+    if (modes.length && modes.length < WORK_MODES.length) {
+      where.push(`o.work_mode IN (${modes.map(() => '?').join(', ')})`)
+      params.push(...modes)
     }
     const search = query.search.trim().toLowerCase()
     if (search) {

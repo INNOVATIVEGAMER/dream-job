@@ -9,25 +9,29 @@ import {
   DotsThreeIcon,
   EnvelopeIcon,
   FunnelIcon,
+  ListChecksIcon,
   MagnifyingGlassIcon,
   PaperPlaneTiltIcon,
   PlusIcon,
+  WarningIcon,
   XIcon,
 } from '@phosphor-icons/react'
 
-import { AT_ONCE, PORTAL_NAMES, PORTALS, STAGES, STATUSES, TRACKER_VIEW_NAMES, TRACKER_VIEWS } from '../../../shared/types'
-import type { CompanyQuery, CompanyRow, TrackerRow, TrackerView } from '../../../shared/types'
+import { AT_ONCE, PORTAL_NAMES, PORTALS, STAGES, STATUSES, TRACKER_VIEW_NAMES, TRACKER_VIEWS, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
+import type { CompanyQuery, CompanyRow, Preferences, TrackerRow, TrackerView, WorkMode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { capitalize, day, portalName } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
-import { applyToNext } from '../ui/CommandMenu'
+import { applyToNext, checkPostings } from '../ui/CommandMenu'
 import { attempt, ErrorNote, Hidden, Loading, Page, StatusBadge } from '../ui/common'
 import {
+  Badge,
   Button,
   Checkbox,
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -61,6 +65,14 @@ import {
 import { AddJobDialog } from './AddJob'
 
 const HOVER = 'nx:opacity-0 nx:group-hover:opacity-100 nx:focus-within:opacity-100 nx:transition-opacity'
+
+/** The modes the tracker opens on: the ones the user prefers, and jobs that don't say. Every mode when all are preferred. */
+function preferredModes(prefs: Preferences): WorkMode[] {
+  const wanted = WORK_MODES.filter(mode => mode !== 'not-stated' && prefs.modes[mode])
+  return wanted.length === 0 || wanted.length === 3 ? [] : [...wanted, 'not-stated']
+}
+
+const modeList = (modes: WorkMode[]): string => modes.map(mode => WORK_MODE_NAMES[mode]).join(', ')
 
 function referralLine(row: CompanyRow): string {
   const parts = (['referred', 'accepted', 'messaged', 'pending'] as const).filter(state => row.referral[state] > 0).map(state => `${row.referral[state]} ${state}`)
@@ -117,14 +129,30 @@ function CompanyMenu({ row }: { row: CompanyRow }): JSX.Element {
 /** The tracker, company first: each company with its jobs as rows beneath it. */
 export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; view?: TrackerView }): JSX.Element {
   const status = useAppStatus()
-  const [query, setQuery] = useState<CompanyQuery>({ view, stage: 'all', portal: 'all', search: '' })
+  const settings = useData(() => api.settings.get(), [], ['settings'])
+  const defaultModes = settings.data ? preferredModes(settings.data.preferences) : null
+  const [query, setQuery] = useState<CompanyQuery>({ view, stage: 'all', portal: 'all', search: '', modes: [] })
+  const [modesTouched, setModesTouched] = useState(false)
   useEffect(() => setQuery(current => ({ ...current, view })), [view])
+  // Opens on the modes the user prefers, until they pick their own.
+  const modes = modesTouched ? query.modes : (defaultModes ?? [])
+  const shown: CompanyQuery = { ...query, modes }
+  const setModes = (modes: WorkMode[]): void => {
+    setModesTouched(true)
+    setQuery(current => ({ ...current, modes }))
+  }
+  const toggleMode = (mode: WorkMode, on: boolean): void => {
+    const current = modes.length ? modes : [...WORK_MODES]
+    const next = WORK_MODES.filter(one => (one === mode ? on : current.includes(one)))
+    if (next.length === 0) return
+    setModes(next.length === WORK_MODES.length ? [] : next)
+  }
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState<Set<number>>(new Set())
   const [closed, setClosed] = useState<Set<number>>(new Set())
   const [picked, setPicked] = useState<Set<number>>(new Set())
   const [isAdding, setAdding] = useState(adding)
-  const list = useData(() => api.tracker.companies(query), [JSON.stringify(query)], ['opportunities', 'contacts'])
+  const list = useData(() => api.tracker.companies(shown), [JSON.stringify(shown)], ['opportunities', 'contacts'])
   const isBusy = status?.run?.status === 'running' || status?.run?.status === 'waiting'
 
   useEffect(() => {
@@ -185,6 +213,7 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
   const chips: { key: string; label: string; clear: () => void }[] = []
   if (query.stage !== 'all') chips.push({ key: 'stage', label: `Stage: ${capitalize(query.stage)}`, clear: () => setQuery(current => ({ ...current, stage: 'all' })) })
   if (query.portal !== 'all') chips.push({ key: 'portal', label: `Portal: ${portalName(query.portal) || 'Other'}`, clear: () => setQuery(current => ({ ...current, portal: 'all' })) })
+  if (modes.length) chips.push({ key: 'mode', label: `Mode: ${modeList(modes)}`, clear: () => setModes([]) })
 
   return (
     <Page
@@ -217,6 +246,11 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
           </TabsList>
         </Tabs>
         <div className="nx:flex nx:items-center nx:gap-2">
+          {query.view === 'found' && (data?.counts.found ?? 0) > 0 && (
+            <Button variant="ghost" size="sm" startIcon={<ListChecksIcon />} disabled={isBusy} onClick={() => void checkPostings([])}>
+              Check postings
+            </Button>
+          )}
           <div className="nx:w-60">
             <InputGroup>
               <InputGroupAddon align="inline-start">
@@ -252,6 +286,18 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                 ))}
                 <DropdownMenuRadioItem value="other">Other sources</DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Work mode</DropdownMenuLabel>
+              {WORK_MODES.map(mode => (
+                <DropdownMenuCheckboxItem
+                  key={mode}
+                  checked={modes.length === 0 || modes.includes(mode)}
+                  onCheckedChange={on => toggleMode(mode, on === true)}
+                  onSelect={event => event.preventDefault()}
+                >
+                  {WORK_MODE_NAMES[mode]}
+                </DropdownMenuCheckboxItem>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -352,6 +398,14 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                               onClick={() => go(`/opportunity/${job.id}`)}
                             >
                               <span className="nx:typography-body-default nx:text-foreground nx:truncate">{job.role}</span>
+                              <Badge variant="secondary" fill={job.workMode === 'not-stated' ? 'outline' : 'light'} isCaps={false}>
+                                {WORK_MODE_NAMES[job.workMode]}
+                              </Badge>
+                              {job.postingState === 'unreadable' && (
+                                <span title="Apply page not readable" aria-label="Apply page not readable" className="nx:inline-flex nx:shrink-0 nx:text-warning-subtle-foreground">
+                                  <WarningIcon size={14} />
+                                </span>
+                              )}
                               <span className="nx:typography-body-small nx:text-muted-foreground nx:whitespace-nowrap">{portalName(job.portal) || job.portal}</span>
                             </button>
                           </TableCell>
@@ -404,6 +458,10 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
               >
                 <PaperPlaneTiltIcon />
                 <span>Apply to {pickedFound.length}</span>
+              </ToolbarButton>
+              <ToolbarButton size="sm" variant="ghost" disabled={isBusy || pickedFound.length === 0} onClick={() => void checkPostings(pickedFound.map(job => job.id)).then(() => setPicked(new Set()))}>
+                <ListChecksIcon />
+                <span>Check {pickedFound.length}</span>
               </ToolbarButton>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

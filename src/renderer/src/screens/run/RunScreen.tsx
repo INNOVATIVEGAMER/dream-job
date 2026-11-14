@@ -8,6 +8,7 @@ import {
   DotOutlineIcon,
   EnvelopeIcon,
   HandPalmIcon,
+  ListChecksIcon,
   MinusCircleIcon,
   PaperPlaneTiltIcon,
   StopIcon,
@@ -18,6 +19,7 @@ import {
   XCircleIcon,
 } from '@phosphor-icons/react'
 
+import { WORK_MODE_NAMES } from '../../../../shared/types'
 import type { LaneStatus, RunEvent, RunLane, RunState, TrackerRow } from '../../../../shared/types'
 import { api } from '../../lib/api'
 import { useData } from '../../lib/data'
@@ -27,6 +29,7 @@ import { useAppStatus } from '../../lib/status'
 import { applyToNext } from '../../ui/CommandMenu'
 import { attempt, Group, Hidden, Numbers, Page, RunStatusBadge, StatusBadge } from '../../ui/common'
 import {
+  Badge,
   Button,
   Card,
   CardDescription,
@@ -129,6 +132,7 @@ function Added({ runId, live }: { runId: number; live: boolean }): JSX.Element |
       <TableHeader>
         <TableRow>
           <TableHead>Company and role</TableHead>
+          <TableHead>Mode</TableHead>
           <TableHead>Portal</TableHead>
           <TableHead className="nx:text-end">Score</TableHead>
           <TableHead>
@@ -144,6 +148,11 @@ function Added({ runId, live }: { runId: number; live: boolean }): JSX.Element |
                 <span className="nx:typography-label-default nx:text-foreground nx:whitespace-nowrap">{job.company}</span>
                 <span className="nx:typography-body-small nx:text-muted-foreground nx:truncate">{job.role}</span>
               </button>
+            </TableCell>
+            <TableCell>
+              <Badge variant="secondary" fill={job.workMode === 'not-stated' ? 'outline' : 'light'} isCaps={false}>
+                {WORK_MODE_NAMES[job.workMode]}
+              </Badge>
             </TableCell>
             <TableCell className="nx:typography-body-small">{portalName(job.portal)}</TableCell>
             <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{job.score ?? ''}</TableCell>
@@ -186,6 +195,17 @@ function NextSteps({ run, company }: { run: RunState; company: string | null }):
           Apply to {foundIds.length} found
         </Button>
       ) : null
+    case 'check':
+      return (
+        <>
+          <Button startIcon={<PaperPlaneTiltIcon />} onClick={() => void applyToNext()}>
+            Apply to next found
+          </Button>
+          <Button variant="outline" startIcon={<ListChecksIcon />} onClick={() => go('/tracker/found')}>
+            Open found jobs
+          </Button>
+        </>
+      )
     case 'email':
       return (
         <Button startIcon={<EnvelopeIcon />} onClick={() => go(`/email/${run.id}`)}>

@@ -6,7 +6,7 @@ import type { BrowserWindow } from 'electron'
 import { z } from 'zod'
 
 import type { AppliedCompany, Channel, OpportunityDetail, RunDetail } from '../shared/api'
-import { CONTACT_STATES, CONTACT_VIEWS, HUNT_WINDOWS, PORTALS, SIGN_IN_SITES, SIGN_IN_URLS, STAGES, TRACKER_VIEWS } from '../shared/types'
+import { CONTACT_STATES, CONTACT_VIEWS, HUNT_WINDOWS, PORTALS, SIGN_IN_SITES, SIGN_IN_URLS, STAGES, TRACKER_VIEWS, WORK_MODES } from '../shared/types'
 import type { AppStatus, DataTopic, ResumeInfo } from '../shared/types'
 import type { ChromeController } from './browser/chrome'
 import { findChrome } from './browser/chrome'
@@ -37,7 +37,7 @@ const page = z.number().int().min(0).max(100_000)
 const short = (max = 200) => z.string().max(max)
 
 const TrackerQuery = z.object({ status: short(), stage: short(), portal: short(), search: short(), page })
-const CompanyQuery = z.object({ view: z.enum(TRACKER_VIEWS), stage: short(), portal: short(), search: short() })
+const CompanyQuery = z.object({ view: z.enum(TRACKER_VIEWS), stage: short(), portal: short(), search: short(), modes: z.array(z.enum(WORK_MODES)).max(WORK_MODES.length).default([]) })
 const DiscardedQuery = z.object({ reason: short(), search: short(), page })
 const ContactQuery = z.object({ state: short(), company: short(), search: short(), page })
 const RunQuery = z.object({ flow: short(), portal: short(), page })
@@ -48,8 +48,9 @@ const NewRow = z.object({
   portal: short(),
   link: short(1000),
   mode: short(),
+  workMode: z.enum(WORK_MODES).optional(),
   notes: short(10_000),
-  status: z.enum(['found', 'applied', 'screen']),
+  status: z.enum(['found', 'applied', 'replied', 'screen', 'onsite']),
 })
 const CardAnswerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('approve'), texts: z.array(z.string().max(20_000)).max(20) }),
@@ -139,6 +140,10 @@ export function registerIpc(deps: IpcDeps): void {
       store.opportunities.setNotes(id.parse(rowId), short(20_000).parse(notes))
       deps.sendData(['opportunities'])
     },
+    'tracker:setWorkMode': (rowId, workMode) => {
+      store.opportunities.setWorkMode(id.parse(rowId), z.enum(WORK_MODES).parse(workMode))
+      deps.sendData(['opportunities'])
+    },
     'tracker:add': input => {
       const row = NewRow.parse(input)
       const existing = store.opportunities.findExisting(row.portal, '', row.company, row.role)
@@ -190,6 +195,7 @@ export function registerIpc(deps: IpcDeps): void {
 
     'flows:hunt': options => deps.flows.hunt(HuntOptions.parse(options)),
     'flows:apply': rowIds => deps.flows.apply(z.array(id).min(1).max(200).parse(rowIds)),
+    'flows:checkPostings': rowIds => deps.flows.checkPostings(z.array(id).max(1000).parse(rowIds ?? [])),
     'flows:connect': options => deps.flows.connect(ConnectOptions.parse(options)),
     'flows:referral': options => deps.flows.referral(ReferralOptions.parse(options)),
     'flows:checkAccepted': () => deps.flows.checkAccepted(),

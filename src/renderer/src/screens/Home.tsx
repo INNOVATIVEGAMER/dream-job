@@ -5,6 +5,7 @@ import {
   ChatCircleIcon,
   EnvelopeIcon,
   HandPalmIcon,
+  ListChecksIcon,
   MagnifyingGlassIcon,
   PaperPlaneTiltIcon,
   PlusIcon,
@@ -43,6 +44,7 @@ import {
 const FLOW_ICON: Record<string, ReactNode> = {
   hunt: <MagnifyingGlassIcon size={14} />,
   apply: <PaperPlaneTiltIcon size={14} />,
+  check: <ListChecksIcon size={14} />,
   connect: <UserPlusIcon size={14} />,
   referral: <ChatCircleIcon size={14} />,
   email: <EnvelopeIcon size={14} />,

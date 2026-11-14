@@ -9,6 +9,7 @@ import type { BrowserState } from '../../shared/types'
 import { Cdp } from './cdp'
 import type { CdpEvent } from './cdp'
 import { GUARD_SCRIPT } from './page-scripts'
+import { paced } from './pace'
 
 const START_URL = 'about:blank'
 
@@ -77,12 +78,17 @@ export abstract class PageDriver {
   }
 
   /**
-   * Opens a URL in this tab and waits for it to finish loading, then a little
-   * longer: pages such as LinkedIn fill in their lists after load.
+   * Opens a URL in this tab, in its turn for the site, and waits for it to
+   * finish loading, then a little longer: pages such as LinkedIn fill in their
+   * lists after load.
    */
   async openPage(url: string): Promise<void> {
-    const answer = (await this.command('Page.navigate', { url })) as { errorText?: string }
-    if (answer.errorText) throw new Error(`the page did not open: ${answer.errorText}`)
+    // Portals refuse pages opened too fast: every tab takes its turn per site (pace.ts).
+    const error = await paced(url, async () => {
+      const answer = (await this.command('Page.navigate', { url })) as { errorText?: string }
+      return answer.errorText ?? null
+    })
+    if (error) throw new Error(`the page did not open: ${error}`)
     await this.settle()
   }
 

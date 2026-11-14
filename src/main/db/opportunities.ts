@@ -1,6 +1,6 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
-import { PORTALS, STAGES, STATUSES } from '../../shared/types'
+import { PORTALS, STAGES, STATUSES, WORK_MODES, workModeOf } from '../../shared/types'
 import type {
   NewOpportunity,
   Opportunity,
@@ -8,16 +8,18 @@ import type {
   TrackerPage,
   TrackerQuery,
   TrackerRow,
+  WorkMode,
 } from '../../shared/types'
+import { linkKey } from '../../shared/links'
 import type { Companies } from './companies'
 import { companyKey, now, paging, today } from './database'
 
 export const PAGE_SIZE = 15
 
 const ROW = `id, company, role, stage, score, status, last_touch AS lastTouch,
-  next_action AS nextAction, portal, job_id AS jobId, link, posting_state AS postingState, company_id AS companyId`
+  next_action AS nextAction, portal, job_id AS jobId, link, posting_state AS postingState, work_mode AS workMode, company_id AS companyId`
 
-const FULL = `${ROW}, found, mode, applicants, referral, notes, pay, experience,
+const FULL = `${ROW}, found, portal_link AS portalLink, mode, applicants, referral, notes, pay, experience,
   apply_route AS applyRoute, score_reasons AS scoreReasons,
   posting_checked AS postingChecked, posting_note AS postingNote`
 
@@ -30,8 +32,15 @@ export type FoundPosting = {
   stage: string
   portal: string
   jobId: string
+  /** Where the application goes: the company's own page when applying leaves the portal. */
   link: string
+  /** The posting on the portal. */
+  portalLink: string
+  /** `unreadable` when the company's page could not be read, so the portal's facts stand. */
+  postingState: 'open' | 'unreadable'
+  postingNote: string | null
   mode: string
+  workMode: WorkMode
   applicants: string
   pay: string | null
   experience: string | null
@@ -129,7 +138,15 @@ export class Opportunities {
    * A row already tracked for this posting: the same portal and job id, or
    * the same company and role. The hunt skips these.
    */
-  findExisting(portal: string, jobId: string, company: string, role: string): TrackerRow | null {
+  findExisting(portal: string, jobId: string, company: string, role: string, link?: string | null): TrackerRow | null {
+    if (link) {
+      // The same apply page, whichever portal showed it.
+      const key = linkKey(link)
+      for (const row of this.db.prepare(`SELECT ${ROW} FROM opportunities WHERE link IS NOT NULL`).all()) {
+        const candidate = row as TrackerRow
+        if (candidate.link && linkKey(candidate.link) === key) return { ...candidate }
+      }
+    }
     if (jobId) {
       const byJob = this.db
         .prepare(`SELECT ${ROW} FROM opportunities WHERE lower(portal) = lower(?) AND job_id = ? LIMIT 1`)
@@ -159,10 +176,10 @@ export class Opportunities {
     const day = today()
     const result = this.db
       .prepare(
-        `INSERT INTO opportunities (found, company, stage, role, portal, job_id, mode, applicants, referral, score,
-          status, last_touch, next_action, notes, updated_at, link, posting_state, posting_checked, pay, experience,
-          apply_route, score_reasons, run_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'found', ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO opportunities (found, company, stage, role, portal, job_id, mode, work_mode, applicants, referral, score,
+          status, last_touch, next_action, notes, updated_at, link, portal_link, posting_state, posting_note, posting_checked, pay,
+          experience, apply_route, score_reasons, run_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'found', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         day,
@@ -172,6 +189,7 @@ export class Opportunities {
         posting.portal,
         posting.jobId,
         posting.mode,
+        posting.workMode,
         posting.applicants,
         'Connection requests are the next step',
         posting.score,
@@ -180,6 +198,9 @@ export class Opportunities {
         posting.notes,
         day,
         posting.link,
+        posting.portalLink,
+        posting.postingState,
+        posting.postingNote,
         now(),
         posting.pay,
         posting.experience,
@@ -198,11 +219,23 @@ export class Opportunities {
     const day = today()
     const result = this.db
       .prepare(
-        `INSERT INTO opportunities (found, company, stage, role, portal, job_id, mode, applicants, referral, score,
+        `INSERT INTO opportunities (found, company, stage, role, portal, job_id, mode, work_mode, applicants, referral, score,
           status, last_touch, next_action, notes, updated_at, link)
-         VALUES (?, ?, ?, ?, ?, '', ?, '', 'Connection requests are the next step', NULL, 'found', ?, '', ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, '', ?, ?, '', 'Connection requests are the next step', NULL, 'found', ?, '', ?, ?, ?)`,
       )
-      .run(day, input.company.trim(), input.stage, input.role.trim(), input.portal.trim() || 'direct', input.mode.trim(), day, input.notes.trim(), day, input.link.trim() || null)
+      .run(
+        day,
+        input.company.trim(),
+        input.stage,
+        input.role.trim(),
+        input.portal.trim() || 'direct',
+        input.mode.trim(),
+        input.workMode ?? workModeOf(input.mode),
+        day,
+        input.notes.trim(),
+        day,
+        input.link.trim() || null,
+      )
     const id = Number(result.lastInsertRowid)
     this.companies.attach('opportunities', id, input.company, input.stage)
     this.addEvent(id, 'Added by you', null)
@@ -231,6 +264,22 @@ export class Opportunities {
     if (!row) throw new Error(`no opportunity with id ${id}`)
     const note = `${today()}: ${text.trim()}`
     this.setNotes(id, row.notes.trim() ? `${row.notes.trim()}\n\n${note}` : note)
+  }
+
+  /** Saves where the application goes, keeping the portal's link beside it. */
+  setLink(id: number, link: string, portalLink: string | null): void {
+    this.db.prepare('UPDATE opportunities SET link = ?, portal_link = COALESCE(portal_link, ?), updated_at = ? WHERE id = ?').run(link, portalLink, today(), id)
+  }
+
+  /** The work mode and place in words, such as "Hybrid, Bengaluru". */
+  setMode(id: number, mode: string): void {
+    this.db.prepare('UPDATE opportunities SET mode = ?, updated_at = ? WHERE id = ?').run(mode, today(), id)
+  }
+
+  setWorkMode(id: number, workMode: WorkMode): void {
+    if (!(WORK_MODES as readonly string[]).includes(workMode)) throw new Error(`${workMode} is not a work mode`)
+    const result = this.db.prepare('UPDATE opportunities SET work_mode = ?, updated_at = ? WHERE id = ?').run(workMode, today(), id)
+    if (Number(result.changes) !== 1) throw new Error(`no opportunity with id ${id}`)
   }
 
   setNextAction(id: number, nextAction: string): void {

@@ -93,17 +93,15 @@ async function checkFreeBrowsing(ctx: RunContext, url?: string): Promise<string 
 }
 
 /** Reads the tab as text Claude can work from. */
-export async function readPage(ctx: RunContext, scope: 'auto' | 'page' = 'auto', maxChars = 6000): Promise<string> {
-  const page = await ctx.chrome.evaluate<ReadResult>(readScript(scope, maxChars, 150))
+export async function readPage(ctx: RunContext, scope: 'auto' | 'page' = 'auto', maxChars = 6000, maxElements = 150): Promise<string> {
+  const page = await ctx.chrome.evaluate<ReadResult>(readScript(scope, maxChars, maxElements))
   return [
     `URL: ${page.url}`,
     `Title: ${page.title}`,
     `Read: the ${page.scope}`,
     '',
     page.text + (page.isCut ? '\n[text cut here; read_page with scope "page" or scroll for more]' : ''),
-    '',
-    'Elements:',
-    ...page.elements,
+    ...(maxElements > 0 ? ['', 'Elements:', ...page.elements] : []),
   ].join('\n')
 }
 

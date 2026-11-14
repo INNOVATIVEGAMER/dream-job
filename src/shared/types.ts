@@ -87,6 +87,26 @@ export type ToolSite = Portal | 'gmail'
 
 export const TOOL_SITE_NAMES: Record<ToolSite, string> = { ...PORTAL_NAMES, gmail: 'Gmail' }
 
+/**
+ * A job's work mode as a fixed label, for the tracker's badge and filter.
+ * Hunts keep every mode; the user's preference only picks the searches and
+ * the tracker's default filter.
+ */
+export const WORK_MODES = ['remote', 'hybrid', 'onsite', 'not-stated'] as const
+export type WorkMode = (typeof WORK_MODES)[number]
+
+export const WORK_MODE_NAMES: Record<WorkMode, string> = { remote: 'Remote', hybrid: 'Hybrid', onsite: 'On-site', 'not-stated': 'Not stated' }
+
+/** Reads the label from a free-text mode such as "Hybrid, Bengaluru". Says not-stated rather than guess. */
+export function workModeOf(text: string): WorkMode {
+  const value = text.toLowerCase()
+  if (/not stated|unknown/.test(value)) return 'not-stated'
+  if (/hybrid/.test(value)) return 'hybrid'
+  if (/remote|work from home|\bwfh\b|anywhere/.test(value)) return 'remote'
+  if (/on-?site|in[- ]office|\bwfo\b|work from office/.test(value)) return 'onsite'
+  return 'not-stated'
+}
+
 /** One opportunity as a table row shows it. */
 export type TrackerRow = {
   id: number
@@ -101,6 +121,7 @@ export type TrackerRow = {
   jobId: string
   link: string | null
   postingState: string | null
+  workMode: WorkMode
   /** The company it belongs to. */
   companyId?: number | null
 }
@@ -108,6 +129,8 @@ export type TrackerRow = {
 /** Everything about one opportunity, for its own screen. */
 export type Opportunity = TrackerRow & {
   found: string
+  /** The posting on the portal it was found on; `link` is where the application goes. */
+  portalLink: string | null
   mode: string
   applicants: string
   referral: string
@@ -200,7 +223,8 @@ export type CompanyRow = {
   jobs: TrackerRow[]
 }
 
-export type CompanyQuery = { view: TrackerView; stage: string; portal: string; search: string }
+/** `modes` empty means every work mode. */
+export type CompanyQuery = { view: TrackerView; stage: string; portal: string; search: string; modes: WorkMode[] }
 
 export type CompanyList = {
   companies: CompanyRow[]
@@ -223,6 +247,8 @@ export type NewOpportunity = {
   portal: string
   link: string
   mode: string
+  /** Not stated when left out. */
+  workMode?: WorkMode
   notes: string
 }
 
@@ -520,12 +546,13 @@ export type SiteState = { site: string; state: 'signed-in' | 'signed-out' | 'unk
 /* Runs                                                                */
 /* ------------------------------------------------------------------ */
 
-export const FLOWS = ['hunt', 'apply', 'connect', 'referral', 'email'] as const
+export const FLOWS = ['hunt', 'apply', 'check', 'connect', 'referral', 'email'] as const
 export type Flow = (typeof FLOWS)[number]
 
 export const FLOW_NAMES: Record<Flow, string> = {
   hunt: 'Hunt',
   apply: 'Apply',
+  check: 'Posting checks',
   connect: 'Connection requests',
   referral: 'Referral messages',
   email: 'Email check',

@@ -7,6 +7,7 @@ import type { RunEngine } from '../runs/engine'
 import { applyPlan } from './apply'
 import { emailSpec } from './email'
 import { huntPlan, plannedSearches } from './hunt'
+import { checkPostingsPlan, isCheckable } from './postings'
 import { checkSpec, connectPlan, referralPlan, referralReach } from './referral'
 
 /**
@@ -48,6 +49,18 @@ export class Flows {
     }
     if (rows.length === 0) throw new Error(firstProblem ?? 'Pick at least one found row.')
     return this.engine.start(applyPlan(this.store, rows))
+  }
+
+  /**
+   * Checks found jobs against the page their application goes to: closed ones
+   * are marked dead, and each keeps the company's apply page as its link.
+   * With no ids, every found job.
+   */
+  async checkPostings(opportunityIds: number[]): Promise<number> {
+    const ids = opportunityIds.length ? [...new Set(opportunityIds)] : this.store.opportunities.found(1000).map(row => row.id)
+    const rows = ids.map(id => this.store.opportunities.get(id)).filter((row): row is Opportunity => !!row && isCheckable(row))
+    if (rows.length === 0) throw new Error('Pick found jobs with a posting to check.')
+    return this.engine.start(checkPostingsPlan(this.store, rows))
   }
 
   async connect(options: ConnectOptions): Promise<number> {
