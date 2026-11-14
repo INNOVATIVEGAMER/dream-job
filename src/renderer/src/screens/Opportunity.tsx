@@ -1,19 +1,39 @@
+import { useState } from 'react'
 import type { JSX } from 'react'
 
-import { ArrowRightIcon, ArrowSquareOutIcon, CheckIcon, DotsThreeIcon, PaperPlaneTiltIcon, WarningIcon } from '@phosphor-icons/react'
+import { ArrowRightIcon, ArrowSquareOutIcon, CheckIcon, DotsThreeIcon, LinkIcon, PaperPlaneTiltIcon, WarningIcon } from '@phosphor-icons/react'
 
 import { isPortalLink } from '../../../shared/links'
 import { STATUSES, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
-import type { WorkMode } from '../../../shared/types'
+import type { Opportunity as Job, WorkMode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useAutosave } from '../lib/autosave'
 import { useData } from '../lib/data'
 import { capitalize, day, portalName } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
-import { attempt, DetailLayout, ErrorNote, Group, Loading, Numbers, Page, Props } from '../ui/common'
+import { attempt, DetailLayout, ErrorNote, Group, Loading, Numbers, Page, Props, Tip } from '../ui/common'
 import { Choice } from '../ui/fields'
-import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Separator, Textarea } from '../ui/nx'
+import {
+  Button,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  Input,
+  Separator,
+  Textarea,
+} from '../ui/nx'
 import { Timeline } from './Company'
 
 const hostOf = (url: string): string => {
@@ -34,6 +54,46 @@ function LinkButton({ label, url }: { label: string; url: string }): JSX.Element
   )
 }
 
+/** Where an application on the portal itself goes, by route. */
+const ON_PORTAL: Record<string, string> = { 'easy-apply': 'Easy Apply', wellfound: 'On Wellfound', instahyre: 'On Instahyre' }
+
+/** The job's two links, as the user pastes them: the posting where it was found, and where the application goes. */
+function LinksDialog({ job, onClose }: { job: Job; onClose: () => void }): JSX.Element {
+  const [postingLink, setPostingLink] = useState(job.portalLink ?? '')
+  const [applyLink, setApplyLink] = useState(job.link ?? '')
+  const save = async (): Promise<void> => {
+    if (await attempt(() => api.tracker.setLinks(job.id, { postingLink: postingLink.trim(), applyLink: applyLink.trim() }).then(() => true), 'Links saved')) onClose()
+  }
+  return (
+    <Dialog open onOpenChange={open => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Links</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="link-posting">Posting, on {portalName(job.portal) || job.portal}</FieldLabel>
+              <Input id="link-posting" type="url" placeholder="https://" value={postingLink} onChange={event => setPostingLink(event.target.value)} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="link-apply">Where the application goes</FieldLabel>
+              <Input id="link-apply" type="url" placeholder="https://" value={applyLink} onChange={event => setApplyLink(event.target.value)} />
+              <FieldDescription>The company's apply page, or the posting itself when you apply on the platform. Referral messages send this one.</FieldDescription>
+            </Field>
+          </FieldGroup>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => void save()}>Save links</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 const STATUS_OPTIONS = STATUSES.map(status => ({ value: status, label: capitalize(status) }))
 const MODE_OPTIONS = WORK_MODES.map(mode => ({ value: mode, label: WORK_MODE_NAMES[mode] }))
 
@@ -44,6 +104,7 @@ export function Opportunity({ id }: { id: number }): JSX.Element {
   const row = detail.data?.opportunity
   const [notes, setNotes] = useAutosave(row?.notes, value => api.tracker.setNotes(id, value))
   const isBusy = status?.run?.status === 'running' || status?.run?.status === 'waiting'
+  const [isEditingLinks, setIsEditingLinks] = useState(false)
 
   const crumbs = [{ label: 'Tracker', to: '/tracker' }]
   if (detail.error) return <Page title="Job" crumbs={crumbs}><ErrorNote text={detail.error} /></Page>
@@ -65,6 +126,10 @@ export function Opportunity({ id }: { id: number }): JSX.Element {
   }
   // The application goes to the company's own page, not the portal it was found on.
   const isExternal = !!row.link && !isPortalLink(row.link)
+  const platform = portalName(row.portal) || row.portal
+  const opens = row.link ?? row.portalLink
+  // The words the years were read from, when a run read them off the posting.
+  const yearsQuote = typeof row.minYears === 'number' && row.experience && row.experience !== 'not stated' ? row.experience : null
 
   return (
     <Page
@@ -73,8 +138,8 @@ export function Opportunity({ id }: { id: number }): JSX.Element {
       layout="bare"
       actions={
         <>
-          {row.link && (
-            <Button variant="ghost" size="sm" endIcon={<ArrowSquareOutIcon />} onClick={() => void attempt(() => api.chrome.openUrl(row.link!))}>
+          {opens && (
+            <Button variant="ghost" size="sm" endIcon={<ArrowSquareOutIcon />} onClick={() => void attempt(() => api.chrome.openUrl(opens))}>
               {isExternal ? 'Apply page' : 'Posting'}
             </Button>
           )}
@@ -86,6 +151,7 @@ export function Opportunity({ id }: { id: number }): JSX.Element {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {companyTo && <DropdownMenuItem onSelect={() => go(companyTo)}>Open company</DropdownMenuItem>}
+              <DropdownMenuItem onSelect={() => setIsEditingLinks(true)}>Edit links</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => go(`/contacts/connect/${encodeURIComponent(row.company)}`)}>Send connection requests</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -152,30 +218,57 @@ export function Opportunity({ id }: { id: number }): JSX.Element {
                     onChange={next => void attempt(() => api.tracker.setWorkMode(row.id, next as WorkMode))}
                   />,
                 ],
+                [
+                  'Min experience',
+                  typeof row.minYears === 'number' ? (
+                    <span key="years" className="nx:flex nx:items-center nx:gap-1">
+                      {row.minYears}+ {row.minYears === 1 ? 'year' : 'years'}
+                      {yearsQuote && <Tip text={`From the posting: "${yearsQuote}"`} />}
+                    </span>
+                  ) : (
+                    <span key="years" className="nx:text-muted-foreground">Not stated</span>
+                  ),
+                ],
                 ['Score', row.score ?? '–'],
                 [
                   'Found on',
-                  isExternal && row.portalLink ? <LinkButton key="found" label={portalName(row.portal) || row.portal} url={row.portalLink} /> : portalName(row.portal) || row.portal,
+                  row.portalLink ? (
+                    <LinkButton key="found" label={platform} url={row.portalLink} />
+                  ) : (
+                    <span key="found">
+                      {platform} <span className="nx:text-muted-foreground">· No link</span>
+                    </span>
+                  ),
                 ],
                 [
-                  'Apply via',
-                  isExternal ? (
+                  'Apply at',
+                  !row.link ? (
+                    <span key="via" className="nx:text-muted-foreground">
+                      No link
+                    </span>
+                  ) : (
                     <span key="via" className="nx:flex nx:items-center nx:gap-1 nx:min-w-0">
-                      <span className="nx:truncate">{hostOf(row.link!)}</span>
+                      <LinkButton label={isExternal ? hostOf(row.link) : (ON_PORTAL[row.applyRoute ?? ''] ?? `On ${platform}`)} url={row.link} />
                       {row.postingState === 'unreadable' && (
-                        <span title="The hunt couldn't read this page, so the portal's facts stand" className="nx:inline-flex nx:text-warning-subtle-foreground">
+                        <span title="This apply page couldn't be read, so the platform's facts stand" className="nx:inline-flex nx:text-warning-subtle-foreground">
                           <WarningIcon size={14} />
                         </span>
                       )}
                     </span>
-                  ) : (
-                    (row.applyRoute ?? '–')
                   ),
                 ],
                 ['Pay', row.pay ?? 'Not shown'],
                 ['Found', day(row.found)],
               ]}
             />
+            {(!row.portalLink || !row.link) && (
+              <div>
+                <Button variant="ghost" size="sm" startIcon={<LinkIcon />} onClick={() => setIsEditingLinks(true)}>
+                  Add links
+                </Button>
+              </div>
+            )}
+            {isEditingLinks && <LinksDialog job={row} onClose={() => setIsEditingLinks(false)} />}
             {company && (
               <>
                 <Separator />

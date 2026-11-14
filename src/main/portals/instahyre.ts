@@ -4,6 +4,7 @@ import { readPage } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
 import { clickPoint, isKnown, markSite, portalTool, refuse, say, sleep, stageLine, waitFor } from './common'
+import type { OnRead } from './common'
 
 /*
  * Instahyre's own tools, written from its live pages:
@@ -70,14 +71,14 @@ type Posting = {
   size: string
   skills: string
   about: string
-  isCut: boolean
   canApply: boolean
   applied: boolean
   signedIn: boolean
   notFound: boolean
 }
 
-export const JOB_SCRIPT = (maxChars: number): string => String.raw`(() => {
+/** Reads a posting whole: every line of the description, never cut short. */
+export const JOB_SCRIPT = (): string => String.raw`(() => {
   const clean = s => (s || '').replace(/\s+/g, ' ').trim();
   const t = document.title.replace(/ - Instahyre$/, '');
   const at = t.lastIndexOf(' job at ');
@@ -97,8 +98,7 @@ export const JOB_SCRIPT = (maxChars: number): string => String.raw`(() => {
     facts: facts.filter(l => !/at a Glance$/i.test(l)).slice(0, 12),
     size: sizeAt >= 0 ? facts[sizeAt + 1] || '' : '',
     skills: clean((document.getElementById('job-skills-description') || {}).innerText || ''),
-    about: desc.slice(0, ${maxChars}),
-    isCut: desc.length > ${maxChars},
+    about: desc,
     canApply: !!button && /apply/i.test(button.innerText),
     applied: !!(opp && opp.appliedOn) || (!!button && /applied/i.test(button.innerText)),
     signedIn: ${SIGNED_IN},
@@ -130,7 +130,7 @@ async function openPosting(ctx: RunContext, jobId: string): Promise<Posting> {
   await ctx.chrome.openPage(jobLink(jobId))
   await waitFor(ctx, `document.getElementById('job-description') || /\\/login/.test(location.pathname) || /not found/i.test(document.title)`, 10_000)
   await sleep(500)
-  const posting = await ctx.chrome.evaluate<Posting>(JOB_SCRIPT(5000))
+  const posting = await ctx.chrome.evaluate<Posting>(JOB_SCRIPT())
   markSite(ctx, 'instahyre', posting.signedIn ? 'signed-in' : 'signed-out')
   return posting
 }
@@ -148,7 +148,7 @@ function formatPosting(posting: Posting, jobId: string): string {
     posting.skills ? `Skills: ${posting.skills}` : '',
     '',
     'The posting:',
-    posting.about + (posting.isCut ? '\n[cut here]' : ''),
+    posting.about,
   ]
     .filter(line => line !== '')
     .join('\n')
@@ -158,7 +158,7 @@ function formatPosting(posting: Posting, jobId: string): string {
  * Instahyre's tools for a flow. The hunt gets list_matches and read_job;
  * apply gets read_job and apply, which writes what was sent into `record`.
  */
-export function instahyreTools(ctx: RunContext, options: { hunt?: { onSearch: (search: string | null, postings: string[]) => void }; apply?: ApplyRecord }): AnyTool[] {
+export function instahyreTools(ctx: RunContext, options: { hunt?: { onSearch: (search: string | null, postings: string[]) => void }; apply?: ApplyRecord; onRead?: OnRead }): AnyTool[] {
   const tools: AnyTool[] = []
 
   if (options.hunt) {
@@ -218,7 +218,9 @@ export function instahyreTools(ctx: RunContext, options: { hunt?: { onSearch: (s
         if (posting.notFound) return refuse('Instahyre has no such posting now: treat it as closed.')
         ctx.count('read')
         if (options.apply) options.apply.posting = { closed: false, route: 'instahyre', applyUrl: null }
-        return say(formatPosting(posting, job_id))
+        const text = formatPosting(posting, job_id)
+        options.onRead?.({ portal: 'instahyre', jobId: job_id, postingLink: jobLink(job_id), route: 'instahyre', applyUrl: null, closed: false, text })
+        return say(text)
       },
     ),
   )

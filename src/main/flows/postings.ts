@@ -1,88 +1,68 @@
 import { z } from 'zod'
 
-import { cleanLink, isPortalLink, linkKey } from '../../shared/links'
-import { AT_ONCE, PORTALS, WORK_MODES } from '../../shared/types'
+import { isPortalLink, linkKey } from '../../shared/links'
+import { AT_ONCE, CHECK_STATUSES, PORTALS, WORK_MODES } from '../../shared/types'
 import type { Opportunity, Portal } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { Store } from '../db/store'
 import { huntTools } from '../portals'
 import { defineTool, onePlan } from '../runs/engine'
 import type { AnyTool, FlowSpec, RunContext, RunPlan } from '../runs/engine'
-import { applyPages, applyPageTool } from './apply-page'
-import type { ApplyPages } from './apply-page'
+import { applyPageTool } from './apply-page'
+import { applyOutcome, checkYears, isQuoted, MIN_YEARS, newEvidence, noteReads, postingFor, textsFor, YEARS_QUOTE } from './evidence'
+import type { Evidence } from './evidence'
 
 /** Jobs per session: enough to be worth a session, few enough to finish well inside its turns. */
 const BATCH = 8
 
 const Output = z.object({ summary: z.string().describe('One line: what these jobs came to') })
 
-type Tally = { checked: number; closed: number; linked: number; unreadable: number }
+/** `closed`: found jobs marked dead; `closedApplied`: postings closed after the user applied, noted only. */
+type Tally = { checked: number; closed: number; closedApplied: number; linked: number; unreadable: number }
+
+const NO_TALLY = (): Tally => ({ checked: 0, closed: 0, closedApplied: 0, linked: 0, unreadable: 0 })
 
 function portalOf(row: Opportunity): Portal | null {
   const key = row.portal.toLowerCase()
   return (PORTALS as readonly string[]).includes(key) ? (key as Portal) : null
 }
 
-/** A job the check can read: on a portal by its id, or by a link. */
+/** The company's apply page already saved on a job, if any. */
+const savedApplyOf = (row: Opportunity): string | null => (row.link && !isPortalLink(row.link) ? row.link : null)
+
+/** A job the check can read: on a portal by its id or posting link, or by its saved apply page. */
 export function isCheckable(row: Opportunity): boolean {
   const portal = portalOf(row)
-  return row.status === 'found' && (!!row.link || ((portal === 'linkedin' || portal === 'instahyre') && !!row.jobId))
-}
-
-/** The portal postings a session really opened, as `<portal>:<job id>` or `link:<link key>`. */
-type Opened = Set<string>
-
-/**
- * A portal's read_job that notes each posting it opened: the check saves a
- * job only from a page that really opened in this session, so a portal that
- * refuses pages can't turn into a job marked closed, open or unreadable.
- */
-function noting(tool: AnyTool, portal: Portal, opened: Opened): AnyTool {
-  return {
-    ...tool,
-    handler: async (args: Record<string, unknown>, extra: unknown) => {
-      const result = await tool.handler(args, extra)
-      if (!result.isError) {
-        if (typeof args['job_id'] === 'string') opened.add(`${portal}:${args['job_id']}`)
-        if (typeof args['link'] === 'string') opened.add(`link:${linkKey(args['link'])}`)
-      }
-      return result
-    },
-  }
-}
-
-/** Whether this session opened the job's posting on its portal. */
-function portalOpened(row: Opportunity, opened: Opened): boolean {
-  const portal = portalOf(row)
-  if (portal && row.jobId && opened.has(`${portal}:${row.jobId}`)) return true
-  return [row.portalLink, row.link].some(link => !!link && opened.has(`link:${linkKey(link)}`))
+  const byPortal = (portal === 'linkedin' || portal === 'instahyre') && !!row.jobId
+  const byLink = (portal === 'wellfound' && !!row.portalLink) || !!savedApplyOf(row)
+  return (CHECK_STATUSES as readonly string[]).includes(row.status) && (byPortal || byLink)
 }
 
 function rowLine(row: Opportunity): string {
   const portal = portalOf(row)
-  const read =
-    portal === 'linkedin' || portal === 'instahyre'
-      ? `${portal}_read_job, job id ${row.jobId}`
-      : portal === 'wellfound'
-        ? `wellfound_read_job, link ${row.portalLink ?? row.link}`
-        : `read_apply_page, link ${row.link}`
-  const saved = row.link && !isPortalLink(row.link) ? `; apply page saved: ${row.link}` : ''
-  return `- Job ${row.id}: ${row.company}, ${row.role} (${read}${saved}). Recorded: ${row.mode || 'place not recorded'}; ${row.experience ?? 'years not recorded'}; pay ${row.pay ?? 'not recorded'}`
+  const reads = [
+    portal === 'linkedin' || portal === 'instahyre' ? `${portal}_read_job, job id ${row.jobId}` : '',
+    portal === 'wellfound' && row.portalLink ? `wellfound_read_job, link ${row.portalLink}` : '',
+    savedApplyOf(row) ? `apply page saved: ${savedApplyOf(row)}` : '',
+  ].filter(Boolean)
+  return `- Job ${row.id}: ${row.company}, ${row.role}, ${row.status === 'found' ? 'not applied to yet' : 'already applied to'} (${reads.join('; ')})`
 }
 
 function system(rows: Opportunity[]): string {
   return [
-    'This session checks jobs already in the tracker, waiting to be applied to, against where their application goes. Nothing is applied to, clicked or sent.',
+    'This session checks jobs already in the tracker, some waiting to be applied to and some already applied to, against where their application goes. Nothing is applied to, clicked or sent.',
     '',
     'For each job below, in order:',
-    "1. Read it where it was found, with the portal's read_job. A job from elsewhere goes straight to step 2 with its link.",
-    "2. When applying leaves the portal, or the job already has an apply page saved, read_apply_page that link. It is the final word on the job.",
+    "1. Read it where it was found, with the portal's read_job. A job with only an apply page saved goes straight to step 2.",
+    "2. When read_job says applying leaves the portal, or the job has an apply page saved, read_apply_page that link. It is the final word on the job.",
     '3. record_check the job.',
     '',
-    '- Closed, expired, filled, no longer accepting applications, or not found, on either page: state "closed", quoting the words that say so.',
-    '- A sign-in wall, a bot check, or a page that does not show this job: apply_page "unreadable", and say what you saw in notes. The job stays.',
-    '- Where the apply page differs from what was recorded (place, work mode, years asked, pay), give its place and mode in mode and work_mode, and the rest in notes. Never drop a job for these: the user decides.',
-    '- A job whose portal page will not open (signed out, read_job turned off, or the portal limiting how fast pages open): leave it unrecorded, so it stays as it was for the next check, and name it in your summary. "unreadable" is only for an apply page you opened.',
+    'The app takes each job\'s links and apply route from those pages itself: you never type a link. What you give is held to the pages too:',
+    '- Closed, expired, filled, no longer accepting applications, or not found, on either page: state "closed", with line the page\'s exact words that say so. For a job already applied to, record it the same way: the app only notes it, and the application stands.',
+    '- min_years with years_quote: the page\'s exact words that state the years, copied from what read_job or read_apply_page returned. The app checks the words are there and hold the number. No years stated: null and "".',
+    '- An apply page that is a sign-in wall, a bot check, or does not show this job: apply_page_shows_job false, and say what you saw in notes.',
+    '- Where the apply page differs from the portal on place or work mode, give its in mode and work_mode, and anything else in notes. Never drop a job for these: the user decides.',
+    '- A job whose page will not open (signed out, read_job turned off, or the portal limiting how fast pages open): leave it unrecorded, so it stays as it was for the next check, and name it in your summary.',
     '',
     'The jobs:',
     ...rows.map(rowLine),
@@ -91,20 +71,21 @@ function system(rows: Opportunity[]): string {
   ].join('\n')
 }
 
-function recordTool(ctx: RunContext, store: Store, rows: Opportunity[], pages: ApplyPages, opened: Opened, done: Set<number>, bump: (key: keyof Tally) => void): AnyTool {
+function recordTool(ctx: RunContext, store: Store, rows: Opportunity[], evidence: Evidence, done: Set<number>, bump: (key: keyof Tally) => void): AnyTool {
   return defineTool(
     'record_check',
-    'Save what you found for one job. A closed job is marked dead, with the words that say so in its notes.',
+    'Save what you found for one job. A closed job not yet applied to is marked dead; one already applied to keeps its status and gets a note.',
     {
       job: z.number().int().describe('The job number from the list'),
       state: z.enum(['open', 'closed']),
-      line: z.string().max(500).describe('Closed: the page\'s words that say so, exactly. Open: ""'),
-      apply_page: z
-        .enum(['read', 'unreadable', 'on-portal'])
-        .describe('read: you read it with read_apply_page; unreadable: it could not be read; on-portal: the job applies on the portal'),
-      apply_link: z.string().max(2000).describe('Where the application goes: the URL read_apply_page landed on, or the apply link read_job gave when unreadable. "" when it applies on the portal'),
+      line: z.string().max(500).describe('Closed: the page\'s exact words that say so. Open: ""'),
+      apply_page_shows_job: z
+        .boolean()
+        .describe('For a job that applies off the portal: whether the apply page you read shows this job (false for a sign-in wall, a bot check, or a page without it). true when it applies on the portal'),
       mode: z.string().max(120).describe('Work mode and place as the final page gives them, such as "Hybrid, Bengaluru", or "" to keep what was recorded'),
       work_mode: z.enum(WORK_MODES).nullable().describe('As the final page states it, or null to keep what was recorded'),
+      min_years: z.number().int().min(0).max(40).nullable().describe(MIN_YEARS),
+      years_quote: z.string().max(300).describe(YEARS_QUOTE),
       notes: z.string().max(1000).describe('What differs from what was recorded, or what an unreadable page showed. "" when nothing'),
     },
     input =>
@@ -112,56 +93,68 @@ function recordTool(ctx: RunContext, store: Store, rows: Opportunity[], pages: A
         const row = rows.find(one => one.id === input.job)
         if (!row) return refuse(`Job ${input.job} is not in this session's list.`)
         if (done.has(row.id)) return say('Already recorded.')
-        const line = input.line.trim()
-        if (input.state === 'closed' && line.length < 3) return refuse('Quote the words that say it is closed.')
-        const link = /^https?:\/\//i.test(input.apply_link.trim()) && !isPortalLink(input.apply_link) ? cleanLink(input.apply_link) : null
 
-        // Every record rests on a page this session opened: a portal that refused gives nothing to record.
-        const savedApply = row.link && !isPortalLink(row.link) ? linkKey(row.link) : null
-        const readPortal = portalOpened(row, opened)
-        const readApply = (!!link && pages.read.has(linkKey(link))) || (!!savedApply && pages.read.has(savedApply))
-        if (input.apply_page === 'read' && (!link || !pages.read.has(linkKey(link)))) {
-          return refuse('apply_link must be the page you read with read_apply_page. Read it first, or say "unreadable".')
+        // Everything saved rests on pages this session read: a page that never opened gives nothing.
+        const savedApply = savedApplyOf(row)
+        const read = postingFor(evidence, portalOf(row), row.jobId || null, [row.portalLink, row.link])
+        const appliedRead = !!savedApply && evidence.pages.read.has(linkKey(savedApply))
+        if (!read && !appliedRead) return refuse("Nothing for this job was read in this session. Read it first; if its page won't open, leave it unrecorded.")
+        // Pages are kept under both the link asked for and where it landed, so these find the apply page either way.
+        const texts = textsFor(evidence, read, [savedApply, read?.applyUrl])
+
+        const line = input.line.trim()
+        if (input.state === 'closed' && !isQuoted(line, texts)) {
+          return refuse('line must be the exact words, on a page read for this job, that say it is closed.')
         }
-        if (input.apply_page === 'unreadable' && (!link || !pages.tried.has(linkKey(link)))) {
-          return refuse(
-            'Only an apply page you tried with read_apply_page can be unreadable, with that link as apply_link. A job whose portal page did not open, or that has no apply link, stays unrecorded: leave it.',
-          )
-        }
-        if (input.apply_page === 'on-portal' && !readPortal) {
-          return refuse("Read the job with the portal's read_job first. If its page will not open, leave the job unrecorded.")
-        }
-        if (input.state === 'closed' && !readPortal && !readApply) {
-          return refuse('Closed needs a page you read in this session that says so. If neither page opened, leave the job unrecorded.')
-        }
+        // A closed posting needs no apply page; an open one that applies off the portal does.
+        const apply = input.state === 'closed' && !(read?.applyUrl && evidence.pages.tried.has(linkKey(read.applyUrl))) ? null : applyOutcome(evidence, read, savedApply, input.apply_page_shows_job)
+        if (typeof apply === 'string') return refuse(apply)
+        const years = checkYears(input.min_years, input.years_quote, texts)
+        if (typeof years === 'string') return refuse(years)
 
         const jobs = store.opportunities
-        const portalLink = row.portalLink ?? (isPortalLink(row.link) ? row.link : null)
-        const isNewLink = !!link && input.apply_page !== 'on-portal' && linkKey(link) !== linkKey(row.link ?? '')
+        const isFound = row.status === 'found'
+        const isNewLink = !!apply?.link && linkKey(apply.link) !== linkKey(row.link ?? '')
         store.transaction(() => {
-          if (isNewLink) jobs.setLink(row.id, link!, portalLink)
+          jobs.setLinks(row.id, { link: apply?.link ?? null, portalLink: read?.postingLink ?? null, applyRoute: apply?.route ?? read?.route ?? null })
           if (input.work_mode && input.work_mode !== row.workMode) jobs.setWorkMode(row.id, input.work_mode)
+          if (years.value !== null && years.quote) jobs.setMinYears(row.id, years.value, years.quote)
           if (input.mode.trim() && input.mode.trim() !== row.mode) jobs.setMode(row.id, input.mode.trim())
           if (input.state === 'closed') {
             jobs.setPosting(row.id, 'closed', line)
-            jobs.setStatus(row.id, 'dead', ctx.runId)
-            jobs.appendNote(row.id, `Closed, found by the posting check (run ${ctx.runId}): "${line}"`)
+            if (isFound) {
+              jobs.setStatus(row.id, 'dead', ctx.runId)
+              jobs.appendNote(row.id, `Closed, found by the posting check (run ${ctx.runId}): "${line}"`)
+            } else {
+              // Applied already: a closed posting usually means no new applications, not that this one is over.
+              jobs.appendNote(row.id, `The posting closed after you applied, seen by the posting check (run ${ctx.runId}): "${line}". Your application stands.`)
+            }
           } else {
-            jobs.setPosting(row.id, input.apply_page === 'unreadable' ? 'unreadable' : 'open', input.apply_page === 'unreadable' ? 'Apply page not readable' : null)
+            jobs.setPosting(row.id, apply?.state ?? 'open', apply?.note ?? null)
           }
           if (input.notes.trim()) jobs.appendNote(row.id, `Posting check (run ${ctx.runId}): ${input.notes.trim()}`)
         })
 
         done.add(row.id)
         bump('checked')
-        if (input.state === 'closed') bump('closed')
-        else if (input.apply_page === 'unreadable') bump('unreadable')
+        if (input.state === 'closed') bump(isFound ? 'closed' : 'closedApplied')
+        else if (apply?.state === 'unreadable') bump('unreadable')
         if (isNewLink) bump('linked')
         ctx.progress('Jobs checked', done.size, rows.length)
         ctx.changed('opportunities')
         ctx.log(
           input.state === 'closed' ? 'warn' : 'good',
-          `${row.company}: ${input.state === 'closed' ? 'closed, marked dead' : input.apply_page === 'unreadable' ? 'apply page not readable' : isNewLink ? "the company's apply page saved" : 'still open'}`,
+          `${row.company}: ${
+            input.state === 'closed'
+              ? isFound
+                ? 'closed, marked dead'
+                : 'posting closed after you applied, noted'
+              : apply?.state === 'unreadable'
+                ? 'apply page not readable'
+                : isNewLink
+                  ? 'apply link saved'
+                  : 'still open'
+          }${years.value !== null ? `, ${years.value}+ years` : ''}`,
         )
         return say('Recorded.')
       }),
@@ -172,14 +165,15 @@ const tallyLine = (tally: Tally, of: number): string =>
   [
     `Checked ${tally.checked} of ${of}.`,
     tally.closed ? `${tally.closed} closed, marked dead.` : '',
-    tally.linked ? `${tally.linked} now link to the company's apply page.` : '',
+    tally.closedApplied ? `${tally.closedApplied} ${tally.closedApplied === 1 ? 'posting' : 'postings'} you applied to closed, noted on the ${tally.closedApplied === 1 ? 'job' : 'jobs'}.` : '',
+    tally.linked ? `${tally.linked} got their apply link.` : '',
     tally.unreadable ? `${tally.unreadable} with an apply page that couldn't be read.` : '',
   ]
     .filter(Boolean)
     .join(' ')
 
 function checkSpec(store: Store, rows: Opportunity[], total: Tally, lane: string): FlowSpec<z.infer<typeof Output>> {
-  const own: Tally = { checked: 0, closed: 0, linked: 0, unreadable: 0 }
+  const own = NO_TALLY()
   const portals = [...new Set(rows.map(portalOf).filter((portal): portal is Portal => !!portal))]
   return {
     flow: 'check',
@@ -191,8 +185,7 @@ function checkSpec(store: Store, rows: Opportunity[], total: Tally, lane: string
     system: system(rows),
     prompt: 'Check these jobs.',
     tools: ctx => {
-      const pages = applyPages()
-      const opened: Opened = new Set()
+      const evidence = newEvidence()
       const done = new Set<number>()
       ctx.progress('Jobs checked', 0, rows.length)
       // One tally for this session's line, one for the whole run's.
@@ -201,9 +194,9 @@ function checkSpec(store: Store, rows: Opportunity[], total: Tally, lane: string
         total[key]++
       }
       const hooks = { window: 'week' as const, onSearch: () => undefined }
-      const readers = portals.flatMap(portal => huntTools(ctx, portal, hooks).filter(tool => tool.name.endsWith('read_job')).map(tool => noting(tool, portal, opened)))
+      const readers = portals.flatMap(portal => huntTools(ctx, portal, hooks, noteReads(evidence)).filter(tool => tool.name.endsWith('read_job')))
       const handOver = browserTools(ctx, REFUSE.hunt).filter(tool => tool.name === 'hand_to_user')
-      return [...readers, applyPageTool(ctx, pages), recordTool(ctx, store, rows, pages, opened, done, bump), ...handOver]
+      return [...readers, applyPageTool(ctx, evidence.pages), recordTool(ctx, store, rows, evidence, done, bump), ...handOver]
     },
     output: Output,
     finish: answer => `${tallyLine(own, rows.length)} ${answer.summary}`.trim(),
@@ -211,9 +204,9 @@ function checkSpec(store: Store, rows: Opportunity[], total: Tally, lane: string
   }
 }
 
-/** Checks found jobs against their apply pages: a session per batch of jobs, 5 at a time, each in its own tab. */
+/** Checks found and applied jobs against their apply pages: a session per batch of jobs, 5 at a time, each in its own tab. */
 export function checkPostingsPlan(store: Store, rows: Opportunity[]): RunPlan {
-  const total: Tally = { checked: 0, closed: 0, linked: 0, unreadable: 0 }
+  const total = NO_TALLY()
   const batches: Opportunity[][] = []
   for (let i = 0; i < rows.length; i += BATCH) batches.push(rows.slice(i, i + BATCH))
   const sessions = batches.map((batch, i) => checkSpec(store, batch, total, batches.length > 1 ? `Jobs ${i * BATCH + 1} to ${i * BATCH + batch.length}` : 'Jobs'))
@@ -221,7 +214,7 @@ export function checkPostingsPlan(store: Store, rows: Opportunity[]): RunPlan {
   return {
     flow: 'check',
     title: 'Check postings',
-    subtitle: `${rows.length} found jobs, ${BATCH} a session`,
+    subtitle: `${rows.length} jobs, ${BATCH} a session`,
     portal: null,
     sessions,
     atOnce: AT_ONCE,

@@ -24,11 +24,11 @@ const COMPANY = `id, name, stage, linkedin_url AS linkedinUrl, website, headcoun
   never_show AS neverShow, never_why AS neverWhy, never_since AS neverSince, added`
 
 const JOB = `id, company, role, stage, score, status, last_touch AS lastTouch,
-  next_action AS nextAction, portal, job_id AS jobId, link, posting_state AS postingState, work_mode AS workMode, company_id AS companyId`
+  next_action AS nextAction, portal, job_id AS jobId, link, posting_state AS postingState, work_mode AS workMode, min_years AS minYears, portal_link AS portalLink, company_id AS companyId`
 
 /** The same columns from a job joined to its company, whose name and stage win. */
 const JOINED = `o.id, c.name AS company, o.role, c.stage, o.score, o.status, o.last_touch AS lastTouch,
-  o.next_action AS nextAction, o.portal, o.job_id AS jobId, o.link, o.posting_state AS postingState, o.work_mode AS workMode, o.company_id AS companyId`
+  o.next_action AS nextAction, o.portal, o.job_id AS jobId, o.link, o.posting_state AS postingState, o.work_mode AS workMode, o.min_years AS minYears, o.portal_link AS portalLink, o.company_id AS companyId`
 
 /** Furthest along wins; a closed job counts only when every job at the company is closed. */
 const ORDER = ['found', 'applied', 'outreach', 'replied', 'screen', 'onsite', 'offer']

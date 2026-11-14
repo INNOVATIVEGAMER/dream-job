@@ -6,6 +6,7 @@ import { approveWritten, readPage, setField } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
 import { clickPoint, isKnown, markSite, portalTool, refuse, say, SCROLL_TO_END, sleep, stageLine, waitFor } from './common'
+import type { OnRead } from './common'
 
 /*
  * Wellfound's own tools, written from its live pages:
@@ -123,12 +124,12 @@ type Posting = {
   size: string
   side: string[]
   about: string
-  isCut: boolean
   signedIn: boolean
   notFound: boolean
 }
 
-export const JOB_SCRIPT = (maxChars: number): string => String.raw`(() => {
+/** Reads a posting whole: every line of it, never cut short. */
+export const JOB_SCRIPT = (): string => String.raw`(() => {
   const clean = s => (s || '').replace(/\s+/g, ' ').trim();
   const detail = document.querySelector('[data-test="JobDetail"]');
   const side = document.querySelector('[data-test="Sidebar"]');
@@ -154,8 +155,7 @@ export const JOB_SCRIPT = (maxChars: number): string => String.raw`(() => {
     applied: controls.some(b => /^Applied$/i.test(clean(b.innerText))),
     size: sizeAt >= 0 ? sideLines[sizeAt + 1] || '' : '',
     side: sideLines.slice(0, 16),
-    about: body.slice(0, ${maxChars}),
-    isCut: body.length > ${maxChars},
+    about: body,
     signedIn: ${SIGNED_IN},
     notFound: /Page not found/i.test(document.title),
   };
@@ -199,7 +199,7 @@ async function openPosting(ctx: RunContext, url: string): Promise<Posting> {
   const here = await ctx.chrome.page().catch(() => ({ url: '' }))
   if (!here.url.startsWith(url)) await ctx.chrome.openPage(url)
   await waitFor(ctx, `document.querySelector('[data-test="JobDetail"]') || /Page not found/i.test(document.title)`, 10_000)
-  const posting = await ctx.chrome.evaluate<Posting>(JOB_SCRIPT(5000))
+  const posting = await ctx.chrome.evaluate<Posting>(JOB_SCRIPT())
   markSite(ctx, 'wellfound', posting.signedIn ? 'signed-in' : 'signed-out')
   return posting
 }
@@ -217,7 +217,7 @@ function formatPosting(posting: Posting, url: string): string {
     stageLine(posting.size),
     '',
     'The posting:',
-    posting.about + (posting.isCut ? '\n[cut here]' : ''),
+    posting.about,
   ]
     .filter(line => line !== '')
     .join('\n')
@@ -233,7 +233,7 @@ export type WellfoundHunt = {
  * Wellfound's tools for a flow. The hunt gets search_jobs and read_job; apply
  * gets read_job and apply, which write what was sent into `record`.
  */
-export function wellfoundTools(ctx: RunContext, options: { hunt?: WellfoundHunt; apply?: ApplyRecord }): AnyTool[] {
+export function wellfoundTools(ctx: RunContext, options: { hunt?: WellfoundHunt; apply?: ApplyRecord; onRead?: OnRead }): AnyTool[] {
   const tools: AnyTool[] = []
 
   if (options.hunt) {
@@ -313,7 +313,10 @@ export function wellfoundTools(ctx: RunContext, options: { hunt?: WellfoundHunt;
         if (!posting.signedIn) return refuse('Wellfound is signed out in the app\'s Chrome. Call hand_to_user with what "sign-in", then read the posting again.')
         ctx.count('read')
         if (options.apply) options.apply.posting = { closed: false, route: posting.route, applyUrl: posting.applyUrl }
-        return say(formatPosting(posting, url))
+        const text = formatPosting(posting, url)
+        const jobId = /\/jobs\/(\d+)-/.exec(new URL(url).pathname)?.[1] ?? ''
+        options.onRead?.({ portal: 'wellfound', jobId, postingLink: url, route: posting.route, applyUrl: posting.applyUrl, closed: false, text })
+        return say(text)
       },
     ),
   )

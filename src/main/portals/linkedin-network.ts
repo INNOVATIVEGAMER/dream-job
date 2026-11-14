@@ -450,7 +450,7 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
           if (!referral.template.trim()) return refuse('The user has not saved a referral message in Settings. Finish now.')
           let message: string
           try {
-            message = fillTemplate(referral.template, { name: firstName(contact.name), role: row.role, company: row.company, jobLink: row.link ?? '' })
+            message = fillTemplate(referral.template, { name: firstName(contact.name), role: row.role, company: row.company, jobLink: row.link || row.portalLink || '' })
           } catch (error) {
             return refuse(`${error instanceof Error ? error.message : String(error)} Skipped.`)
           }
@@ -534,7 +534,7 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: boolean
             const referral = store.settings.referral()
             let message = ''
             try {
-              message = contact && row ? fillTemplate(referral.template, { name: firstName(contact.name), role: row.role, company: row.company, jobLink: row.link ?? '' }) : ''
+              message = contact && row ? fillTemplate(referral.template, { name: firstName(contact.name), role: row.role, company: row.company, jobLink: row.link || row.portalLink || '' }) : ''
             } catch {
               message = ''
             }

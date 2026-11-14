@@ -1,5 +1,5 @@
 import type { ConnectOptions, HuntOptions, ReferralOptions } from '../../shared/api'
-import { HUNT_PORTALS } from '../../shared/types'
+import { CHECK_STATUSES, HUNT_PORTALS } from '../../shared/types'
 import type { Store } from '../db/store'
 import type { Opportunity } from '../../shared/types'
 import { onePlan } from '../runs/engine'
@@ -52,14 +52,14 @@ export class Flows {
   }
 
   /**
-   * Checks found jobs against the page their application goes to: closed ones
-   * are marked dead, and each keeps the company's apply page as its link.
-   * With no ids, every found job.
+   * Checks found and applied jobs against the page their application goes to:
+   * each keeps the company's apply page as its link, closed found jobs are
+   * marked dead, and closed applied ones get a note. With no ids, all of them.
    */
   async checkPostings(opportunityIds: number[]): Promise<number> {
-    const ids = opportunityIds.length ? [...new Set(opportunityIds)] : this.store.opportunities.found(1000).map(row => row.id)
+    const ids = opportunityIds.length ? [...new Set(opportunityIds)] : this.store.opportunities.withStatuses(CHECK_STATUSES).map(row => row.id)
     const rows = ids.map(id => this.store.opportunities.get(id)).filter((row): row is Opportunity => !!row && isCheckable(row))
-    if (rows.length === 0) throw new Error('Pick found jobs with a posting to check.')
+    if (rows.length === 0) throw new Error('Pick found or applied jobs with a posting to check.')
     return this.engine.start(checkPostingsPlan(this.store, rows))
   }
 

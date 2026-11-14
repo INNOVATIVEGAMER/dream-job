@@ -6,6 +6,7 @@ import type { BrowserWindow } from 'electron'
 import { z } from 'zod'
 
 import type { AppliedCompany, Channel, OpportunityDetail, RunDetail } from '../shared/api'
+import { cleanLink } from '../shared/links'
 import { CONTACT_STATES, CONTACT_VIEWS, HUNT_WINDOWS, PORTALS, SIGN_IN_SITES, SIGN_IN_URLS, STAGES, TRACKER_VIEWS, WORK_MODES } from '../shared/types'
 import type { AppStatus, DataTopic, ResumeInfo } from '../shared/types'
 import type { ChromeController } from './browser/chrome'
@@ -138,6 +139,12 @@ export function registerIpc(deps: IpcDeps): void {
     },
     'tracker:setNotes': (rowId, notes) => {
       store.opportunities.setNotes(id.parse(rowId), short(20_000).parse(notes))
+      deps.sendData(['opportunities'])
+    },
+    'tracker:setLinks': (rowId, links) => {
+      const link = z.union([z.literal(''), z.string().trim().url().max(2000).refine(url => /^https?:\/\//i.test(url), 'Use an https link.')])
+      const { postingLink, applyLink } = z.object({ postingLink: link, applyLink: link }).parse(links)
+      store.opportunities.setLinksByUser(id.parse(rowId), postingLink ? cleanLink(postingLink) : null, applyLink ? cleanLink(applyLink) : null)
       deps.sendData(['opportunities'])
     },
     'tracker:setWorkMode': (rowId, workMode) => {

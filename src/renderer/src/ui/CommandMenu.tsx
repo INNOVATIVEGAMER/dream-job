@@ -22,7 +22,7 @@ import { go } from '../lib/router'
 import { attempt } from './common'
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator, CommandShortcut } from './nx'
 
-/** Checks found jobs against their apply pages (every found job when `ids` is empty), then shows the run. */
+/** Checks jobs against their apply pages (every found and applied job when `ids` is empty), then shows the run. */
 export async function checkPostings(ids: number[]): Promise<void> {
   if (await attempt(() => api.flows.checkPostings(ids))) go('/run')
 }
@@ -39,7 +39,7 @@ type Command = { key: string; label: string; icon: ReactNode; shortcut?: string;
 const RUN: Command[] = [
   { key: 'hunt', label: 'Start a hunt', icon: <MagnifyingGlassIcon />, shortcut: 'H', run: () => go('/hunt') },
   { key: 'apply', label: 'Apply to next found', icon: <PaperPlaneTiltIcon />, shortcut: 'A', run: () => void applyToNext() },
-  { key: 'check', label: 'Check found postings', icon: <ListChecksIcon />, run: () => void checkPostings([]) },
+  { key: 'check', label: 'Check postings of found and applied jobs', icon: <ListChecksIcon />, run: () => void checkPostings([]) },
   { key: 'email', label: 'Check email', icon: <EnvelopeIcon />, shortcut: 'E', run: () => go('/email') },
   { key: 'connect', label: 'Send connection requests', icon: <UserPlusIcon />, shortcut: 'R', run: () => go('/contacts/connect') },
   { key: 'message', label: 'Message accepted connections', icon: <ChatCircleIcon />, shortcut: 'M', run: () => go('/contacts/message') },

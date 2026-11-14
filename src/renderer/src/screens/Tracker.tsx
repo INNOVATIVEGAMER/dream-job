@@ -17,11 +17,11 @@ import {
   XIcon,
 } from '@phosphor-icons/react'
 
-import { AT_ONCE, PORTAL_NAMES, PORTALS, STAGES, STATUSES, TRACKER_VIEW_NAMES, TRACKER_VIEWS, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
+import { AT_ONCE, CHECK_STATUSES, PORTAL_NAMES, PORTALS, STAGES, STATUSES, TRACKER_VIEW_NAMES, TRACKER_VIEWS, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
 import type { CompanyQuery, CompanyRow, Preferences, TrackerRow, TrackerView, WorkMode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
-import { capitalize, day, portalName } from '../lib/format'
+import { capitalize, portalName } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
 import { applyToNext, checkPostings } from '../ui/CommandMenu'
@@ -74,9 +74,48 @@ function preferredModes(prefs: Preferences): WorkMode[] {
 
 const modeList = (modes: WorkMode[]): string => modes.map(mode => WORK_MODE_NAMES[mode]).join(', ')
 
-function referralLine(row: CompanyRow): string {
-  const parts = (['referred', 'accepted', 'messaged', 'pending'] as const).filter(state => row.referral[state] > 0).map(state => `${row.referral[state]} ${state}`)
-  return parts.slice(0, 2).join(' · ') || '–'
+const platformOf = (job: TrackerRow): string => portalName(job.portal) || job.portal
+
+/** A company's platforms, from its jobs in the view: the most common one, and how many others. */
+function Platforms({ jobs }: { jobs: TrackerRow[] }): JSX.Element {
+  const counts = new Map<string, number>()
+  for (const job of jobs) counts.set(platformOf(job), (counts.get(platformOf(job)) ?? 0) + 1)
+  const [top = ''] = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name)
+  const others = counts.size - 1
+  return (
+    <span className="nx:flex nx:items-center nx:gap-1 nx:min-w-0" title={[...counts.keys()].join(', ')}>
+      <span className="nx:truncate">{top}</span>
+      {others > 0 && <span className="nx:shrink-0 nx:text-muted-foreground">+{others}</span>}
+    </span>
+  )
+}
+
+const yearsText = (years: number | null | undefined): string => (typeof years === 'number' ? `${years}+ yrs` : '')
+
+/** A company's minimum years: shown only when every job in the view asks the same. */
+function sameYears(jobs: TrackerRow[]): number | null {
+  const first = jobs[0]?.minYears
+  return typeof first === 'number' && jobs.every(job => job.minYears === first) ? first : null
+}
+
+function ModeBadge({ mode }: { mode: WorkMode }): JSX.Element {
+  return (
+    <Badge variant="secondary" fill={mode === 'not-stated' ? 'outline' : 'light'} isCaps={false}>
+      {WORK_MODE_NAMES[mode]}
+    </Badge>
+  )
+}
+
+/** A company's work modes, from its jobs in the view, in the usual order. */
+function Modes({ jobs }: { jobs: TrackerRow[] }): JSX.Element {
+  const modes = WORK_MODES.filter(mode => jobs.some(job => job.workMode === mode))
+  return (
+    <div className="nx:flex nx:flex-wrap nx:gap-1">
+      {modes.map(mode => (
+        <ModeBadge key={mode} mode={mode} />
+      ))}
+    </div>
+  )
 }
 
 function JobMenu({ job }: { job: TrackerRow }): JSX.Element {
@@ -184,6 +223,10 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
   const jobsById = useMemo(() => new Map(companies.flatMap(row => row.jobs.map(job => [job.id, job] as const))), [companies])
   const pickedJobs = [...picked].map(id => jobsById.get(id)).filter((job): job is TrackerRow => !!job)
   const pickedFound = pickedJobs.filter(job => job.status === 'found')
+  const isCheckable = (job: TrackerRow): boolean => (CHECK_STATUSES as readonly string[]).includes(job.status)
+  const pickedCheckable = pickedJobs.filter(isCheckable)
+  // Check postings reads the jobs on screen: the view, with its filters.
+  const shownCheckable = companies.flatMap(row => row.jobs.filter(isCheckable).map(job => job.id))
   const pickedCompanies = new Set(pickedJobs.map(job => job.companyId)).size
   const pick = (ids: number[], on: boolean): void =>
     setPicked(current => {
@@ -246,8 +289,15 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
           </TabsList>
         </Tabs>
         <div className="nx:flex nx:items-center nx:gap-2">
-          {query.view === 'found' && (data?.counts.found ?? 0) > 0 && (
-            <Button variant="ghost" size="sm" startIcon={<ListChecksIcon />} disabled={isBusy} onClick={() => void checkPostings([])}>
+          {(query.view === 'found' || query.view === 'applied') && shownCheckable.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              startIcon={<ListChecksIcon />}
+              disabled={isBusy}
+              title={`Reads the ${shownCheckable.length} ${shownCheckable.length === 1 ? 'job' : 'jobs'} shown against their apply pages`}
+              onClick={() => void checkPostings(shownCheckable)}
+            >
               Check postings
             </Button>
           )}
@@ -339,11 +389,12 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                   />
                 </TableSelectionHead>
                 <TableHead>Company</TableHead>
+                <TableHead>Platform</TableHead>
+                <TableHead>Mode</TableHead>
+                <TableHead className="nx:text-end">Min exp</TableHead>
                 <TableHead>Stage</TableHead>
                 <TableHead className="nx:text-end">Score</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Referral</TableHead>
-                <TableHead>Updated</TableHead>
                 <TableHead>
                   <Hidden>Actions</Hidden>
                 </TableHead>
@@ -372,13 +423,18 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                         </span>
                       </div>
                     </TableCell>
+                    <TableCell className="nx:typography-body-small nx:max-w-[160px]">
+                      <Platforms jobs={row.jobs} />
+                    </TableCell>
+                    <TableCell>
+                      <Modes jobs={row.jobs} />
+                    </TableCell>
+                    <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap">{yearsText(sameYears(row.jobs))}</TableCell>
                     <TableCell className="nx:typography-body-small">{capitalize(row.stage)}</TableCell>
                     <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{row.bestScore ?? ''}</TableCell>
                     <TableCell>
                       <StatusBadge status={row.status} />
                     </TableCell>
-                    <TableCell className="nx:typography-body-small nx:text-muted-foreground nx:whitespace-nowrap">{referralLine(row)}</TableCell>
-                    <TableCell className="nx:typography-body-small nx:text-muted-foreground nx:tabular-nums">{day(row.updated)}</TableCell>
                     <TableCell className="nx:text-end">
                       <div className={HOVER}>
                         <CompanyMenu row={row} />
@@ -398,24 +454,27 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                               onClick={() => go(`/opportunity/${job.id}`)}
                             >
                               <span className="nx:typography-body-default nx:text-foreground nx:truncate">{job.role}</span>
-                              <Badge variant="secondary" fill={job.workMode === 'not-stated' ? 'outline' : 'light'} isCaps={false}>
-                                {WORK_MODE_NAMES[job.workMode]}
-                              </Badge>
                               {job.postingState === 'unreadable' && (
                                 <span title="Apply page not readable" aria-label="Apply page not readable" className="nx:inline-flex nx:shrink-0 nx:text-warning-subtle-foreground">
                                   <WarningIcon size={14} />
                                 </span>
                               )}
-                              <span className="nx:typography-body-small nx:text-muted-foreground nx:whitespace-nowrap">{portalName(job.portal) || job.portal}</span>
                             </button>
                           </TableCell>
+                          <TableCell className="nx:typography-body-small nx:text-muted-foreground nx:max-w-[160px]">
+                            <span className="nx:block nx:truncate" title={platformOf(job)}>
+                              {platformOf(job)}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <ModeBadge mode={job.workMode} />
+                          </TableCell>
+                          <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap">{yearsText(job.minYears)}</TableCell>
                           <TableCell />
                           <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{job.score ?? ''}</TableCell>
                           <TableCell>
                             <StatusBadge status={job.status} />
                           </TableCell>
-                          <TableCell />
-                          <TableCell className="nx:typography-body-small nx:text-muted-foreground nx:tabular-nums">{day(job.lastTouch)}</TableCell>
                           <TableCell className="nx:text-end">
                             <div className={`nx:flex nx:items-center nx:justify-end nx:gap-1 ${HOVER}`}>
                               {job.status === 'found' && (
@@ -459,9 +518,9 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                 <PaperPlaneTiltIcon />
                 <span>Apply to {pickedFound.length}</span>
               </ToolbarButton>
-              <ToolbarButton size="sm" variant="ghost" disabled={isBusy || pickedFound.length === 0} onClick={() => void checkPostings(pickedFound.map(job => job.id)).then(() => setPicked(new Set()))}>
+              <ToolbarButton size="sm" variant="ghost" disabled={isBusy || pickedCheckable.length === 0} onClick={() => void checkPostings(pickedCheckable.map(job => job.id)).then(() => setPicked(new Set()))}>
                 <ListChecksIcon />
-                <span>Check {pickedFound.length}</span>
+                <span>Check {pickedCheckable.length}</span>
               </ToolbarButton>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

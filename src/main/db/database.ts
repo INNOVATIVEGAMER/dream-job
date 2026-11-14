@@ -306,6 +306,20 @@ const MIGRATIONS: Migration[] = [
     db.exec(`UPDATE opportunities SET portal_link = link
       WHERE link LIKE '%linkedin.com/%' OR link LIKE '%wellfound.com/%' OR link LIKE '%angel.co/%' OR link LIKE '%instahyre.com/%'`)
   },
+
+  // The fewest years of experience a job asks for, as Claude reads it from the posting. Empty until read.
+  db => {
+    addColumns(db, 'opportunities', { min_years: 'INTEGER' })
+  },
+
+  // The posting link for older LinkedIn and Instahyre jobs, built from the job id in each portal's own
+  // address format. Sources without a known format stay empty, for the user to paste.
+  db => {
+    db.exec(`UPDATE opportunities SET portal_link = 'https://www.linkedin.com/jobs/view/' || job_id || '/'
+      WHERE portal_link IS NULL AND lower(portal) = 'linkedin' AND job_id GLOB '[0-9]*' AND job_id NOT GLOB '*[^0-9]*'`)
+    db.exec(`UPDATE opportunities SET portal_link = 'https://www.instahyre.com/job-' || job_id || '/'
+      WHERE portal_link IS NULL AND lower(portal) = 'instahyre' AND job_id GLOB '[0-9]*' AND job_id NOT GLOB '*[^0-9]*'`)
+  },
 ]
 
 export const SCHEMA_VERSION = MIGRATIONS.length

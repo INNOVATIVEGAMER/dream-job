@@ -122,6 +122,10 @@ export type TrackerRow = {
   link: string | null
   postingState: string | null
   workMode: WorkMode
+  /** The fewest years of experience the job asks for, as read from the posting; null when it doesn't say or hasn't been read. */
+  minYears: number | null
+  /** The posting on the platform it was found on; `link` is where the application goes. Either may be missing on an old job. */
+  portalLink: string | null
   /** The company it belongs to. */
   companyId?: number | null
 }
@@ -129,8 +133,6 @@ export type TrackerRow = {
 /** Everything about one opportunity, for its own screen. */
 export type Opportunity = TrackerRow & {
   found: string
-  /** The posting on the portal it was found on; `link` is where the application goes. */
-  portalLink: string | null
   mode: string
   applicants: string
   referral: string
@@ -183,6 +185,13 @@ export const VIEW_STATUSES: Record<TrackerView, readonly Status[] | null> = {
   closed: ['rejected', 'dead'],
   all: null,
 }
+
+/**
+ * The statuses Check postings reads: jobs waiting to be applied to, and jobs
+ * applied to that haven't reached an interview. A closed posting kills a
+ * found job, but only gets a note on one already applied to.
+ */
+export const CHECK_STATUSES: readonly Status[] = ['found', 'applied', 'outreach', 'replied']
 
 export const TRACKER_VIEW_NAMES: Record<TrackerView, string> = {
   found: 'Found',

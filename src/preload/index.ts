@@ -36,6 +36,7 @@ const api: JobAppApi = {
     setStatus: call('tracker:setStatus'),
     setNotes: call('tracker:setNotes'),
     setWorkMode: call('tracker:setWorkMode'),
+    setLinks: call('tracker:setLinks'),
     add: call('tracker:add'),
     companies: call('tracker:companies'),
   },

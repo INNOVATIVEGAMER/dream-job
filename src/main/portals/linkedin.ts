@@ -6,6 +6,7 @@ import { approveWritten, readPage, setField } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
 import { clickPoint, markSite, portalTool, refuse, say, sleep, stageLine, waitFor } from './common'
+import type { OnRead } from './common'
 
 /*
  * LinkedIn's own tools, written from its live pages:
@@ -74,13 +75,13 @@ type Job = {
   applied: string | null
   closed: boolean
   about: string
-  isCut: boolean
   companyInfo: { lines: string[]; size: string; link: string }
   hiring: { name: string; headline: string; profile: string }[]
   signedOut: boolean
 }
 
-export const JOB_SCRIPT = (maxChars: number): string => String.raw`(() => {
+/** Reads a posting whole: every line of the description, never cut short. */
+export const JOB_SCRIPT = (): string => String.raw`(() => {
   const clean = s => (s || '').replace(/\s+/g, ' ').trim();
   const section = key => document.querySelector('[componentkey^="' + key + '"]');
   const lines = el => el ? el.innerText.split('\n').map(clean).filter(Boolean) : [];
@@ -120,8 +121,7 @@ export const JOB_SCRIPT = (maxChars: number): string => String.raw`(() => {
     applyUrl,
     applied,
     closed: /No longer accepting applications/i.test(text),
-    about: about.slice(0, ${maxChars}),
-    isCut: about.length > ${maxChars},
+    about,
     companyInfo: { lines: companyLines, size, link: companyLink ? new URL(companyLink.href).origin + new URL(companyLink.href).pathname : '' },
     hiring,
     signedOut: /\/(login|authwall|checkpoint|uas)\b/.test(location.pathname),
@@ -212,7 +212,7 @@ function formatJob(job: Job, jobId: string): string {
     job.hiring.length ? `Hiring team: ${job.hiring.map(person => `${person.name} (${person.headline}) ${person.profile}`).join('; ')}` : '',
     '',
     'About the job:',
-    job.about + (job.isCut ? '\n[description cut here]' : ''),
+    job.about,
   ]
     .filter(line => line !== '')
     .join('\n')
@@ -229,7 +229,7 @@ export type HuntHooks = {
  * gets read_job and the Easy Apply pair, which write what was sent into
  * `record` for the flow to save.
  */
-export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; apply?: ApplyRecord }): AnyTool[] {
+export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; apply?: ApplyRecord; onRead?: OnRead }): AnyTool[] {
   const tools: AnyTool[] = []
   const { store } = ctx
 
@@ -297,12 +297,14 @@ export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; appl
       async ({ job_id }) => {
         await ctx.chrome.openPage(jobUrl(job_id))
         await waitFor(ctx, `document.querySelector('[componentkey^="JobDetails_AboutTheJob_"], #job-details, .jobs-description__content') || /No longer accepting|This job is no longer available|Page not found/i.test(document.body.innerText)`, 10_000)
-        const job = await ctx.chrome.evaluate<Job>(JOB_SCRIPT(5000))
+        const job = await ctx.chrome.evaluate<Job>(JOB_SCRIPT())
         markSite(ctx, 'linkedin', job.signedOut ? 'signed-out' : 'signed-in')
         if (job.signedOut) return refuse('LinkedIn is signed out in the app\'s Chrome. Call hand_to_user with what "sign-in", then read the posting again.')
         ctx.count('read')
         if (options.apply) options.apply.posting = { closed: job.closed, route: job.route, applyUrl: job.applyUrl }
-        return say(formatJob(job, job_id))
+        const text = formatJob(job, job_id)
+        options.onRead?.({ portal: 'linkedin', jobId: job_id, postingLink: jobUrl(job_id), route: job.route, applyUrl: job.applyUrl, closed: job.closed, text })
+        return say(text)
       },
     ),
   )

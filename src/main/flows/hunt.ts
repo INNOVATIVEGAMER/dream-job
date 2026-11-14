@@ -1,15 +1,16 @@
 import { z } from 'zod'
 
 import { AT_ONCE, DISCARD_REASONS, HUNT_WINDOW_NAMES, PORTAL_NAMES, STAGES, WORK_MODES } from '../../shared/types'
-import { cleanLink, isPortalLink, linkKey } from '../../shared/links'
+import { isPortalLink } from '../../shared/links'
 import type { HuntWindow, Portal, Preferences, Profile } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { Store } from '../db/store'
 import { huntTools, postingLink } from '../portals'
 import { defineTool, onePlan } from '../runs/engine'
 import type { AnyTool, FlowSpec, RunContext, RunPlan } from '../runs/engine'
-import { applyPages, applyPageTool } from './apply-page'
-import type { ApplyPages } from './apply-page'
+import { applyPageTool } from './apply-page'
+import { applyOutcome, checkYears, MIN_YEARS, newEvidence, noteReads, postingFor, textsFor, YEARS_QUOTE } from './evidence'
+import type { Evidence } from './evidence'
 import { fitText, preferencesText } from './context'
 
 type Search = { role: string; mode: 'remote' | 'hybrid' | 'on-site'; place: string }
@@ -62,7 +63,8 @@ function system(prefs: Preferences, profile: Profile, portal: Portal, searches: 
     'Every new posting a search returns ends in exactly one call: add_posting or discard_posting.',
     '1. Screen it from its search line. Discard straight away only when that line alone rules it out (the title is plainly a role the user skips or plainly not one they want, or the place is plainly outside where they can work), quoting it.',
     '2. Read the rest with the portal\'s read_job.',
-    '3. When read_job says applying leaves the portal (the company\'s site, an applicant tracking system), read_apply_page that link. That page is the final word on the job: where its facts (place, work mode, years asked, pay) differ from the portal\'s, its facts win, and if it says the job is closed, expired, filled or not found, discard as closed quoting it. If it shows a sign-in wall, a bot check, or a page that does not show this job, judge on the portal\'s facts and add with apply_page "unreadable", saying what you saw in notes. A posting that applies on the portal (Easy Apply, on Wellfound or Instahyre) is judged from read_job alone.',
+    '3. When read_job says applying leaves the portal (the company\'s site, an applicant tracking system), read_apply_page that link. That page is the final word on the job: where its facts (place, work mode, years asked, pay) differ from the portal\'s, its facts win, and if it says the job is closed, expired, filled or not found, discard as closed quoting it. If it shows a sign-in wall, a bot check, or a page that does not show this job, judge on the portal\'s facts and add it with apply_page_shows_job false, saying what you saw in notes. A posting that applies on the portal (Easy Apply, on Wellfound or Instahyre) is judged from read_job alone.',
+    '   The app takes the posting\'s links and apply route from those pages itself: you never type a link.',
     '4. Add or discard it.',
     '',
     'What the user wants:',
@@ -82,6 +84,7 @@ function system(prefs: Preferences, profile: Profile, portal: Portal, searches: 
     '- A posting the portal or its apply page says is closed or gone: discard as closed.',
     '- A recruiting firm hiring for a client is added like any posting. Company is the client where named, otherwise "Undisclosed (via <firm>)"; put what the firm says about the client in notes.',
     '- Stage: as read_job gives it from headcount. Where the portal shows none, use scaleup and say it is provisional in notes.',
+    '- Years asked: min_years is the fewest years the job asks for, with years_quote, the page\'s exact words that state it, copied from what read_job or read_apply_page returned. The app checks the words are on the page and hold the number. A posting that states no years: null and "".',
     '- Score 1 to 10 for fit: how closely the work matches the roles wanted and the user\'s skills and experience. Add postings scoring 5 or more. Below 5, discard as other, quoting the line that shows the mismatch.',
     '- The same role at the same company is one posting, whichever portal shows it: add_posting says when it is already tracked, perhaps from another portal, and leaves it.',
     '- A discard\'s line is the posting\'s own words, copied exactly.',
@@ -94,7 +97,7 @@ function system(prefs: Preferences, profile: Profile, portal: Portal, searches: 
 /** The hunt's own tools: what to keep and what to rule out. */
 type Tally = { added: number; discarded: number }
 
-function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecided: (key: string) => void, pages: ApplyPages): AnyTool[] {
+function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecided: (key: string) => void, evidence: Evidence): AnyTool[] {
   const { store } = ctx
   const portalEnum = z.enum([portal])
   const linkFor = (portal: Portal, jobId: string, link: string): string | null => postingLink(portal, jobId) ?? (link.startsWith('https://') ? link : null)
@@ -106,11 +109,9 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
       {
         portal: portalEnum,
         job_id: z.string().regex(/^\d+$/).describe('The posting\'s numeric id on its portal'),
-        link: z.string().max(500).describe('The posting\'s link on the portal, as the search or read_job gave it'),
-        apply_page: z
-          .enum(['read', 'unreadable', 'on-portal'])
-          .describe('read: you read its apply page with read_apply_page; unreadable: it could not be read; on-portal: it applies on the portal'),
-        apply_link: z.string().max(2000).describe('Where the application goes: the URL read_apply_page landed on, or the apply link read_job gave when the page was unreadable. "" when it applies on the portal'),
+        apply_page_shows_job: z
+          .boolean()
+          .describe('For a posting that applies off the portal: whether the apply page you read shows this job (false for a sign-in wall, a bot check, or a page without it). true when it applies on the portal'),
         role: z.string().min(1).max(200).describe('The posting\'s title'),
         company: z.string().min(1).max(200),
         stage: z.enum(STAGES),
@@ -118,24 +119,23 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
         work_mode: z.enum(WORK_MODES).describe('remote, hybrid or onsite only as the posting states it; not-stated when it names only a place'),
         applicants: z.string().max(120).describe('As the portal shows it, or ""'),
         pay: z.string().max(200).describe('The band as shown, or "not shown"'),
-        experience: z.string().max(200).describe('The years asked for, quoted, or "not stated"'),
-        apply_route: z.enum(['easy-apply', 'wellfound', 'instahyre', 'company-site', 'unknown']),
+        min_years: z.number().int().min(0).max(40).nullable().describe(MIN_YEARS),
+        years_quote: z.string().max(300).describe(YEARS_QUOTE),
         score: z.number().int().min(1).max(10),
         reasons: z.array(z.string().max(200)).min(1).max(4).describe('Short lines: what matched or fell short'),
         notes: z.string().max(2000).describe('Anything worth knowing before applying, or ""'),
       },
       input =>
         guarded(async () => {
-          const portalLink = linkFor(input.portal, input.job_id, input.link)
-          if (!portalLink) return refuse('Give the posting\'s full https link, as the search gave it.')
-          const applyLink = /^https?:\/\//i.test(input.apply_link.trim()) && !isPortalLink(input.apply_link) ? cleanLink(input.apply_link) : null
-          if (input.apply_route === 'company-site' && input.apply_page === 'on-portal') {
-            return refuse('read_job says this applies on the company\'s site: read_apply_page that link first, then add or discard it.')
-          }
-          if (input.apply_page === 'read' && (!applyLink || !pages.read.has(linkKey(applyLink)))) {
-            return refuse('apply_link must be the page you read with read_apply_page. Read it first, or say "unreadable".')
-          }
+          // Links and route come from the pages read, never from what Claude types.
+          const read = postingFor(evidence, input.portal, input.job_id)
+          if (!read) return refuse(`Read it with ${input.portal}_read_job first: its links and apply route come from that page.`)
+          const apply = applyOutcome(evidence, read, null, input.apply_page_shows_job)
+          if (typeof apply === 'string') return refuse(apply)
+          const years = checkYears(input.min_years, input.years_quote, textsFor(evidence, read, [apply.link, read.applyUrl]))
+          if (typeof years === 'string') return refuse(years)
           onDecided(`${input.portal}:${input.job_id}`)
+          const applyLink = apply.link && !isPortalLink(apply.link) ? apply.link : null
           if (store.opportunities.findExisting(input.portal, input.job_id, input.company, input.role, applyLink)) return say('Already in the tracker: left as it is.')
           const never = store.neverShow.match(input.company)
           if (never) return refuse(`${input.company} is on never show again (${never.why}). Leave it.`)
@@ -146,16 +146,17 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
               stage: input.stage,
               portal: input.portal,
               jobId: input.job_id,
-              link: input.apply_page === 'on-portal' ? portalLink : (applyLink ?? portalLink),
-              portalLink,
-              postingState: input.apply_page === 'unreadable' ? 'unreadable' : 'open',
-              postingNote: input.apply_page === 'unreadable' ? 'Apply page not readable' : null,
+              link: apply.link ?? read.postingLink,
+              portalLink: read.postingLink,
+              postingState: apply.state,
+              postingNote: apply.note,
               mode: input.mode,
               workMode: input.work_mode,
               applicants: input.applicants,
               pay: input.pay,
-              experience: input.experience,
-              applyRoute: input.apply_route,
+              experience: years.quote ?? 'not stated',
+              minYears: years.value,
+              applyRoute: apply.route,
               score: input.score,
               scoreReasons: input.reasons,
               notes: input.notes,
@@ -250,8 +251,8 @@ function huntSpec(store: Store, portal: Portal, window: HuntWindow, total: Tally
         show()
       }
       const general = browserTools(ctx, REFUSE.hunt).filter(tool => ['hand_to_user', 'read_page'].includes(tool.name))
-      const pages = applyPages()
-      return [...huntTools(ctx, portal, hunt), applyPageTool(ctx, pages), ...recordTools(ctx, portal, [tally, total], onDecided, pages), ...general]
+      const evidence = newEvidence()
+      return [...huntTools(ctx, portal, hunt, noteReads(evidence)), applyPageTool(ctx, evidence.pages), ...recordTools(ctx, portal, [tally, total], onDecided, evidence), ...general]
     },
     output: Output,
     finish: answer => `Added ${tally.added}, discarded ${tally.discarded}. ${answer.summary}`,

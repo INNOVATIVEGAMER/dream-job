@@ -11,6 +11,26 @@ type Shape = Record<string, z.ZodType>
 /** A tool's input as the Agent SDK infers it from the shape. */
 type Input<S extends Shape> = { [K in keyof S]: S[K] extends { _output: infer O } ? O : never }
 
+/**
+ * What a portal's read_job saw, taken from the page by code, never typed by
+ * Claude: the hunt and the posting check build each job's links from it, and
+ * check Claude's quotes against its text.
+ */
+export type PostingRead = {
+  portal: Portal
+  jobId: string
+  /** The posting on the portal. */
+  postingLink: string
+  route: 'easy-apply' | 'company-site' | 'wellfound' | 'instahyre' | 'unknown'
+  /** Where the apply button leads off the portal; null when it applies on the portal, or no link was found. */
+  applyUrl: string | null
+  closed: boolean
+  /** The text read_job answered. */
+  text: string
+}
+
+export type OnRead = (read: PostingRead) => void
+
 /** The name Claude calls a portal's tool by: portals share tool names, so each carries its portal's. */
 export const toolName = (site: ToolSite, name: string): string => `${site}_${name}`
 

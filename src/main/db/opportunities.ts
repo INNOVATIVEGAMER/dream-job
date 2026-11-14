@@ -17,9 +17,9 @@ import { companyKey, now, paging, today } from './database'
 export const PAGE_SIZE = 15
 
 const ROW = `id, company, role, stage, score, status, last_touch AS lastTouch,
-  next_action AS nextAction, portal, job_id AS jobId, link, posting_state AS postingState, work_mode AS workMode, company_id AS companyId`
+  next_action AS nextAction, portal, job_id AS jobId, link, posting_state AS postingState, work_mode AS workMode, min_years AS minYears, portal_link AS portalLink, company_id AS companyId`
 
-const FULL = `${ROW}, found, portal_link AS portalLink, mode, applicants, referral, notes, pay, experience,
+const FULL = `${ROW}, found, mode, applicants, referral, notes, pay, experience,
   apply_route AS applyRoute, score_reasons AS scoreReasons,
   posting_checked AS postingChecked, posting_note AS postingNote`
 
@@ -41,6 +41,7 @@ export type FoundPosting = {
   postingNote: string | null
   mode: string
   workMode: WorkMode
+  minYears: number | null
   applicants: string
   pay: string | null
   experience: string | null
@@ -126,6 +127,15 @@ export class Opportunities {
       .map(row => ({ ...row }) as TrackerRow)
   }
 
+  /** Jobs at any of `statuses`, found first, then best score. */
+  withStatuses(statuses: readonly string[]): TrackerRow[] {
+    if (statuses.length === 0) return []
+    return this.db
+      .prepare(`SELECT ${ROW} FROM opportunities WHERE status IN (${statuses.map(() => '?').join(', ')}) ORDER BY status = 'found' DESC, score DESC, id ASC`)
+      .all(...statuses)
+      .map(row => ({ ...row }) as TrackerRow)
+  }
+
   /** The found rows, best score first: what Apply works through. */
   found(limit = 50): TrackerRow[] {
     return this.db
@@ -176,10 +186,10 @@ export class Opportunities {
     const day = today()
     const result = this.db
       .prepare(
-        `INSERT INTO opportunities (found, company, stage, role, portal, job_id, mode, work_mode, applicants, referral, score,
+        `INSERT INTO opportunities (found, company, stage, role, portal, job_id, mode, work_mode, min_years, applicants, referral, score,
           status, last_touch, next_action, notes, updated_at, link, portal_link, posting_state, posting_note, posting_checked, pay,
           experience, apply_route, score_reasons, run_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'found', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'found', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         day,
@@ -190,6 +200,7 @@ export class Opportunities {
         posting.jobId,
         posting.mode,
         posting.workMode,
+        posting.minYears,
         posting.applicants,
         'Connection requests are the next step',
         posting.score,
@@ -266,14 +277,30 @@ export class Opportunities {
     this.setNotes(id, row.notes.trim() ? `${row.notes.trim()}\n\n${note}` : note)
   }
 
-  /** Saves where the application goes, keeping the portal's link beside it. */
-  setLink(id: number, link: string, portalLink: string | null): void {
-    this.db.prepare('UPDATE opportunities SET link = ?, portal_link = COALESCE(portal_link, ?), updated_at = ? WHERE id = ?').run(link, portalLink, today(), id)
+  /** Saves the links and route a run read off the pages; a value left out keeps what is there. */
+  setLinks(id: number, links: { link?: string | null; portalLink?: string | null; applyRoute?: string | null }): void {
+    const current = this.get(id)
+    if (!current) throw new Error(`no opportunity with id ${id}`)
+    this.db
+      .prepare('UPDATE opportunities SET link = ?, portal_link = ?, apply_route = ?, updated_at = ? WHERE id = ?')
+      .run(links.link ?? current.link, links.portalLink ?? current.portalLink, links.applyRoute ?? current.applyRoute, today(), id)
+  }
+
+  /** The links the user pasted on the job page: the posting, and where the application goes. Empty clears one. */
+  setLinksByUser(id: number, portalLink: string | null, link: string | null): void {
+    const result = this.db.prepare('UPDATE opportunities SET portal_link = ?, link = ?, updated_at = ? WHERE id = ?').run(portalLink, link, today(), id)
+    if (Number(result.changes) !== 1) throw new Error(`no opportunity with id ${id}`)
+    this.addEvent(id, 'Links set by you', null)
   }
 
   /** The work mode and place in words, such as "Hybrid, Bengaluru". */
   setMode(id: number, mode: string): void {
     this.db.prepare('UPDATE opportunities SET mode = ?, updated_at = ? WHERE id = ?').run(mode, today(), id)
+  }
+
+  /** The fewest years of experience the job asks for, with the posting's words that state it. */
+  setMinYears(id: number, minYears: number, quote: string): void {
+    this.db.prepare('UPDATE opportunities SET min_years = ?, experience = ?, updated_at = ? WHERE id = ?').run(minYears, quote, today(), id)
   }
 
   setWorkMode(id: number, workMode: WorkMode): void {

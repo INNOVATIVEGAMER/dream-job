@@ -86,6 +86,8 @@ export type JobAppApi = {
     setStatus: (id: number, status: string) => Promise<void>
     setNotes: (id: number, notes: string) => Promise<void>
     setWorkMode: (id: number, workMode: WorkMode) => Promise<void>
+    /** The links the user pastes: the posting where it was found, and where the application goes. "" clears one. */
+    setLinks: (id: number, links: { postingLink: string; applyLink: string }) => Promise<void>
     add: (input: NewOpportunity & { status: string }) => Promise<number>
     /** The tracker, company first: each company with its jobs in the view. */
     companies: (query: CompanyQuery) => Promise<CompanyList>
@@ -180,6 +182,7 @@ export const CHANNELS = [
   'tracker:setStatus',
   'tracker:setNotes',
   'tracker:setWorkMode',
+  'tracker:setLinks',
   'tracker:add',
   'tracker:companies',
   'companies:get',

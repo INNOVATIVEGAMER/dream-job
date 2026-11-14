@@ -157,9 +157,12 @@ function noteOf(record: ApplyRecord, summary: string): string {
 function finish(store: Store, row: Opportunity, record: ApplyRecord, answer: Answer, ctx: RunContext): string {
   const rows = store.opportunities
   if (record.posting && !record.posting.closed) rows.setPosting(row.id, 'open', null)
-  // A row found before apply pages were saved: keep the company's link once read_job gives it.
-  const applyUrl = record.posting?.applyUrl
-  if (applyUrl && !isPortalLink(applyUrl) && (!row.link || isPortalLink(row.link))) rows.setLink(row.id, cleanLink(applyUrl), row.portalLink ?? row.link)
+  // A row found before apply links were saved: keep where its application goes once read_job gives it.
+  const posting = record.posting
+  if (posting && (!row.link || isPortalLink(row.link))) {
+    if (posting.route === 'company-site' && posting.applyUrl && !isPortalLink(posting.applyUrl)) rows.setLinks(row.id, { link: cleanLink(posting.applyUrl), applyRoute: posting.route })
+    else if (posting.route !== 'company-site' && !row.link && row.portalLink) rows.setLinks(row.id, { link: row.portalLink, applyRoute: posting.route })
+  }
   ctx.changed('opportunities')
 
   // A submit the app saw go through settles it, whatever the answer says.

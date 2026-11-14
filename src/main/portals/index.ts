@@ -1,6 +1,7 @@
 import type { HuntWindow, Portal } from '../../shared/types'
 import type { ApplyRecord } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
+import type { OnRead } from './common'
 import { instahyreTools, jobLink as instahyreLink } from './instahyre'
 import { jobUrl as linkedinLink, linkedinTools } from './linkedin'
 import { wellfoundTools } from './wellfound'
@@ -11,15 +12,15 @@ export type HuntHooks = {
   onSearch: (search: string | null, postings: string[]) => void
 }
 
-/** A portal's find tools, for the hunt. */
-export function huntTools(ctx: RunContext, portal: Portal, hunt: HuntHooks): AnyTool[] {
+/** A portal's find tools, for the hunt. `onRead` hears what each read_job saw on the page. */
+export function huntTools(ctx: RunContext, portal: Portal, hunt: HuntHooks, onRead?: OnRead): AnyTool[] {
   switch (portal) {
     case 'linkedin':
-      return linkedinTools(ctx, { hunt })
+      return linkedinTools(ctx, { hunt, onRead })
     case 'wellfound':
-      return wellfoundTools(ctx, { hunt })
+      return wellfoundTools(ctx, { hunt, onRead })
     case 'instahyre':
-      return instahyreTools(ctx, { hunt })
+      return instahyreTools(ctx, { hunt, onRead })
   }
 }
 
