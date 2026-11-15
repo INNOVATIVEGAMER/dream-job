@@ -21,6 +21,7 @@ import {
   XIcon,
 } from '@phosphor-icons/react'
 
+import { askBlock, experienceMonths } from '../../../shared/profile'
 import {
   AT_ONCE,
   CHECK_STATUSES,
@@ -99,6 +100,16 @@ const modeList = (modes: WorkMode[]): string => modes.map(mode => WORK_MODE_NAME
 const sourceName = (job: JobRow): string => SOURCE_NAMES[job.portal] ?? job.portal
 
 const yearsText = (years: number | null | undefined): string => (typeof years === 'number' ? `${years}+ yrs` : '')
+
+/** The years a job asks for, marked when they are too many to ask anyone for a referral. */
+function Years({ years, months }: { years: number | null; months: number | null }): JSX.Element {
+  const block = askBlock(years, months)
+  return (
+    <span title={block ? `${block}: too many to ask for a referral` : undefined} className={block ? 'nx:text-warning-subtle-foreground' : undefined}>
+      {yearsText(years)}
+    </span>
+  )
+}
 
 /** A company's minimum years: shown only when every job in the view asks the same. */
 function sameYears(jobs: JobRow[]): number | null {
@@ -248,6 +259,7 @@ type Filters = Omit<CompanyQuery, 'view' | 'modes'>
 export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; view?: TrackerView }): JSX.Element {
   const status = useAppStatus()
   const settings = useData(() => api.settings.get(), [], ['settings'])
+  const months = settings.data ? experienceMonths(settings.data.profile) : null
   const defaultModes = settings.data ? preferredModes(settings.data.preferences) : null
   const [filters, setFilters] = useState<Filters>({ stage: 'all', portal: 'all', search: '' })
   const [pickedModes, setPickedModes] = useState<WorkMode[] | null>(null)
@@ -522,7 +534,7 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                     <TableCell>
                       <Modes jobs={row.jobs} />
                     </TableCell>
-                    <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap">{yearsText(sameYears(row.jobs))}</TableCell>
+                    <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap"><Years years={sameYears(row.jobs)} months={months} /></TableCell>
                     <TableCell className="nx:typography-body-small">{capitalize(row.stage)}</TableCell>
                     <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{row.bestScore ?? ''}</TableCell>
                     <TableCell>
@@ -562,7 +574,7 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
                           <TableCell>
                             <ModeBadge mode={job.workMode} />
                           </TableCell>
-                          <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap">{yearsText(job.minYears)}</TableCell>
+                          <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap"><Years years={job.minYears} months={months} /></TableCell>
                           <TableCell />
                           <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{job.score ?? ''}</TableCell>
                           <TableCell>

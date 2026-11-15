@@ -29,7 +29,7 @@ import {
 } from '@phosphor-icons/react'
 
 import { GMAIL_PLAYBOOK, PLAYBOOKS } from '../../../../shared/playbooks'
-import { yearsOfExperience } from '../../../../shared/profile'
+import { profileExperience } from '../../../../shared/profile'
 import { fillTemplate } from '../../../../shared/referral'
 import type { TemplateValues } from '../../../../shared/referral'
 import { EMAIL_COUNTS, GMAIL_TOOLS, isSignInSite, PORTAL_NAMES, PORTAL_TOOL_GROUP_NAMES, PORTAL_TOOLS, PORTALS, SIGN_IN_SITES, SITE_NAMES } from '../../../../shared/types'
@@ -486,7 +486,7 @@ function PreferencesSection({ settings }: { settings: SettingsValue }): JSX.Elem
   return (
     <>
       <Head title="Preferences" tip="What the hunt searches for and scores against. The kind of company is never a cut." />
-      <PreferencesForm value={prefs} onChange={setPrefs} years={yearsOfExperience(settings.profile)} />
+      <PreferencesForm value={prefs} onChange={setPrefs} experience={profileExperience(settings.profile)} />
     </>
   )
 }

@@ -1,4 +1,4 @@
-import { yearsOfExperience } from '../../shared/profile'
+import { profileExperience } from '../../shared/profile'
 import type { FormAnswer, Preferences, Profile } from '../../shared/types'
 
 /** The pay floor in words, with the form LinkedIn shows pay in, so a band can be compared. */
@@ -27,7 +27,7 @@ export function preferencesText(prefs: Preferences): string {
 
 /** The profile in full: the only source for anything written about the user. */
 export function profileText(profile: Profile): string {
-  const years = yearsOfExperience(profile)
+  const experience = profileExperience(profile)
   const roles = profile.roles.map(role =>
     [
       `- ${role.title}, ${role.company}, ${role.start || '?'} to ${role.isCurrent ? 'present' : role.end || '?'}`,
@@ -47,7 +47,7 @@ export function profileText(profile: Profile): string {
     `Name: ${profile.name}`,
     `Headline: ${profile.headline}`,
     `Lives in: ${profile.location || 'not set'}`,
-    `Total experience: ${years === null ? 'unknown' : `${years} years, from the roles`}`,
+    `Total experience: ${experience ?? 'unknown'}, from the roles: overlaps counted once, internships not counted`,
     'Roles:',
     ...(roles.length ? roles : ['- none recorded']),
     'Projects:',
@@ -62,10 +62,9 @@ export function profileText(profile: Profile): string {
 
 /** A shorter profile, for judging fit in the hunt. */
 export function fitText(profile: Profile): string {
-  const years = yearsOfExperience(profile)
   return [
     `Headline: ${profile.headline}`,
-    `Total experience: ${years === null ? 'unknown' : `${years} years`}`,
+    `Total experience: ${profileExperience(profile) ?? 'unknown'}, internships not counted`,
     `Recent roles: ${profile.roles.slice(0, 4).map(role => `${role.title} at ${role.company}`).join('; ') || 'none recorded'}`,
     `Skills: ${profile.skills.slice(0, 40).join(', ') || 'none recorded'}`,
   ].join('\n')

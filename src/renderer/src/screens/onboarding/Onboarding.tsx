@@ -3,7 +3,7 @@ import type { JSX, ReactNode } from 'react'
 
 import { ArrowsClockwiseIcon, BriefcaseIcon, CheckCircleIcon, FilePdfIcon, TrashIcon, UploadSimpleIcon, WarningIcon } from '@phosphor-icons/react'
 
-import { yearsOfExperience } from '../../../../shared/profile'
+import { profileExperience } from '../../../../shared/profile'
 import { isSignInSite, PORTAL_NAMES, PORTALS } from '../../../../shared/types'
 import type { ClaudeStatus, Portal, Preferences, Profile, ResumeImport, Settings, SiteState } from '../../../../shared/types'
 import { api } from '../../lib/api'
@@ -226,7 +226,7 @@ function FoundRow(props: { name: string; summary: string; isOpen: boolean; onTog
 function ProfileStep(props: { profile: Profile; onProfile: (profile: Profile) => void; starters: Starter[]; onStarters: (starters: Starter[]) => void; onNext: () => void; onBack: () => void }): JSX.Element {
   const { profile, starters } = props
   const set = (patch: Partial<Profile>): void => props.onProfile({ ...profile, ...patch })
-  const years = yearsOfExperience(profile)
+  const experience = profileExperience(profile)
   const [open, setOpen] = useState<Part | null>(profile.name.trim() ? null : 'about')
   const [isSaving, setIsSaving] = useState(false)
   const toggle = (part: Part): void => setOpen(current => (current === part ? null : part))
@@ -275,7 +275,7 @@ function ProfileStep(props: { profile: Profile; onProfile: (profile: Profile) =>
         </FoundRow>
         <FoundRow
           name="Experience"
-          summary={profile.roles.length ? `${plural(profile.roles.length, 'role')}${years ? `, ${years} years` : ''}: ${listed(profile.roles.map(role => role.company), '')}` : 'None yet'}
+          summary={profile.roles.length ? `${plural(profile.roles.length, 'role')}${experience ? `, ${experience}` : ''}: ${listed(profile.roles.map(role => role.company), '')}` : 'None yet'}
           isOpen={open === 'roles'}
           onToggle={() => toggle('roles')}
         >
@@ -323,7 +323,7 @@ function ProfileStep(props: { profile: Profile; onProfile: (profile: Profile) =>
 /* 4. Preferences                                                      */
 /* ------------------------------------------------------------------ */
 
-function SearchStep(props: { prefs: Preferences; onPrefs: (prefs: Preferences) => void; years: number | null; onNext: () => void; onBack: () => void }): JSX.Element {
+function SearchStep(props: { prefs: Preferences; onPrefs: (prefs: Preferences) => void; experience: string | null; onNext: () => void; onBack: () => void }): JSX.Element {
   const { prefs } = props
   const [isSaving, setIsSaving] = useState(false)
   const problem =
@@ -353,7 +353,7 @@ function SearchStep(props: { prefs: Preferences; onPrefs: (prefs: Preferences) =
       primary={{ label: 'Continue', onClick: () => void save(), disabled: !!problem, loading: isSaving }}
       note={problem ?? undefined}
     >
-      <PreferencesForm value={prefs} onChange={props.onPrefs} years={props.years} isShort />
+      <PreferencesForm value={prefs} onChange={props.onPrefs} experience={props.experience} isShort />
     </Step>
   )
 }
@@ -506,7 +506,7 @@ export function Onboarding({ settings }: { settings: Settings }): JSX.Element {
           {step === 0 && <ClaudeStep onNext={() => move(1)} />}
           {step === 1 && <ResumeStep settings={settings} found={found} onFound={setFound} onUse={takeFound} onSkip={() => move(2)} onBack={() => move(0)} />}
           {step === 2 && <ProfileStep profile={profile} onProfile={setProfile} starters={starters} onStarters={setStarters} onNext={() => move(3)} onBack={() => move(1)} />}
-          {step === 3 && <SearchStep prefs={prefs} onPrefs={setPrefs} years={yearsOfExperience(profile)} onNext={() => move(4)} onBack={() => move(2)} />}
+          {step === 3 && <SearchStep prefs={prefs} onPrefs={setPrefs} experience={profileExperience(profile)} onNext={() => move(4)} onBack={() => move(2)} />}
           {step === 4 && <PortalsStep settings={settings} onBack={() => move(3)} />}
         </div>
       </main>

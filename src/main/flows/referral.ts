@@ -75,14 +75,15 @@ export function connectSpec(store: Store, company: Company, perCompany: number):
 }
 
 /** Connection requests: one session per company, 5 at a time, each in its own tab. */
-export function connectPlan(store: Store, companies: Company[], perCompany: number): RunPlan {
+export function connectPlan(store: Store, companies: Company[], perCompany: number, tooSenior = 0): RunPlan {
   const before = companies.reduce((sum, company) => sum + knownAt(store, company.id), 0)
   const sessions = companies.map(company => connectSpec(store, company, perCompany))
-  if (sessions.length === 1) return onePlan(sessions[0]!)
+  const skipped = tooSenior ? `. ${plural(tooSenior, 'company', 'companies')} skipped: every job there asks too many years` : ''
+  if (sessions.length === 1) return onePlan({ ...sessions[0]!, subtitle: `${sessions[0]!.subtitle}${skipped}` })
   return {
     flow: 'connect',
     title: 'Connection requests',
-    subtitle: `${plural(companies.length, 'company', 'companies')}, up to ${perCompany} each, one session per company`,
+    subtitle: `${plural(companies.length, 'company', 'companies')}, up to ${perCompany} each, one session per company${skipped}`,
     portal: 'linkedin',
     sessions,
     atOnce: AT_ONCE,

@@ -60,7 +60,7 @@ function PayFloor({ prefs, set }: { prefs: Preferences; set: (patch: Partial<Pre
  * What the user is looking for, as rows. Settings shows every row;
  * onboarding (`isShort`) only the ones a resume can't suggest well.
  */
-export function PreferencesForm(props: { value: Preferences; onChange: (value: Preferences) => void; years?: number | null; isShort?: boolean }): JSX.Element {
+export function PreferencesForm(props: { value: Preferences; onChange: (value: Preferences) => void; experience?: string | null; isShort?: boolean }): JSX.Element {
   const prefs = props.value
   const set = (patch: Partial<Preferences>): void => props.onChange({ ...prefs, ...patch })
   const modes = MODES.filter(mode => prefs.modes[mode.value as keyof Preferences['modes']]).map(mode => mode.value)
@@ -113,7 +113,7 @@ export function PreferencesForm(props: { value: Preferences; onChange: (value: P
           {
             label: 'Experience ceiling',
             id: 'pref-ceiling',
-            tip: `Most years a posting may ask for. Over it is discarded, unless the match is unusually strong.${props.years ? ` You have about ${props.years}, from your roles.` : ''}`,
+            tip: `Most years a posting may ask for. Over it is discarded, unless the match is unusually strong.${props.experience ? ` You have ${props.experience}, from your roles, internships not counted.` : ''}`,
             control: (
               <InputGroup className="nx:max-w-56">
                 <InputGroupInput

@@ -1,7 +1,7 @@
 import type { ConnectOptions, HuntOptions, ReferralOptions } from '../../shared/api'
-import { CHECK_STATUSES, HUNT_PORTALS } from '../../shared/types'
+import { ACTIVE_STATUSES, CHECK_STATUSES, HUNT_PORTALS } from '../../shared/types'
 import type { Store } from '../db/store'
-import type { Company, Job } from '../../shared/types'
+import type { Company, Job, Status } from '../../shared/types'
 import { onePlan } from '../runs/engine'
 import type { RunEngine } from '../runs/engine'
 import { applyPlan } from './apply'
@@ -9,6 +9,9 @@ import { emailSpec } from './email'
 import { huntPlan, plannedSearches } from './hunt'
 import { checkPostingsPlan, isCheckable } from './postings'
 import { checkSpec, connectPlan, peoplePlan, referralPlan } from './referral'
+
+/** The jobs connection requests can be for: found, or still in play after applying. */
+const REQUEST_STATUSES: readonly Status[] = ['found', ...ACTIVE_STATUSES]
 
 /**
  * Starts the flows. Each returns the new run's id at once; the run carries on
@@ -65,11 +68,15 @@ export class Flows {
 
   async connect(options: ConnectOptions): Promise<number> {
     if (!this.store.settings.portals().linkedin.enabled) throw new Error('LinkedIn is turned off in Settings, Portals.')
-    const companies = [...new Set(options.companyIds)]
-      .map(id => this.store.companies.get(id))
-      .filter((company): company is Company => !!company && !!this.store.connectJob(company.id))
-    if (companies.length === 0) throw new Error('Pick a company with a found or applied job: requests point at one.')
-    return this.engine.start(connectPlan(this.store, companies, options.perCompany))
+    const picked = [...new Set(options.companyIds)].map(id => this.store.companies.get(id)).filter((company): company is Company => !!company)
+    const companies = picked.filter(company => !!this.store.connectJob(company.id))
+    // Companies whose every job asks too many years: nobody there would ever be asked, so no requests go.
+    const tooSenior = picked.filter(company => !this.store.connectJob(company.id) && this.store.jobs.forCompany(company.id).some(row => REQUEST_STATUSES.includes(row.status)))
+    if (companies.length === 0) {
+      if (tooSenior.length) throw new Error(`${tooSenior.length === 1 ? `Every job at ${tooSenior[0]!.name} asks` : 'Every job at those companies asks'} more than a year past your experience, so you won't ask anyone there for a referral. No requests sent.`)
+      throw new Error('Pick a company with a found or applied job: requests point at one.')
+    }
+    return this.engine.start(connectPlan(this.store, companies, options.perCompany, tooSenior.length))
   }
 
   /** Reads the user's LinkedIn connections at each company, so its people and their statuses are current. */
@@ -88,6 +95,8 @@ export class Flows {
     if (options.resume && !this.store.settings.resume()) throw new Error('The message attaches your resume: add it in Settings first, or send it without.')
     const job = this.store.jobs.row(options.jobId)
     if (!job) throw new Error('That job is no longer in the tracker.')
+    const block = this.store.askBlock(job)
+    if (block) throw new Error(`${job.role} at ${job.company}: ${block}. Asking for more than a year past your experience costs you credibility, so the app doesn't ask.`)
     const personIds = [...new Set(options.personIds)].filter(id => {
       const person = this.store.people.get(id)
       return person?.state === 'connected' && this.store.people.currentCompanies(id).includes(job.companyId) && !this.store.outreach.find(job.id, id)

@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 
 import { PaperPlaneTiltIcon, WarningIcon } from '@phosphor-icons/react'
 
+import { askBlock, experienceMonths, experienceText } from '../../../shared/profile'
 import { fillTemplate, firstName } from '../../../shared/referral'
 import { ACTIVE_STATUSES, STATUS_NAMES } from '../../../shared/types'
 import type { CompanyPerson, JobRow } from '../../../shared/types'
@@ -76,7 +77,10 @@ function Ask({ companyId, jobId, onClose }: { companyId: number; jobId?: number;
   const [pickedJob, setPickedJob] = useState<number | null>(null)
   const [chosen, setChosen] = useState<number[] | null>(null)
   const [resume, setResume] = useState<boolean | null>(null)
-  const chosenJobId = pickedJob ?? (jobId !== undefined && jobs.some(job => job.id === jobId) ? jobId : (jobs[0]?.id ?? null))
+  // Jobs asking more than a year past the user's experience are listed, but can't be picked.
+  const months = settings.data ? experienceMonths(settings.data.profile) : null
+  const openJobs = jobs.filter(one => !askBlock(one.minYears, months))
+  const chosenJobId = pickedJob ?? (jobId !== undefined && jobs.some(job => job.id === jobId) ? jobId : (openJobs[0]?.id ?? jobs[0]?.id ?? null))
   // The job's own id is on the job page only, so the preview reads it there.
   const job = useData(() => (chosenJobId === null ? Promise.resolve(null) : api.tracker.get(chosenJobId)), [chosenJobId], ['jobs'])
   const isBusy = status?.run?.status === 'running' || status?.run?.status === 'waiting'
@@ -116,15 +120,34 @@ function Ask({ companyId, jobId, onClose }: { companyId: number; jobId?: number;
   const picked = (chosen ?? available).filter(id => available.includes(id))
   const pickedPeople = candidates.filter(one => picked.includes(one.person.id)).map(one => one.person)
   const target = job.data && job.data.job.id === chosenJobId ? job.data.job : null
+  const tooSenior = target ? askBlock(target.minYears, months) : null
   const fill = (person: CompanyPerson): string =>
     fillTemplate(template, { name: firstName(person.name), role: target?.role ?? '', company: company.name, jobId: target?.reqId ?? '', jobLink: target?.link || target?.portalLink || '' })
   const first = pickedPeople[0]
-  const problem = target ? fillError(fill, pickedPeople) : null
+  const problem = tooSenior ? `${tooSenior}. More than a year past your experience costs you credibility with the people asked, so the app doesn't ask.` : target ? fillError(fill, pickedPeople) : null
   const preview = target && first && !problem ? fill(first) : null
   const toggle = (id: number, on: boolean): void => setChosen(on ? [...picked, id] : picked.filter(one => one !== id))
   const send = async (): Promise<void> => {
     if (chosenJobId === null) return
     if (await attempt(() => api.flows.referral({ jobId: chosenJobId, personIds: picked, resume: attach }))) go('/run')
+  }
+
+  if (jobs.length > 0 && openJobs.length === 0) {
+    return (
+      <>
+        {header}
+        <DialogBody>
+          <span className="nx:typography-body-small nx:text-muted-foreground">
+            Every job you applied to at {company.name} asks more than a year past your experience{months !== null ? ` (${experienceText(months)})` : ''}. Asking for those costs you credibility with the people asked, so the app doesn't.
+          </span>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </>
+    )
   }
 
   if (jobs.length === 0) {
@@ -166,13 +189,24 @@ function Ask({ companyId, jobId, onClose }: { companyId: number; jobId?: number;
             <Choice
               id="ask-job"
               value={String(chosenJobId)}
-              options={jobs.map(one => ({ value: String(one.id), label: one.role }))}
+              options={jobs.map(one => {
+                const blocked = askBlock(one.minYears, months) !== null
+                return { value: String(one.id), label: blocked ? `${one.role} (asks ${one.minYears}+ years)` : one.role, disabled: blocked }
+              })}
               onChange={value => {
                 setPickedJob(Number(value))
                 setChosen(null)
               }}
             />
-            {target && <FieldDescription>{[target.reqId ? `Job ID ${target.reqId}` : 'No job ID', STATUS_NAMES[target.status]].join(' · ')}</FieldDescription>}
+            {target && (
+              <FieldDescription>
+                {[
+                  target.reqId ? `Job ID ${target.reqId}` : 'No job ID',
+                  target.minYears === null ? 'Years not stated: check the posting' : `Asks ${target.minYears}+ years`,
+                  STATUS_NAMES[target.status],
+                ].join(' · ')}
+              </FieldDescription>
+            )}
           </Field>
           <Field>
             <FieldLabel>People</FieldLabel>

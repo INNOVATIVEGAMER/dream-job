@@ -4,11 +4,13 @@ import type { JSX } from 'react'
 import { ArrowRightIcon, ArrowSquareOutIcon, ChatTextIcon, CheckIcon, DotsThreeIcon, LinkIcon, PaperPlaneTiltIcon, WarningIcon } from '@phosphor-icons/react'
 
 import { isPortalLink } from '../../../shared/links'
+import { askBlock } from '../../../shared/profile'
 import { ACTIVE_STATUSES, OUTREACH_STATE_NAMES, OUTREACH_STATES, SOURCE_NAMES, STATUS_NAMES, STATUSES, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
 import type { Job, JobOutreach, OutreachState, PeopleCount, WorkMode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useAutosave } from '../lib/autosave'
 import { useData } from '../lib/data'
+import { useExperience } from '../lib/experience'
 import { capitalize, day, initials } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
@@ -164,6 +166,7 @@ function AskRow({ ask }: { ask: JobOutreach }): JSX.Element {
 export function JobScreen({ id }: { id: number }): JSX.Element {
   const status = useAppStatus()
   const detail = useData(() => api.tracker.get(id), [id], ['jobs', 'people'])
+  const months = useExperience()
   const job = detail.data?.job
   const [notes, setNotes] = useAutosave(job?.notes, value => api.tracker.setNotes(id, value))
   const [reqId, setReqId] = useAutosave(job ? (job.reqId ?? '') : undefined, value => api.tracker.setReqId(id, value.trim()))
@@ -184,6 +187,7 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
   const { company, people, outreach, activity, companyJobs } = detail.data
   const companyTo = `/company/${company.id}`
   const isActive = ACTIVE_STATUSES.includes(job.status)
+  const tooSenior = askBlock(job.minYears, months)
   const apply = async (): Promise<void> => {
     if (await attempt(() => api.flows.apply([job.id]))) go('/run')
   }
@@ -197,7 +201,14 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
     </button>
   )
   const askButton = (
-    <Button variant="outline" size="sm" startIcon={<ChatTextIcon />} disabled={!isActive} title={isActive ? undefined : 'Asks point at a job you have applied to'} onClick={() => setAsking(true)}>
+    <Button
+      variant="outline"
+      size="sm"
+      startIcon={<ChatTextIcon />}
+      disabled={!isActive || !!tooSenior}
+      title={!isActive ? 'Asks point at a job you have applied to' : tooSenior ? `${tooSenior}: more than a year past your experience, so the app won't ask` : undefined}
+      onClick={() => setAsking(true)}
+    >
       Ask for a referral
     </Button>
   )
@@ -342,7 +353,13 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
                 [
                   'Min experience',
                   typeof job.minYears === 'number' ? (
-                    `${job.minYears}+ ${job.minYears === 1 ? 'year' : 'years'}`
+                    tooSenior ? (
+                      <span key="years" title={`${tooSenior}: no referral asks for this job`}>
+                        {job.minYears}+ years <span className="nx:text-muted-foreground">· too many to ask for a referral</span>
+                      </span>
+                    ) : (
+                      `${job.minYears}+ ${job.minYears === 1 ? 'year' : 'years'}`
+                    )
                   ) : (
                     <span key="years" className="nx:text-muted-foreground">
                       Not stated

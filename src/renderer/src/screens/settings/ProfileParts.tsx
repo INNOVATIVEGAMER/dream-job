@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 
 import { GithubLogoIcon, GlobeIcon, LinkedinLogoIcon, LinkIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react'
 
+import { experienceMonths, experienceText, isInternship } from '../../../../shared/profile'
 import type { Profile, ProfileLinks, Project, Role } from '../../../../shared/types'
 import { Group } from '../../ui/common'
 import { ListBox, ListRow, MonthPicker, Tags } from '../../ui/fields'
@@ -114,6 +115,8 @@ function RoleSheet(props: { role: Role | null; skills: string[]; onClose: () => 
 export function RolesList({ roles, skills, onChange }: { roles: Role[]; skills: string[]; onChange: (roles: Role[]) => void }): JSX.Element {
   const [editing, setEditing] = useState<Role | 'new' | null>(null)
   const sorted = [...roles].sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0) || (b.start || '').localeCompare(a.start || ''))
+  // The total the app works with: in the hunt, in answers on forms, and in which jobs a referral can be asked for.
+  const months = experienceMonths({ roles })
   return (
     <Group
       title="Experience"
@@ -123,6 +126,12 @@ export function RolesList({ roles, skills, onChange }: { roles: Role[]; skills: 
         </Button>
       }
     >
+      {months !== null && (
+        <div className="nx:flex nx:flex-wrap nx:items-baseline nx:gap-x-2">
+          <span className="nx:typography-label-default">{experienceText(months)} in total</span>
+          <span className="nx:typography-body-small nx:text-muted-foreground">Roles that overlap count once, and internships don't count.</span>
+        </div>
+      )}
       {sorted.length === 0 ? (
         <span className="nx:typography-body-small nx:text-muted-foreground">No roles yet.</span>
       ) : (
@@ -131,7 +140,7 @@ export function RolesList({ roles, skills, onChange }: { roles: Role[]; skills: 
             <ListRow
               key={role.id}
               title={role.title || 'Untitled role'}
-              detail={`${role.company} · ${roleDates(role)}`}
+              detail={`${role.company} · ${roleDates(role)}${isInternship(role) ? ' · Internship, not counted' : ''}`}
               onClick={() => setEditing(role)}
               actions={
                 <Button variant="ghost" size="sm" onClick={() => setEditing(role)}>

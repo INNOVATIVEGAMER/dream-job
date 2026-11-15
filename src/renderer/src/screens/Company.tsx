@@ -3,11 +3,13 @@ import type { JSX } from 'react'
 
 import { ArrowSquareOutIcon, ArrowsClockwiseIcon, ChatTextIcon, DotsThreeIcon, PaperPlaneTiltIcon, PlusIcon, UserPlusIcon } from '@phosphor-icons/react'
 
+import { askBlock } from '../../../shared/profile'
 import { OUTREACH_STATE_NAMES, REQUESTS_PER_COMPANY, SOURCE_NAMES } from '../../../shared/types'
-import type { CompanyPerson } from '../../../shared/types'
+import type { CompanyPerson, JobRow } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useAutosave } from '../lib/autosave'
 import { useData } from '../lib/data'
+import { useExperience } from '../lib/experience'
 import { capitalize, day, initials } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
@@ -109,6 +111,7 @@ function ExternalLink({ url, label }: { url: string | null; label: string }): JS
 export function CompanyScreen({ id, asking = false }: { id: number; asking?: boolean }): JSX.Element {
   const status = useAppStatus()
   const detail = useData(() => api.companies.get(id), [id], ['jobs', 'people'])
+  const months = useExperience()
   const company = detail.data?.company
   const [notes, setNotes] = useAutosave(company?.notes, value => api.companies.setNotes(id, value))
   const [adding, setAdding] = useState(false)
@@ -143,9 +146,19 @@ export function CompanyScreen({ id, asking = false }: { id: number; asking?: boo
   const left = people.filter(person => !person.current)
   const connected = current.filter(person => person.state === 'connected').length
   const requested = current.length - connected
-  const canAsk = askableJobs(jobs).length > 0
+  // Asks and requests point at a job the user may ask about: none asking more than a year past their experience.
+  const fits = (job: JobRow): boolean => !askBlock(job.minYears, months)
+  const applied = askableJobs(jobs)
+  const canAsk = applied.some(fits)
+  const askTitle = canAsk ? undefined : applied.length ? 'Every job you applied to here asks more than a year past your experience' : 'Asks point at a job you have applied to'
   // Requests point at a job: one found, or one applied to that is still in play.
-  const canRequest = jobs.some(job => job.status === 'found') || canAsk
+  const requestable = [...jobs.filter(job => job.status === 'found'), ...applied]
+  const canRequest = requestable.some(fits)
+  const requestTitle = canRequest
+    ? `Up to ${REQUESTS_PER_COMPANY} new people here, never with a note`
+    : requestable.length
+      ? 'Every job here asks more than a year past your experience: nobody here would be asked'
+      : 'Requests point at a job: add one here first'
   // Refreshing stays on this page: the list fills in as the run finds people.
   const refresh = async (): Promise<void> => {
     const runId = await attempt(() => api.flows.refreshPeople([id]), `Reading your LinkedIn connections at ${company.name}`)
@@ -187,7 +200,7 @@ export function CompanyScreen({ id, asking = false }: { id: number; asking?: boo
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button size="sm" startIcon={<ChatTextIcon />} disabled={!canAsk} title={canAsk ? undefined : 'Asks point at a job you have applied to'} onClick={() => setAsking(true)}>
+          <Button size="sm" startIcon={<ChatTextIcon />} disabled={!canAsk} title={askTitle} onClick={() => setAsking(true)}>
             Ask for a referral
           </Button>
         </>
@@ -268,7 +281,7 @@ export function CompanyScreen({ id, asking = false }: { id: number; asking?: boo
                     size="sm"
                     startIcon={<UserPlusIcon />}
                     disabled={isBusy || !canRequest}
-                    title={canRequest ? `Up to ${REQUESTS_PER_COMPANY} new people here, never with a note` : 'Requests point at a job: add one here first'}
+                    title={requestTitle}
                     onClick={() => void sendRequests([id])}
                   >
                     Send requests

@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
 import type { JobDetail } from '../../shared/api'
+import { askBlock, experienceMonths } from '../../shared/profile'
 import { ACTIVE_STATUSES, PORTALS, STAGES, TRACKER_VIEWS, VIEW_STATUSES, WORK_MODES } from '../../shared/types'
 import type {
   CompanyDetail,
@@ -73,14 +74,30 @@ export class Store {
     }
   }
 
-  /** The job a referral at this company points at: the newest one still in play after applying. */
-  appliedJob(companyId: number): JobRow | null {
-    return this.jobs.newestAt(companyId, ACTIVE_STATUSES)
+  /** Why no one may be asked for a referral to this job, by the user's experience now, or null when they may. */
+  askBlock(job: Pick<JobRow, 'minYears'>): string | null {
+    return askBlock(job.minYears, experienceMonths(this.settings.profile()))
   }
 
-  /** The job connection requests at this company are for: the applied one, or else the newest found one. */
+  /** A company's jobs the user may ask about, newest first: none asks more than a year past their experience. */
+  private askableAt(companyId: number): JobRow[] {
+    const months = experienceMonths(this.settings.profile())
+    return this.jobs.forCompany(companyId).filter(row => !askBlock(row.minYears, months))
+  }
+
+  /** The job a referral at this company points at: the newest one still in play after applying that the user may ask about. */
+  appliedJob(companyId: number): JobRow | null {
+    return this.askableAt(companyId).find(row => ACTIVE_STATUSES.includes(row.status)) ?? null
+  }
+
+  /**
+   * The job connection requests at this company are for: the applied one, or
+   * else the newest found one, of those the user may ask about. With none,
+   * no requests go there: nobody there would ever be asked.
+   */
   connectJob(companyId: number): JobRow | null {
-    return this.appliedJob(companyId) ?? this.jobs.newestAt(companyId, ['found'])
+    const askable = this.askableAt(companyId)
+    return askable.find(row => ACTIVE_STATUSES.includes(row.status)) ?? askable.find(row => row.status === 'found') ?? null
   }
 
   /* ---------------------------------------------------------------- tracker */

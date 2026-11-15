@@ -24,7 +24,7 @@ import {
 } from './nx'
 import { Tip } from './common'
 
-export type Option = { value: string; label: string }
+export type Option = { value: string; label: string; disabled?: boolean }
 
 /** One value from a short list: the nxds Select. */
 export function Choice(props: {
@@ -45,7 +45,7 @@ export function Choice(props: {
       </SelectTrigger>
       <SelectContent>
         {props.options.map(option => (
-          <SelectItem key={option.value} value={option.value}>
+          <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
             {option.label}
           </SelectItem>
         ))}
