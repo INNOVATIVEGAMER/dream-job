@@ -9,7 +9,7 @@ import { huntTools, portalIdOf, READ_BY } from '../portals'
 import { defineTool, onePlan } from '../runs/engine'
 import type { AnyTool, FlowSpec, RunContext, RunPlan } from '../runs/engine'
 import { applyPageTool } from './apply-page'
-import { applyOutcome, checkYears, isQuoted, MIN_YEARS, newEvidence, noteReads, postingFor, textsFor, YEARS_QUOTE } from './evidence'
+import { applyOutcome, isQuoted, jobYears, MIN_YEARS, newEvidence, noteReads, postingFor, textsFor, YEARS_QUOTE } from './evidence'
 import type { Evidence } from './evidence'
 
 /** Jobs per session: enough to be worth a session, few enough to finish well inside its turns. */
@@ -59,7 +59,7 @@ function system(rows: Job[]): string {
     '',
     'The app takes each job\'s links and apply route from those pages itself: you never type a link. What you give is held to the pages too:',
     '- Closed, expired, filled, no longer accepting applications, or not found, on either page: state "closed", with line the page\'s exact words that say so. For a job already applied to, record it the same way: the app only notes it, and the application stands.',
-    '- min_years with years_quote: the page\'s exact words that state the years, copied from what read_job or read_apply_page returned. The app checks the words are there and hold the number. No years stated: null and "".',
+    '- min_years with years_quote: the overall years the description asks for, in its exact words, copied from what read_job or read_apply_page returned. The app checks the words are in the description and hold the number. Never take it from a portal\'s own experience field: when the description states no years, give null and "", and the app uses the field itself.',
     '- An apply page that is a sign-in wall, a bot check, or does not show this job: apply_page_shows_job false, and say what you saw in notes.',
     '- Where the apply page differs from the portal on place or work mode, give its in mode and work_mode, and anything else in notes. Never drop a job for these: the user decides.',
     '- A job whose page will not open (signed out, read_job turned off, or the portal limiting how fast pages open): leave it unrecorded, so it stays as it was for the next check, and name it in your summary.',
@@ -109,7 +109,7 @@ function recordTool(ctx: RunContext, store: Store, rows: Job[], evidence: Eviden
         // A closed posting needs no apply page; an open one that applies off the portal does.
         const apply = input.state === 'closed' && !(read?.applyUrl && evidence.pages.tried.has(linkKey(read.applyUrl))) ? null : applyOutcome(evidence, read, savedApply, input.apply_page_shows_job)
         if (typeof apply === 'string') return refuse(apply)
-        const years = checkYears(input.min_years, input.years_quote, texts)
+        const years = jobYears(input.min_years, input.years_quote, evidence, read, [savedApply, read?.applyUrl])
         if (typeof years === 'string') return refuse(years)
 
         const jobs = store.jobs
@@ -118,7 +118,7 @@ function recordTool(ctx: RunContext, store: Store, rows: Job[], evidence: Eviden
         store.transaction(() => {
           jobs.setLinks(row.id, { link: apply?.link ?? null, portalLink: read?.postingLink ?? null, applyRoute: apply?.route ?? read?.route ?? null })
           if (input.work_mode && input.work_mode !== row.workMode) jobs.setWorkMode(row.id, input.work_mode)
-          if (years.value !== null && years.quote) jobs.setMinYears(row.id, years.value)
+          if (years.value !== null && years.quote) jobs.setMinYears(row.id, years.value, years.quote)
           if (input.state === 'closed') {
             jobs.setPosting(row.id, 'closed', line)
             if (isFound) {

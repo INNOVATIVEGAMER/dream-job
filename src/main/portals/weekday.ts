@@ -139,7 +139,7 @@ function formatPosting(posting: Posting, url: string): string {
     `${posting.title} at ${posting.company}`,
     `Job id ${posting.jdUid}, link: ${url}`,
     `Where: ${posting.places || 'not stated'}`,
-    posting.years !== null ? `Experience asked: ${posting.years}+ yrs (Weekday's job record)` : 'Experience asked: not stated',
+    posting.years !== null ? `Experience asked: ${posting.years}+ yrs (Weekday's job record; the description's years come first)` : 'Experience asked: not stated',
     posting.employment ? `Employment: ${posting.employment}` : '',
     posting.added ? `Posted: ${posting.added.slice(0, 10)}` : '',
     'Pay: not shown',
@@ -229,7 +229,17 @@ export function weekdayTools(ctx: RunContext, options: { hunt?: { window: HuntWi
         const route = posting.external ? 'company-site' : 'weekday'
         if (options.apply) options.apply.posting = { closed: !posting.accepting, route, applyUrl: posting.externalUrl }
         const text = formatPosting(posting, url)
-        options.onRead?.({ portal: 'weekday', jobId: posting.jdUid, postingLink: url, route, applyUrl: posting.external ? posting.externalUrl : null, closed: !posting.accepting, text })
+        options.onRead?.({
+          portal: 'weekday',
+          jobId: posting.jdUid,
+          postingLink: url,
+          route,
+          applyUrl: posting.external ? posting.externalUrl : null,
+          closed: !posting.accepting,
+          text,
+          about: posting.about,
+          yearsField: posting.years !== null ? { name: 'Weekday\'s job record', text: `${posting.years}+ yrs`, min: Math.floor(posting.years) } : null,
+        })
         return say(text)
       },
     ),

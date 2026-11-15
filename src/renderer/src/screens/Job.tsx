@@ -257,7 +257,8 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
                   companyButton,
                   ...[
                     job.workMode === 'not-stated' ? '' : WORK_MODE_NAMES[job.workMode],
-                    job.applicants,
+                    // A portal with no count gives a placeholder such as "-": only a count is worth showing.
+                    /\d/.test(job.applicants ?? '') ? job.applicants : '',
                     typeof job.minYears === 'number' ? `${job.minYears}+ years` : '',
                     job.pay ?? 'Pay not shown',
                   ].filter(Boolean),
@@ -353,13 +354,18 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
                 [
                   'Min experience',
                   typeof job.minYears === 'number' ? (
-                    tooSenior ? (
-                      <span key="years" title={`${tooSenior}: no referral asks for this job`}>
-                        {job.minYears}+ years <span className="nx:text-muted-foreground">· too many to ask for a referral</span>
+                    <div key="years" className="nx:flex nx:flex-col nx:gap-0.5 nx:py-1">
+                      <span title={tooSenior ? `${tooSenior}: no referral asks for this job` : undefined}>
+                        {job.minYears}+ {job.minYears === 1 ? 'year' : 'years'}
+                        {tooSenior && <span className="nx:text-muted-foreground"> · too many to ask for a referral</span>}
                       </span>
-                    ) : (
-                      `${job.minYears}+ ${job.minYears === 1 ? 'year' : 'years'}`
-                    )
+                      {/* The words the number rests on: the description's, or the portal's own field when it states none. */}
+                      {job.yearsQuote && (
+                        <span className="nx:text-muted-foreground nx:line-clamp-3" title={job.yearsQuote}>
+                          {job.yearsQuote}
+                        </span>
+                      )}
+                    </div>
                   ) : (
                     <span key="years" className="nx:text-muted-foreground">
                       Not stated

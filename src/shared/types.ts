@@ -196,6 +196,8 @@ export type Job = JobRow & {
   found: string
   /** The company's own id for the job, as the posting states it; referral messages include it. */
   reqId: string | null
+  /** The words its minimum years rest on: the description's, or the portal's own field when the description states none. Null for years saved before these were kept. */
+  yearsQuote: string | null
   applyRoute: string | null
   postingChecked: string | null
   postingNote: string | null

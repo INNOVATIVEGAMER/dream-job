@@ -332,6 +332,9 @@ const MIGRATIONS: Migration[] = [
   // The rebuild: jobs (discarded postings too), people with the positions they hold,
   // outreach, one history in activity, and one row per email. See rebuildSchema.
   db => rebuildSchema(db),
+
+  // The words a job's years rest on: the description's, or the portal's own field when the description states none.
+  db => addColumns(db, 'jobs', { years_quote: 'TEXT' }),
 ]
 
 const STATUS_MOVES: Record<string, string> = {

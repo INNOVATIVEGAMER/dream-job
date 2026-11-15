@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { readPage } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
-import { clickPoint, isKnown, markSite, portalTool, refuse, say, sleep, stageLine, waitFor } from './common'
+import { clickPoint, isKnown, markSite, portalTool, refuse, say, sleep, stageLine, waitFor, yearsFieldOf } from './common'
 import type { OnRead } from './common'
 
 /*
@@ -140,7 +140,7 @@ function formatPosting(posting: Posting, jobId: string): string {
     `${posting.title} at ${posting.company}`,
     `Job id ${jobId}, link: ${jobLink(jobId)}`,
     posting.where ? `Where: ${posting.where}` : '',
-    posting.years ? `Experience: ${posting.years}` : '',
+    posting.years ? `Experience field: ${posting.years} (Instahyre's own field; the description's years come first)` : '',
     'Pay: not shown (Instahyre rarely shows it)',
     posting.applied ? 'Already applied on Instahyre.' : posting.canApply ? 'Apply route: on Instahyre, in one step with the Instahyre profile' : 'No Apply button on the page.',
     `About the company: ${posting.facts.join(' | ') || 'not shown'}`,
@@ -219,7 +219,17 @@ export function instahyreTools(ctx: RunContext, options: { hunt?: { onSearch: (s
         ctx.count('read')
         if (options.apply) options.apply.posting = { closed: false, route: 'instahyre', applyUrl: null }
         const text = formatPosting(posting, job_id)
-        options.onRead?.({ portal: 'instahyre', jobId: job_id, postingLink: jobLink(job_id), route: 'instahyre', applyUrl: null, closed: false, text })
+        options.onRead?.({
+          portal: 'instahyre',
+          jobId: job_id,
+          postingLink: jobLink(job_id),
+          route: 'instahyre',
+          applyUrl: null,
+          closed: false,
+          text,
+          about: posting.about,
+          yearsField: yearsFieldOf('Instahyre\'s experience field', posting.years),
+        })
         return say(text)
       },
     ),

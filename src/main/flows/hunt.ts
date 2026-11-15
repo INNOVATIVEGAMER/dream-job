@@ -9,7 +9,7 @@ import { huntTools, postingLink } from '../portals'
 import { defineTool, onePlan } from '../runs/engine'
 import type { AnyTool, FlowSpec, RunContext, RunPlan } from '../runs/engine'
 import { applyPageTool } from './apply-page'
-import { applyOutcome, checkReqId, checkYears, MIN_YEARS, newEvidence, noteReads, postingFor, REQ_ID, textsFor, YEARS_QUOTE } from './evidence'
+import { applyOutcome, checkReqId, jobYears, MIN_YEARS, newEvidence, noteReads, postingFor, REQ_ID, textsFor, YEARS_QUOTE } from './evidence'
 import type { Evidence } from './evidence'
 import { fitText, preferencesText } from './context'
 
@@ -92,7 +92,7 @@ function system(prefs: Preferences, profile: Profile, portal: Portal, searches: 
     '',
     'How to judge:',
     '- The kind of company is never a cut: product or services, recruiter, consultancy, employer of record, foreign or local, any size.',
-    '- Title and seniority never cut a posting. Years asked for are a ceiling: within it, any level is fine. Over it, discard as over-ceiling quoting the line, unless the match is unusually strong on substance; then add it with a score of at most 6 and say so in notes.',
+    '- Title and seniority never cut a posting. Years asked for are a ceiling: within it, any level is fine. Over it, discard as over-ceiling quoting the line, unless the match is unusually strong on substance; then add it with a score of at most 6 and say so in notes. The years asked are the description\'s; a portal\'s own experience field counts only when the description states none.',
     '- Pay: discard as below-floor only when the whole band shown sits below the floor, quoting it. No pay shown is recorded as "not shown" and is never a reason.',
     '- A role that is mainly a kind the user skips: discard as skipped-role, quoting the line that shows it.',
     '- Work mode never rules a posting out, whatever modes the user prefers: the user sorts by it later. Record it as work_mode: remote, hybrid or onsite only when the posting says so (remote, work from home, hybrid, in office, on-site); a posting that names only a place is not-stated. Mode does not change the score.',
@@ -101,7 +101,7 @@ function system(prefs: Preferences, profile: Profile, portal: Portal, searches: 
     '- A posting the portal or its apply page says is closed or gone: discard as closed.',
     '- A recruiting firm hiring for a client is added like any posting. Company is the client where named, otherwise "Undisclosed (via <firm>)"; put what the firm says about the client in notes.',
     '- Stage: as read_job gives it from headcount. Where the portal shows none, use scaleup and say it is provisional in notes.',
-    '- Years asked: min_years is the fewest years the job asks for, with years_quote, the page\'s exact words that state it, copied from what read_job or read_apply_page returned. The app checks the words are on the page and hold the number. A posting that states no years: null and "".',
+    '- Years asked: min_years is the fewest years of overall experience the description asks for, with years_quote, its exact words, copied from what read_job or read_apply_page returned. The app checks the words are in the description and hold the number. Never take it from a portal\'s own experience field: when the description states no years, give null and "", and the app uses the field itself.',
     '- Score 1 to 10 for fit: how closely the work matches the roles wanted and the user\'s skills and experience. Add postings scoring 5 or more. Below 5, discard as other, quoting the line that shows the mismatch.',
     '- The same role at the same company is one posting, whichever portal shows it: add_posting says when it is already tracked, perhaps from another portal, and leaves it.',
     '- A discard\'s line is the posting\'s own words, copied exactly.',
@@ -150,7 +150,7 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
           const apply = applyOutcome(evidence, read, null, input.apply_page_shows_job)
           if (typeof apply === 'string') return refuse(apply)
           const texts = textsFor(evidence, read, [apply.link, read.applyUrl])
-          const years = checkYears(input.min_years, input.years_quote, texts)
+          const years = jobYears(input.min_years, input.years_quote, evidence, read, [apply.link, read.applyUrl])
           if (typeof years === 'string') return refuse(years)
           const reqId = checkReqId(input.req_id, texts)
           if (reqId && typeof reqId === 'object') return refuse(reqId.error)
@@ -171,9 +171,10 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
               postingState: apply.state,
               postingNote: apply.note,
               workMode: input.work_mode,
-              applicants: input.applicants,
+              applicants: /\d/.test(input.applicants) ? input.applicants.trim() : '',
               pay: input.pay,
               minYears: years.value,
+              yearsQuote: years.quote,
               applyRoute: apply.route,
               score: input.score,
               scoreReasons: input.reasons,

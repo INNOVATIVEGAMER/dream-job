@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ApplyRecord } from '../browser/tools'
 import { readPage } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
-import { clickPoint, isKnown, markSite, portalTool, refuse, say, SCROLL_TO_END, sleep, stageLine, waitFor } from './common'
+import { clickPoint, isKnown, markSite, portalTool, refuse, say, SCROLL_TO_END, sleep, stageLine, waitFor, yearsFieldOf } from './common'
 import type { OnRead } from './common'
 
 /*
@@ -130,7 +130,7 @@ function formatPosting(posting: Posting, jobId: string): string {
     `Job id ${jobId}, link: ${jobLink(jobId)}`,
     `Location: ${posting.location || 'not stated'}`,
     posting.jobType ? `Job type: ${posting.jobType}` : '',
-    `Experience: ${posting.minExperience || 'not stated'}`,
+    `Experience field: ${posting.minExperience || 'not stated'} (Work at a Startup's own field; the description's years come first)`,
     `Salary: ${posting.salary || 'not shown'}`,
     posting.visa ? `Visa: ${posting.visa}` : '',
     posting.eligible === false ? 'Work at a Startup says the user\'s location is not eligible for this role.' : '',
@@ -205,7 +205,17 @@ export function workatastartupTools(ctx: RunContext, options: { hunt?: { onSearc
         ctx.count('read')
         if (options.apply) options.apply.posting = { closed: false, route: 'workatastartup', applyUrl: null }
         const text = formatPosting(posting, job_id)
-        options.onRead?.({ portal: 'workatastartup', jobId: job_id, postingLink: jobLink(job_id), route: 'workatastartup', applyUrl: null, closed: false, text })
+        options.onRead?.({
+          portal: 'workatastartup',
+          jobId: job_id,
+          postingLink: jobLink(job_id),
+          route: 'workatastartup',
+          applyUrl: null,
+          closed: false,
+          text,
+          about: [posting.about, posting.hiring].filter(Boolean).join('\n'),
+          yearsField: yearsFieldOf('Work at a Startup\'s experience field', posting.minExperience),
+        })
         return say(text)
       },
     ),

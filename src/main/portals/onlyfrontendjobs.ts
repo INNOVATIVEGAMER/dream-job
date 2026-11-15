@@ -122,7 +122,7 @@ function formatPosting(posting: Posting, url: string): string {
     posting.header ? `As the page shows it: ${posting.header}` : '',
     `Work mode: ${posting.remote ? 'Remote' : 'not remote (see the place below)'}`,
     posting.regions.length ? `Hires from: ${posting.regions.join(', ')}` : '',
-    years !== null ? `Experience asked: ${years}+ years (the posting's job record: ${posting.months} months)` : 'Experience asked: not in the job record',
+    years !== null ? `Experience asked: ${years}+ years (the posting's job record: ${posting.months} months; the description's years come first)` : 'Experience asked: not in the job record',
     posting.employment ? `Employment: ${posting.employment}` : '',
     posting.posted ? `Posted: ${posting.posted.slice(0, 10)}` : '',
     posting.skills ? `Skills: ${posting.skills}` : '',
@@ -204,7 +204,18 @@ export function onlyfrontendjobsTools(
         ctx.count('read')
         if (options.apply) options.apply.posting = { closed: posting.closed, route: 'company-site', applyUrl: posting.applyUrl }
         const text = formatPosting(posting, url)
-        options.onRead?.({ portal: 'onlyfrontendjobs', jobId: idOf(url), postingLink: url, route: 'company-site', applyUrl: posting.applyUrl, closed: posting.closed, text })
+        options.onRead?.({
+          portal: 'onlyfrontendjobs',
+          jobId: idOf(url),
+          postingLink: url,
+          route: 'company-site',
+          applyUrl: posting.applyUrl,
+          closed: posting.closed,
+          text,
+          about: posting.about,
+          yearsField:
+            posting.months !== null ? { name: 'OnlyFrontendJobs\' job record', text: `${posting.months} months`, min: Math.floor(posting.months / 12) } : null,
+        })
         return say(text)
       },
     ),

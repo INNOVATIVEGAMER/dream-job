@@ -16,7 +16,7 @@ export const JOB_ROW = `j.id, j.company_id AS companyId, c.name AS company, j.ro
 export const JOB_FROM = 'jobs j JOIN companies c ON c.id = j.company_id'
 
 const FULL = `${JOB_ROW}, j.found, j.req_id AS reqId, j.apply_route AS applyRoute, j.posting_checked AS postingChecked,
-  j.posting_note AS postingNote, j.pay, j.applicants, j.score_reasons AS scoreReasons, j.notes`
+  j.posting_note AS postingNote, j.pay, j.applicants, j.years_quote AS yearsQuote, j.score_reasons AS scoreReasons, j.notes`
 
 function parseReasons(value: unknown): string[] {
   if (typeof value !== 'string' || !value) return []
@@ -47,6 +47,8 @@ export type FoundJob = {
   postingNote: string | null
   workMode: WorkMode
   minYears: number | null
+  /** The words minYears rests on. */
+  yearsQuote: string | null
   applicants: string
   pay: string | null
   applyRoute: string | null
@@ -181,6 +183,7 @@ export class Jobs {
       work_mode: posting.workMode,
       pay: posting.pay,
       min_years: posting.minYears,
+      years_quote: posting.minYears === null ? null : posting.yearsQuote,
       applicants: posting.applicants,
       score: posting.score,
       score_reasons: JSON.stringify(posting.scoreReasons),
@@ -312,9 +315,9 @@ export class Jobs {
     if (Number(result.changes) !== 1) throw new Error(`no job with id ${id}`)
   }
 
-  /** The fewest years of experience the job asks for, saved only with the posting's words as proof. */
-  setMinYears(id: number, minYears: number): void {
-    this.db.prepare('UPDATE jobs SET min_years = ?, updated_at = ? WHERE id = ?').run(minYears, now(), id)
+  /** The fewest years of experience the job asks for, saved only with the words it rests on. */
+  setMinYears(id: number, minYears: number, quote: string): void {
+    this.db.prepare('UPDATE jobs SET min_years = ?, years_quote = ?, updated_at = ? WHERE id = ?').run(minYears, quote, now(), id)
   }
 
   setWorkMode(id: number, workMode: WorkMode): void {

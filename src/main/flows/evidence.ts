@@ -9,6 +9,7 @@
  */
 
 import { cleanLink, isPortalLink, linkKey } from '../../shared/links'
+import { FRESHER, yearsStated } from '../../shared/years'
 import type { Portal } from '../../shared/types'
 import type { OnRead, PostingRead } from '../portals/common'
 import { applyPages } from './apply-page'
@@ -72,28 +73,66 @@ export function isQuoted(quote: string, texts: string[]): boolean {
 
 /** How min_years and years_quote are described to Claude, the same in every flow. */
 export const MIN_YEARS =
-  'The fewest years of experience the job asks for, as a number: 3 for "3-5 years" or "3+ years", 0 for freshers. Where the apply page and the portal differ, the apply page\'s. null when the posting states no years'
-export const YEARS_QUOTE = 'Just the page\'s exact words that state the years asked for, such as "3-5 years of experience", copied from what read_job or read_apply_page returned; "" when min_years is null'
-
-const FRESHER = /fresher|entry[- ]level|new grad|graduate|no (prior )?experience|0\s*-/i
+  'The fewest years of overall experience the job asks for, as a number: 3 for "3-5 years" or "3+ years", 4 for "a minimum of four years", 0 for freshers. ' +
+  'Only the words the company wrote count: the posting\'s description, or its apply page; where the two differ, the apply page\'s. ' +
+  'Never a portal\'s own experience field (the "Experience field" or "Experience asked" line read_job shows): the app reads that itself, and uses it only when the description states no years. ' +
+  'Years with one technology or area ("2+ years with React") are not overall experience. null when the description states no overall years'
+export const YEARS_QUOTE =
+  'Just the description\'s exact words that state the overall years asked for, such as "3-5 years of experience", copied from what read_job or read_apply_page returned; "" when min_years is null'
 
 /**
  * The fewest years a job asks for, held to its quote: the quote must be on a
- * page read, speak of years (or freshers), and contain the number given.
+ * page read, state years, and its fewest must be the number given.
  * Answers the value to save, or why it was refused.
  */
 export function checkYears(minYears: number | null, quote: string, texts: string[]): { value: number | null; quote: string | null } | string {
   if (minYears === null) return { value: null, quote: null }
   const said = quote.trim()
-  if (!said) return 'min_years needs years_quote: the posting\'s exact words that state it. No quote: give null.'
-  if (!isQuoted(said, texts)) return `"${said}" is not on any page read for this job. Copy the words exactly from what read_job or read_apply_page returned, or give null.`
-  if (!/years?|yrs?/i.test(said) && !FRESHER.test(said)) return 'years_quote must be the words that state the years asked for.'
-  // The fewest years the quote states: "3-5 years" asks for 3. Numbers over 40 are years of the calendar or versions, not experience.
-  const numbers = (said.match(/\d+/g) ?? []).map(Number).filter(n => n <= 40)
-  if (numbers.length === 0) return minYears === 0 && FRESHER.test(said) ? { value: 0, quote: said } : `"${said}" states no number of years. Give null, or quote the words that do.`
-  const fewest = Math.min(...numbers)
-  if (minYears !== fewest) return `"${said}" asks for at least ${fewest}, not ${minYears}. Give ${fewest}, or quote just the words about the years asked for.`
+  if (!said) return 'min_years needs years_quote: the description\'s exact words that state it. No quote: give null.'
+  if (!isQuoted(said, texts)) return `"${said}" is not in the description or apply page read for this job. Copy the words exactly from what read_job or read_apply_page returned, or give null.`
+  const stated = yearsStated(said)
+  if (stated.length === 0) {
+    if (minYears === 0 && FRESHER.test(said)) return { value: 0, quote: said }
+    return `"${said}" states no years of experience ("3+ years", "four years"). Give null, or quote the words that do.`
+  }
+  // "1.5 years" may be given as 1 or 2.
+  const fewest = Math.min(...stated)
+  if (minYears !== Math.floor(fewest) && minYears !== Math.ceil(fewest)) {
+    return `"${said}" asks for at least ${fewest}, not ${minYears}. Give ${Math.floor(fewest)}, or quote just the words about the overall years asked for.`
+  }
   return { value: minYears, quote: said }
+}
+
+/** The pages a job's years are held to: the description the company wrote, and its apply page. */
+export function describedTexts(evidence: Evidence, read: PostingRead | null, applyLinks: (string | null | undefined)[]): string[] {
+  const texts = read ? [read.about ?? read.text] : []
+  for (const link of applyLinks) {
+    const text = link ? evidence.pages.texts.get(linkKey(link)) : undefined
+    if (text) texts.push(text)
+  }
+  return texts
+}
+
+/**
+ * The years a job keeps: the description's, held to its quote; when the
+ * description states none, the portal's own experience field. Answers the
+ * value and the words it rests on, or why Claude's answer was refused.
+ */
+export function jobYears(
+  minYears: number | null,
+  quote: string,
+  evidence: Evidence,
+  read: PostingRead | null,
+  applyLinks: (string | null | undefined)[],
+): { value: number | null; quote: string | null } | string {
+  const described = describedTexts(evidence, read, applyLinks)
+  const said = quote.trim()
+  if (minYears !== null && said && read?.about !== undefined && !isQuoted(said, described) && isQuoted(said, [read.text])) {
+    return `"${said}" is the portal's own field, not the description. Give the years the description states, in its words, or null when it states none: the app then uses the field itself.`
+  }
+  const checked = checkYears(minYears, quote, described)
+  if (typeof checked === 'string' || checked.value !== null || !read?.yearsField) return checked
+  return { value: read.yearsField.min, quote: `${read.yearsField.name}: ${read.yearsField.text}` }
 }
 
 export const REQ_ID =

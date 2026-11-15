@@ -2,6 +2,7 @@ import type { z } from 'zod'
 
 import { GMAIL_TOOLS, PORTAL_TOOLS, TOOL_SITE_NAMES } from '../../shared/types'
 import type { Portal, PortalToolInfo, SignInSite, SiteState, Stage, ToolSite } from '../../shared/types'
+import { fieldYears } from '../../shared/years'
 import { guarded, refuse, say } from '../browser/tools'
 import { defineTool } from '../runs/engine'
 import type { AnyTool, RunContext } from '../runs/engine'
@@ -27,9 +28,23 @@ export type PostingRead = {
   closed: boolean
   /** The text read_job answered. */
   text: string
+  /**
+   * The description as the company wrote it, for portals that show their own
+   * fields beside it: a job's years are held to these words. Absent when the
+   * whole text is the posting.
+   */
+  about?: string
+  /** The portal's own experience field, read by code: its name, its words, and the fewest years they state. */
+  yearsField?: { name: string; text: string; min: number } | null
 }
 
 export type OnRead = (read: PostingRead) => void
+
+/** A portal's experience field as PostingRead keeps it, when it states years. */
+export function yearsFieldOf(name: string, text: string): PostingRead['yearsField'] {
+  const min = text.trim() ? fieldYears(text) : null
+  return min === null ? null : { name, text: text.trim(), min }
+}
 
 /** The name Claude calls a portal's tool by: portals share tool names, so each carries its portal's. */
 export const toolName = (site: ToolSite, name: string): string => `${site}_${name}`
