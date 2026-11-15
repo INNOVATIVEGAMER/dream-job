@@ -3,11 +3,11 @@ import type { JSX } from 'react'
 
 import { ArrowSquareOutIcon, ArrowsClockwiseIcon, ChatTextIcon, DotsThreeIcon, PaperPlaneTiltIcon, PlusIcon, UserPlusIcon } from '@phosphor-icons/react'
 
+import type { CompanyEdit } from '../../../shared/api'
 import { askBlock } from '../../../shared/profile'
 import { OUTREACH_STATE_NAMES, REQUESTS_PER_COMPANY, SOURCE_NAMES } from '../../../shared/types'
 import type { CompanyPerson, JobRow } from '../../../shared/types'
 import { api } from '../lib/api'
-import { useAutosave } from '../lib/autosave'
 import { useData } from '../lib/data'
 import { useExperience } from '../lib/experience'
 import { capitalize, day, initials } from '../lib/format'
@@ -17,6 +17,7 @@ import { ActivityTimeline } from '../ui/activity'
 import { sendRequests } from '../ui/CommandMenu'
 import { attempt, DetailLayout, ErrorNote, Group, Hidden, Loading, Numbers, Page, Props, StatusBadge, Tip } from '../ui/common'
 import { Choice, NamePicker } from '../ui/fields'
+import { InlineField, InlineLink, InlineNotes } from '../ui/inline'
 import {
   Avatar,
   AvatarFallback,
@@ -33,7 +34,6 @@ import {
   DropdownMenuTrigger,
   Field,
   FieldLabel,
-  Input,
   Label,
   Separator,
   Spinner,
@@ -44,7 +44,6 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  Textarea,
 } from '../ui/nx'
 import { AddJobDialog } from './AddJob'
 import { askableJobs, AskReferralDialog } from './AskReferral'
@@ -98,27 +97,15 @@ function PersonRow({ person }: { person: CompanyPerson }): JSX.Element {
   )
 }
 
-function ExternalLink({ url, label }: { url: string | null; label: string }): JSX.Element {
-  if (!url) return <span className="nx:text-muted-foreground">–</span>
-  return (
-    <button type="button" className="nx:inline-flex nx:items-center nx:gap-1 nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:text-foreground nx:typography-body-small" onClick={() => void attempt(() => api.chrome.openUrl(url))}>
-      {label} <ArrowSquareOutIcon size={12} />
-    </button>
-  )
-}
-
 /** One company: its jobs, its people and what each was asked, notes and everything that happened at it. */
 export function CompanyScreen({ id, asking = false }: { id: number; asking?: boolean }): JSX.Element {
   const status = useAppStatus()
   const detail = useData(() => api.companies.get(id), [id], ['jobs', 'people'])
   const months = useExperience()
   const company = detail.data?.company
-  const [notes, setNotes] = useAutosave(company?.notes, value => api.companies.setNotes(id, value))
   const [adding, setAdding] = useState(false)
   const [isAsking, setAsking] = useState(asking)
-  const [renaming, setRenaming] = useState(false)
   const [merging, setMerging] = useState(false)
-  const [name, setName] = useState('')
   const [into, setInto] = useState('')
   const [names, setNames] = useState<{ id: number; name: string }[]>([])
   const [refreshRun, setRefreshRun] = useState<number | null>(null)
@@ -146,6 +133,7 @@ export function CompanyScreen({ id, asking = false }: { id: number; asking?: boo
   const left = people.filter(person => !person.current)
   const connected = current.filter(person => person.state === 'connected').length
   const requested = current.length - connected
+  const edit = (change: CompanyEdit): Promise<void> => api.companies.edit(id, change)
   // Asks and requests point at a job the user may ask about: none asking more than a year past their experience.
   const fits = (job: JobRow): boolean => !askBlock(job.minYears, months)
   const applied = askableJobs(jobs)
@@ -184,14 +172,6 @@ export function CompanyScreen({ id, asking = false }: { id: number; asking?: boo
             <DropdownMenuContent align="end">
               <DropdownMenuItem
                 onSelect={() => {
-                  setName(company.name)
-                  setRenaming(true)
-                }}
-              >
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => {
                   setInto('')
                   setMerging(true)
                 }}
@@ -210,7 +190,10 @@ export function CompanyScreen({ id, asking = false }: { id: number; asking?: boo
         main={
           <>
             <div className="nx:flex nx:flex-col nx:gap-2">
-              <h1 className="nx:typography-heading-large nx:m-0">{company.name}</h1>
+              <h1 className="nx:m-0">
+                <Hidden>{company.name}</Hidden>
+              </h1>
+              <InlineField heading value={company.name} placeholder="Name" label="Company name" check={value => (value ? null : 'A company needs a name')} onSave={value => edit({ field: 'name', value })} />
               <Numbers items={[capitalize(company.stage), ...(company.headcount ? [`${company.headcount} people`] : []), `${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'}`]} />
             </div>
             <Group
@@ -323,7 +306,7 @@ export function CompanyScreen({ id, asking = false }: { id: number; asking?: boo
               )}
             </Group>
             <Group title="Notes">
-              <Textarea aria-label="Notes" rows={3} placeholder="Add a note" value={notes} onChange={event => setNotes(event.target.value)} />
+              <InlineNotes value={company.notes} placeholder="Add a note" label="Notes" onSave={value => api.companies.setNotes(id, value)} />
             </Group>
             <Group title="Activity">
               <ActivityTimeline activity={activity} />
@@ -335,9 +318,9 @@ export function CompanyScreen({ id, asking = false }: { id: number; asking?: boo
             <Props
               items={[
                 ['Stage', <Choice key="stage" value={company.stage} options={STAGES} size="sm" variant="borderless" ariaLabel="Stage" onChange={stage => void attempt(() => api.companies.setStage(id, stage))} />],
-                ['People', company.headcount ?? '–'],
-                ['LinkedIn', <ExternalLink key="li" url={company.linkedinUrl} label="Company page" />],
-                ['Website', <ExternalLink key="web" url={company.website} label={company.website?.replace(/^https?:\/\//, '') ?? ''} />],
+                ['People', <InlineField key="people" value={company.headcount ?? ''} placeholder="Not known" label="How many people work there" onSave={value => edit({ field: 'headcount', value })} />],
+                ['LinkedIn', <InlineLink key="li" value={company.linkedinUrl ?? ''} placeholder="Add the LinkedIn page" label="LinkedIn page" onSave={value => edit({ field: 'linkedinUrl', value })} />],
+                ['Website', <InlineLink key="web" value={company.website ?? ''} placeholder="Add the website" label="Website" onSave={value => edit({ field: 'website', value })} />],
                 ['Added', day(company.added)],
               ]}
             />
@@ -366,28 +349,6 @@ export function CompanyScreen({ id, asking = false }: { id: number; asking?: boo
           if (!on && asking) go(`/company/${id}`)
         }}
       />
-
-      <Dialog open={renaming} onOpenChange={setRenaming}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Rename company</DialogTitle>
-          </DialogHeader>
-          <DialogBody>
-            <Field>
-              <FieldLabel htmlFor="rename">Name</FieldLabel>
-              <Input id="rename" value={name} onChange={event => setName(event.target.value)} />
-            </Field>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRenaming(false)}>
-              Cancel
-            </Button>
-            <Button disabled={!name.trim() || name.trim() === company.name} onClick={() => void attempt(() => api.companies.rename(id, name), 'Renamed').then(() => setRenaming(false))}>
-              Rename
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={merging} onOpenChange={setMerging}>
         <DialogContent>

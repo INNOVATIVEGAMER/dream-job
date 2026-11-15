@@ -1,7 +1,8 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
-import { linkKey } from '../../shared/links'
-import { isSource, isStatus, STATUS_NAMES, WORK_MODES, workModeOf } from '../../shared/types'
+import type { JobEdit } from '../../shared/api'
+import { cleanLink, linkKey } from '../../shared/links'
+import { isSource, isStatus, SOURCE_NAMES, STATUS_NAMES, WORK_MODES, workModeOf } from '../../shared/types'
 import type { DiscardReason, Job, JobRow, NewJob, PostingState, Source, Status, WorkMode } from '../../shared/types'
 import type { ActivityLog } from './activity'
 import type { Companies } from './companies'
@@ -56,6 +57,15 @@ export type FoundJob = {
   scoreReasons: string[]
   notes: string
 }
+
+/** One history line for a change made on a page: what it was and what it is now. */
+export function changeLine(what: string, before: string, after: string): string {
+  if (!before) return `You set ${what}: ${after}`
+  if (!after) return `You cleared ${what} (was ${before})`
+  return `You changed ${what}: was ${before}, now ${after}`
+}
+
+const yearsText = (years: number | null): string => (years === null ? '' : `${years}+ ${years === 1 ? 'year' : 'years'}`)
 
 /** A posting a hunt rules out, kept as a discarded job with the posting's words that ruled it out. */
 export type DiscardedJob = { company: string; role: string; portal: Source; portalLink: string | null; line: string; reason: DiscardReason }
@@ -298,15 +308,100 @@ export class Jobs {
       .run(links.link ?? current.link, portalLink, links.applyRoute ?? current.applyRoute, now(), id)
   }
 
-  /** The links you paste on the job page: the posting, and where the application goes. Empty clears one. */
-  setLinksByUser(id: number, portalLink: string | null, link: string | null): void {
-    if (portalLink) {
-      const holder = this.byPortalLink(portalLink)
-      if (holder && holder.id !== id) throw new Error(`That posting is already ${holder.company}, ${holder.role}.`)
+  /**
+   * Changes one value as you edit it on the job's page, with a line in its
+   * history. A run that reads the posting again may change it back. The
+   * company is moved by the store, since it spans two companies. Answers
+   * whether anything changed.
+   */
+  edit(id: number, change: Exclude<JobEdit, { field: 'company' }>): boolean {
+    const job = this.get(id)
+    if (!job) throw new Error(`no job with id ${id}`)
+    const write = (sql: string, value: SQLInputValue): void => {
+      this.db.prepare(`UPDATE jobs SET ${sql}, updated_at = ? WHERE id = ?`).run(value, now(), id)
     }
-    const result = this.db.prepare('UPDATE jobs SET portal_link = ?, link = ?, updated_at = ? WHERE id = ?').run(portalLink, link, now(), id)
+    const text = (value: string): string => value.trim()
+    let what: string
+    let before: string
+    let after: string
+    let save: () => void
+    switch (change.field) {
+      case 'role': {
+        const role = text(change.value)
+        if (!role) throw new Error("The role can't be empty.")
+        ;[what, before, after] = ['the role', job.role, role]
+        save = () => write('role = ?', role)
+        break
+      }
+      case 'reqId': {
+        const reqId = text(change.value)
+        ;[what, before, after] = ['the job ID', job.reqId ?? '', reqId]
+        save = () => write('req_id = ?', reqId || null)
+        break
+      }
+      case 'minYears': {
+        const years = change.value
+        if (years !== null && (!Number.isInteger(years) || years < 0 || years > 40)) throw new Error('Min experience is 0 to 40 years.')
+        ;[what, before, after] = ['min experience', yearsText(job.minYears), yearsText(years)]
+        // A number you type rests on nothing the posting said, so the posting's words go with the old one.
+        save = () => this.db.prepare('UPDATE jobs SET min_years = ?, years_quote = NULL, updated_at = ? WHERE id = ?').run(years, now(), id)
+        break
+      }
+      case 'score': {
+        const score = change.value
+        if (score !== null && (!Number.isInteger(score) || score < 1 || score > 10)) throw new Error('The score is 1 to 10.')
+        ;[what, before, after] = ['the score', job.score === null ? '' : String(job.score), score === null ? '' : String(score)]
+        save = () => write('score = ?', score)
+        break
+      }
+      case 'portal': {
+        const portal = change.value
+        if (!isSource(portal)) throw new Error(`${portal} is not a platform`)
+        ;[what, before, after] = ['where it was found', SOURCE_NAMES[job.portal], SOURCE_NAMES[portal]]
+        save = () => write('portal = ?', portal)
+        break
+      }
+      case 'postingLink': {
+        const link = text(change.value) ? cleanLink(text(change.value)) : ''
+        if (link) {
+          const holder = this.byPortalLink(link)
+          if (holder && holder.id !== id) throw new Error(`That posting is already ${holder.company}, ${holder.role}.`)
+        }
+        ;[what, before, after] = ['the posting link', job.portalLink ?? '', link]
+        save = () => write('portal_link = ?', link || null)
+        break
+      }
+      case 'applyLink': {
+        const link = text(change.value) ? cleanLink(text(change.value)) : ''
+        ;[what, before, after] = ['the apply page', job.link ?? '', link]
+        save = () => write('link = ?', link || null)
+        break
+      }
+      case 'pay': {
+        const pay = text(change.value)
+        ;[what, before, after] = ['pay', job.pay ?? '', pay]
+        save = () => write('pay = ?', pay || null)
+        break
+      }
+      case 'found': {
+        const found = text(change.value)
+        const date = new Date(`${found}T00:00:00`)
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(found) || Number.isNaN(date.getTime()) || today(date) !== found) throw new Error('Pick a date that exists.')
+        ;[what, before, after] = ['the date it was found', job.found, found]
+        save = () => write('found = ?', found)
+        break
+      }
+    }
+    if (before === after) return false
+    save()
+    this.activity.add({ kind: 'edit', jobId: id, text: changeLine(what, before, after) })
+    return true
+  }
+
+  /** Puts a job under another company. The store calls it, with the history line. */
+  setCompany(id: number, companyId: number): void {
+    const result = this.db.prepare('UPDATE jobs SET company_id = ?, updated_at = ? WHERE id = ?').run(companyId, now(), id)
     if (Number(result.changes) !== 1) throw new Error(`no job with id ${id}`)
-    this.activity.add({ kind: 'note', jobId: id, text: 'Links set by you' })
   }
 
   /** The company's own id for the job, as the posting shows it. Empty clears it. */

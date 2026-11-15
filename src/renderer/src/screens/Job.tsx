@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import type { JSX } from 'react'
 
-import { ArrowRightIcon, ArrowSquareOutIcon, ChatTextIcon, CheckIcon, DotsThreeIcon, LinkIcon, PaperPlaneTiltIcon, WarningIcon } from '@phosphor-icons/react'
+import { ArrowRightIcon, ArrowSquareOutIcon, ChatTextIcon, CheckIcon, DotsThreeIcon, PaperPlaneTiltIcon, WarningIcon } from '@phosphor-icons/react'
 
 import { isPortalLink } from '../../../shared/links'
 import { askBlock } from '../../../shared/profile'
-import { ACTIVE_STATUSES, OUTREACH_STATE_NAMES, OUTREACH_STATES, SOURCE_NAMES, STATUS_NAMES, STATUSES, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
-import type { Job, JobOutreach, OutreachState, PeopleCount, WorkMode } from '../../../shared/types'
+import type { JobEdit } from '../../../shared/api'
+import { ACTIVE_STATUSES, OUTREACH_STATE_NAMES, OUTREACH_STATES, SOURCE_NAMES, SOURCES, STATUS_NAMES, STATUSES, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
+import type { JobOutreach, OutreachState, PeopleCount, Source, WorkMode } from '../../../shared/types'
 import { api } from '../lib/api'
-import { useAutosave } from '../lib/autosave'
 import { useData } from '../lib/data'
 import { useExperience } from '../lib/experience'
 import { capitalize, day, initials } from '../lib/format'
@@ -18,25 +18,15 @@ import { ActivityTimeline } from '../ui/activity'
 import { sendRequests } from '../ui/CommandMenu'
 import { attempt, DetailLayout, ErrorNote, Group, Hidden, Loading, Numbers, Page, Props, Tip } from '../ui/common'
 import { Choice } from '../ui/fields'
+import { checkNumber, InlineCompany, InlineField, InlineLink, InlineNotes } from '../ui/inline'
 import {
   Avatar,
   AvatarFallback,
   Button,
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-  Input,
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -47,70 +37,15 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  Textarea,
 } from '../ui/nx'
 import { AskReferralDialog } from './AskReferral'
-
-const hostOf = (url: string): string => {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '')
-  } catch {
-    return url
-  }
-}
-
-/** A link shown as text that opens in the app's Chrome. */
-function LinkButton({ label, url }: { label: string; url: string }): JSX.Element {
-  return (
-    <button type="button" className="nx:inline-flex nx:items-center nx:gap-1 nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:typography-body-small nx:text-foreground nx:underline" onClick={() => void attempt(() => api.chrome.openUrl(url))}>
-      {label}
-      <ArrowSquareOutIcon size={12} />
-    </button>
-  )
-}
 
 /** Where an application on the portal itself goes, by route. */
 const ON_PORTAL: Record<string, string> = { 'easy-apply': 'Easy Apply', wellfound: 'On Wellfound', instahyre: 'On Instahyre' }
 
-/** The job's two links, as the user pastes them: the posting where it was found, and where the application goes. */
-function LinksDialog({ job, onClose }: { job: Job; onClose: () => void }): JSX.Element {
-  const [postingLink, setPostingLink] = useState(job.portalLink ?? '')
-  const [applyLink, setApplyLink] = useState(job.link ?? '')
-  const save = async (): Promise<void> => {
-    if (await attempt(() => api.tracker.setLinks(job.id, { postingLink: postingLink.trim(), applyLink: applyLink.trim() }).then(() => true), 'Links saved')) onClose()
-  }
-  return (
-    <Dialog open onOpenChange={open => !open && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Links</DialogTitle>
-        </DialogHeader>
-        <DialogBody>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="link-posting">{job.portal === 'manual' ? 'Posting' : `Posting, on ${SOURCE_NAMES[job.portal]}`}</FieldLabel>
-              <Input id="link-posting" type="url" placeholder="https://" value={postingLink} onChange={event => setPostingLink(event.target.value)} />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="link-apply">Where the application goes</FieldLabel>
-              <Input id="link-apply" type="url" placeholder="https://" value={applyLink} onChange={event => setApplyLink(event.target.value)} />
-              <FieldDescription>The company's apply page, or the posting itself when you apply on the platform. Referral messages send this one.</FieldDescription>
-            </Field>
-          </FieldGroup>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={() => void save()}>Save links</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 const STATUS_OPTIONS = STATUSES.map(status => ({ value: status, label: STATUS_NAMES[status] }))
 const MODE_OPTIONS = WORK_MODES.map(mode => ({ value: mode, label: WORK_MODE_NAMES[mode] }))
+const SOURCE_OPTIONS = SOURCES.map(source => ({ value: source, label: SOURCE_NAMES[source] }))
 const OUTREACH_OPTIONS = OUTREACH_STATES.map(state => ({ value: state, label: OUTREACH_STATE_NAMES[state] }))
 
 /** "4 connected · 1 request sent", or "no people yet". */
@@ -168,10 +103,7 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
   const detail = useData(() => api.tracker.get(id), [id], ['jobs', 'people'])
   const months = useExperience()
   const job = detail.data?.job
-  const [notes, setNotes] = useAutosave(job?.notes, value => api.tracker.setNotes(id, value))
-  const [reqId, setReqId] = useAutosave(job ? (job.reqId ?? '') : undefined, value => api.tracker.setReqId(id, value.trim()))
   const isBusy = status?.run?.status === 'running' || status?.run?.status === 'waiting'
-  const [isEditingLinks, setIsEditingLinks] = useState(false)
   const [isAsking, setAsking] = useState(false)
 
   const crumbs = [{ label: 'Tracker', to: '/tracker' }]
@@ -187,6 +119,7 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
   const { company, people, outreach, activity, companyJobs } = detail.data
   const companyTo = `/company/${company.id}`
   const isActive = ACTIVE_STATUSES.includes(job.status)
+  const save = (change: JobEdit): Promise<void> => api.tracker.edit(job.id, change)
   const tooSenior = askBlock(job.minYears, months)
   const apply = async (): Promise<void> => {
     if (await attempt(() => api.flows.apply([job.id]))) go('/run')
@@ -233,7 +166,6 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => go(companyTo)}>Open company</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setIsEditingLinks(true)}>Edit links</DropdownMenuItem>
               <DropdownMenuItem disabled={isBusy} onSelect={() => void sendRequests([job.companyId])}>
                 Send connection requests
               </DropdownMenuItem>
@@ -251,7 +183,10 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
         main={
           <>
             <div className="nx:flex nx:flex-col nx:gap-2">
-              <h1 className="nx:typography-heading-large nx:m-0">{job.role}</h1>
+              <h1 className="nx:m-0">
+                <Hidden>{job.role}</Hidden>
+              </h1>
+              <InlineField heading value={job.role} placeholder="Role" label="Role" check={value => (value ? null : "The role can't be empty")} onSave={value => save({ field: 'role', value })} />
               <Numbers
                 items={[
                   companyButton,
@@ -320,7 +255,7 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
               </Group>
             )}
             <Group title="Notes">
-              <Textarea aria-label="Notes" rows={Math.min(14, Math.max(3, notes.split('\n').length + 1))} placeholder="Add a note" value={notes} onChange={event => setNotes(event.target.value)} />
+              <InlineNotes value={job.notes} placeholder="Add a note" label="Notes" onSave={value => api.tracker.setNotes(job.id, value)} />
             </Group>
             <Group title="Activity">
               <ActivityTimeline activity={activity} />
@@ -332,12 +267,17 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
             <Props
               items={[
                 ['Status', <Choice key="status" value={job.status} options={STATUS_OPTIONS} size="sm" variant="borderless" ariaLabel="Status" onChange={next => void attempt(() => api.tracker.setStatus(job.id, next))} />],
+                ['Company', <InlineCompany key="company" value={company.name} onSave={name => save({ field: 'company', value: name })} />],
                 [
                   'Job ID',
-                  <span key="req" className="nx:flex nx:items-center nx:gap-1">
-                    <Input size="sm" variant="ghost" aria-label="Job ID" placeholder="Not on the posting" value={reqId} onChange={event => setReqId(event.target.value)} />
-                    <Tip text="The company's own ID, from the posting. Referral messages include it." />
-                  </span>,
+                  <InlineField
+                    key="req"
+                    value={job.reqId ?? ''}
+                    placeholder="Not on the posting"
+                    label="Job ID"
+                    end={<Tip text="The company's own ID, from the posting. Referral messages include it." />}
+                    onSave={value => save({ field: 'reqId', value })}
+                  />,
                 ],
                 [
                   'Work mode',
@@ -353,67 +293,93 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
                 ],
                 [
                   'Min experience',
-                  typeof job.minYears === 'number' ? (
-                    <div key="years" className="nx:flex nx:flex-col nx:gap-0.5 nx:py-1">
-                      <span title={tooSenior ? `${tooSenior}: no referral asks for this job` : undefined}>
-                        {job.minYears}+ {job.minYears === 1 ? 'year' : 'years'}
-                        {tooSenior && <span className="nx:text-muted-foreground"> · too many to ask for a referral</span>}
-                      </span>
-                      {/* The words the number rests on: the description's, or the portal's own field when it states none. */}
-                      {job.yearsQuote && (
-                        <span className="nx:text-muted-foreground nx:line-clamp-3" title={job.yearsQuote}>
-                          {job.yearsQuote}
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <span key="years" className="nx:text-muted-foreground">
-                      Not stated
-                    </span>
-                  ),
+                  <InlineField
+                    key="years"
+                    value={job.minYears === null ? '' : String(job.minYears)}
+                    display={job.minYears === null ? '' : `${job.minYears}+ ${job.minYears === 1 ? 'year' : 'years'}`}
+                    placeholder="Not stated"
+                    label="Min experience in years"
+                    type="number"
+                    suffix="+ years"
+                    check={checkNumber(0, 40, 'Min experience')}
+                    onSave={value => save({ field: 'minYears', value: value === '' ? null : Number(value) })}
+                    below={
+                      (tooSenior || job.yearsQuote) && (
+                        <div className="nx:flex nx:flex-col nx:gap-0.5 nx:px-2 nx:typography-body-small nx:text-muted-foreground">
+                          {tooSenior && <span title={`${tooSenior}: no referral asks for this job`}>Too many to ask for a referral</span>}
+                          {/* The words the number rests on: the description's, or the portal's own field when it states none. */}
+                          {job.yearsQuote && (
+                            <span className="nx:line-clamp-3" title={job.yearsQuote}>
+                              {job.yearsQuote}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    }
+                  />,
                 ],
-                ['Score', job.score ?? '–'],
+                [
+                  'Score',
+                  <InlineField
+                    key="score"
+                    value={job.score === null ? '' : String(job.score)}
+                    placeholder="No score"
+                    label="Score, 1 to 10"
+                    type="number"
+                    check={checkNumber(1, 10, 'The score')}
+                    onSave={value => save({ field: 'score', value: value === '' ? null : Number(value) })}
+                  />,
+                ],
                 [
                   'Found on',
-                  job.portalLink ? (
-                    <LinkButton key="found" label={platform} url={job.portalLink} />
-                  ) : job.portal === 'manual' ? (
-                    platform
-                  ) : (
-                    <span key="found">
-                      {platform} <span className="nx:text-muted-foreground">· No link</span>
-                    </span>
-                  ),
+                  <Choice
+                    key="portal"
+                    value={job.portal}
+                    options={SOURCE_OPTIONS}
+                    size="sm"
+                    variant="borderless"
+                    ariaLabel="Found on"
+                    onChange={next => void attempt(() => save({ field: 'portal', value: next as Source }))}
+                  />,
                 ],
+                ['Posting', <InlineLink key="posting" value={job.portalLink ?? ''} placeholder="Add the posting link" label="Posting link" onSave={value => save({ field: 'postingLink', value })} />],
                 [
-                  'Apply at',
-                  !job.link ? (
-                    <span key="via" className="nx:text-muted-foreground">
-                      No link
-                    </span>
-                  ) : (
-                    <span key="via" className="nx:flex nx:items-center nx:gap-1 nx:min-w-0">
-                      <LinkButton label={isExternal ? hostOf(job.link) : (ON_PORTAL[job.applyRoute ?? ''] ?? `On ${platform}`)} url={job.link} />
-                      {job.postingState === 'unreadable' && (
-                        <span title="This apply page couldn't be read, so the platform's facts stand" className="nx:inline-flex nx:text-warning-subtle-foreground">
+                  'Apply page',
+                  <InlineLink
+                    key="apply"
+                    value={job.link ?? ''}
+                    placeholder="Add the apply page"
+                    label="Apply page link"
+                    onSave={value => save({ field: 'applyLink', value })}
+                    below={
+                      job.postingState === 'unreadable' ? (
+                        <span className="nx:flex nx:items-center nx:gap-1 nx:px-2 nx:typography-body-small nx:text-warning-subtle-foreground">
                           <WarningIcon size={14} />
+                          Couldn't be read, so the platform's facts stand
                         </span>
-                      )}
-                    </span>
-                  ),
+                      ) : (
+                        job.link &&
+                        !isExternal && <span className="nx:px-2 nx:typography-body-small nx:text-muted-foreground">{ON_PORTAL[job.applyRoute ?? ''] ?? `Applies on ${platform}`}</span>
+                      )
+                    }
+                  />,
                 ],
-                ['Pay', job.pay ?? 'Not shown'],
-                ['Found', day(job.found)],
+                ['Pay', <InlineField key="pay" value={job.pay ?? ''} placeholder="Not shown" label="Pay" onSave={value => save({ field: 'pay', value })} />],
+                [
+                  'Found',
+                  <InlineField
+                    key="found"
+                    value={job.found.slice(0, 10)}
+                    display={day(job.found)}
+                    placeholder="Add a date"
+                    label="Date found"
+                    type="date"
+                    check={value => (value ? null : 'Pick a date')}
+                    onSave={value => save({ field: 'found', value })}
+                  />,
+                ],
               ]}
             />
-            {(!job.portalLink || !job.link) && (
-              <div>
-                <Button variant="ghost" size="sm" startIcon={<LinkIcon />} onClick={() => setIsEditingLinks(true)}>
-                  Add links
-                </Button>
-              </div>
-            )}
-            {isEditingLinks && <LinksDialog job={job} onClose={() => setIsEditingLinks(false)} />}
             <Separator />
             <Group title="Company">
               <button type="button" className="nx:flex nx:items-center nx:gap-2 nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:text-left" onClick={() => go(companyTo)}>

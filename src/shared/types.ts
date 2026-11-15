@@ -366,7 +366,7 @@ export type JobOutreach = Outreach & { name: string; headline: string; profileUr
 /* Activity: what happened, and what caused it                         */
 /* ------------------------------------------------------------------ */
 
-export const ACTIVITY_KINDS = ['status', 'request-sent', 'connected', 'outreach', 'joined', 'left', 'note'] as const
+export const ACTIVITY_KINDS = ['status', 'request-sent', 'connected', 'outreach', 'joined', 'left', 'note', 'edit'] as const
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number]
 
 /** One thing that happened to a job, a person or an outreach, with the run or email that caused it. */

@@ -34,6 +34,7 @@ import type {
   Settings,
   SignInSite,
   SiteState,
+  Source,
   WorkMode,
 } from './types'
 
@@ -46,6 +47,27 @@ export type HuntOptions = { portals: Portal[]; window: HuntWindow }
 export type ConnectOptions = { companyIds: number[]; perCompany: number }
 /** A referral ask: these people, about this job, word for word. */
 export type ReferralOptions = { jobId: number; personIds: number[]; resume: boolean }
+
+/**
+ * One value of a job, changed on its page. "" clears a text or a link, and
+ * null clears a number. A run that reads the posting again may change it back.
+ */
+export type JobEdit =
+  | { field: 'role'; value: string }
+  /** A company's name: one in the tracker, or a new one. Asks stay with the job; people stay where they work. */
+  | { field: 'company'; value: string }
+  | { field: 'reqId'; value: string }
+  | { field: 'minYears'; value: number | null }
+  | { field: 'score'; value: number | null }
+  | { field: 'portal'; value: Source }
+  | { field: 'postingLink'; value: string }
+  | { field: 'applyLink'; value: string }
+  | { field: 'pay'; value: string }
+  /** YYYY-MM-DD */
+  | { field: 'found'; value: string }
+
+/** One value of a company, changed on its page. "" clears all but the name. */
+export type CompanyEdit = { field: 'name' | 'headcount' | 'linkedinUrl' | 'website'; value: string }
 
 /** The only door from the screens to the main process, exposed as `window.jobApp`. */
 export type JobAppApi = {
@@ -70,10 +92,8 @@ export type JobAppApi = {
     setStatus: (id: number, status: string) => Promise<void>
     setNotes: (id: number, notes: string) => Promise<void>
     setWorkMode: (id: number, workMode: WorkMode) => Promise<void>
-    /** The links the user pastes: the posting where it was found, and where the application goes. "" clears one. */
-    setLinks: (id: number, links: { postingLink: string; applyLink: string }) => Promise<void>
-    /** The company's own id for the job, as the posting shows it. "" clears it. */
-    setReqId: (id: number, reqId: string) => Promise<void>
+    /** Changes one value of the job, as you edit it on its page. */
+    edit: (id: number, edit: JobEdit) => Promise<void>
     add: (input: NewJob) => Promise<number>
     /** A discarded job back to found. */
     restore: (id: number) => Promise<void>
@@ -84,7 +104,8 @@ export type JobAppApi = {
     setStage: (id: number, stage: string) => Promise<void>
     setNotes: (id: number, notes: string) => Promise<void>
     setNeverShow: (id: number, on: boolean, why?: string) => Promise<void>
-    rename: (id: number, name: string) => Promise<void>
+    /** Changes one value of the company, as you edit it on its page. */
+    edit: (id: number, edit: CompanyEdit) => Promise<void>
     /** Moves everything at one company onto another. */
     merge: (fromId: number, intoId: number) => Promise<void>
     neverShown: () => Promise<NeverShowCompany[]>
@@ -160,8 +181,7 @@ export const CHANNELS = [
   'tracker:setStatus',
   'tracker:setNotes',
   'tracker:setWorkMode',
-  'tracker:setLinks',
-  'tracker:setReqId',
+  'tracker:edit',
   'tracker:add',
   'tracker:restore',
   'companies:get',
@@ -169,7 +189,7 @@ export const CHANNELS = [
   'companies:setStage',
   'companies:setNotes',
   'companies:setNeverShow',
-  'companies:rename',
+  'companies:edit',
   'companies:merge',
   'companies:neverShown',
   'companies:addNeverShow',

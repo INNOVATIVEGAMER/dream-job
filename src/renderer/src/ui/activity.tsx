@@ -7,6 +7,7 @@ import {
   MagnifyingGlassIcon,
   NoteIcon,
   PaperPlaneTiltIcon,
+  PencilSimpleIcon,
   SignInIcon,
   SignOutIcon,
   UserCheckIcon,
@@ -43,6 +44,8 @@ function iconOf(row: Activity): JSX.Element {
       return <SignOutIcon size={14} />
     case 'note':
       return <NoteIcon size={14} />
+    case 'edit':
+      return <PencilSimpleIcon size={14} />
   }
 }
 

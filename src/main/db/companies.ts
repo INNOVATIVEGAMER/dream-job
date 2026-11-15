@@ -79,6 +79,13 @@ export class Companies {
       .run(links.linkedinUrl ?? current.linkedinUrl, links.website ?? current.website, links.headcount ?? current.headcount, now(), id)
   }
 
+  /** One detail you set on the company's page; empty clears it. */
+  setDetail(id: number, detail: 'headcount' | 'linkedinUrl' | 'website', value: string | null): void {
+    const column = { headcount: 'headcount', linkedinUrl: 'linkedin_url', website: 'website' }[detail]
+    const result = this.db.prepare(`UPDATE companies SET ${column} = ?, updated = ? WHERE id = ?`).run(value, now(), id)
+    if (Number(result.changes) !== 1) throw new Error(`no company with id ${id}`)
+  }
+
   /** Hunts skip every job at a company the user never wants to see; it stays in the tracker. */
   setNeverShow(id: number, on: boolean, why = ''): void {
     this.db

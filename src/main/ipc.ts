@@ -40,6 +40,20 @@ const short = (max = 200) => z.string().max(max)
 const CompanyQuery = z.object({ view: z.enum(TRACKER_VIEWS), stage: short(), portal: short(), search: short(), modes: z.array(z.enum(WORK_MODES)).max(WORK_MODES.length).default([]) })
 const RunQuery = z.object({ flow: short(), portal: short(), page })
 const httpsLink = z.string().trim().url('Enter the link to the posting or the apply page.').max(2000).refine(url => /^https?:\/\//i.test(url), 'Use an https link.')
+const linkOrEmpty = z.union([z.literal(''), httpsLink])
+const JobEdit = z.discriminatedUnion('field', [
+  z.object({ field: z.literal('role'), value: z.string().trim().min(1, "The role can't be empty.").max(200) }),
+  z.object({ field: z.literal('company'), value: z.string().trim().min(1, 'Pick a company, or type a new one.').max(200) }),
+  z.object({ field: z.literal('reqId'), value: short(60) }),
+  z.object({ field: z.literal('minYears'), value: z.number().int().min(0).max(40).nullable() }),
+  z.object({ field: z.literal('score'), value: z.number().int().min(1).max(10).nullable() }),
+  z.object({ field: z.literal('portal'), value: z.enum(SOURCES) }),
+  z.object({ field: z.literal('postingLink'), value: linkOrEmpty }),
+  z.object({ field: z.literal('applyLink'), value: linkOrEmpty }),
+  z.object({ field: z.literal('pay'), value: short(200) }),
+  z.object({ field: z.literal('found'), value: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date.') }),
+])
+const CompanyEdit = z.object({ field: z.enum(['name', 'headcount', 'linkedinUrl', 'website']), value: short(2000) })
 const NewJob = z.object({
   company: z.string().trim().min(1, 'Enter the company.').max(200),
   stage: z.enum(STAGES),
@@ -109,14 +123,8 @@ export function registerIpc(deps: IpcDeps): void {
       store.jobs.setNotes(id.parse(jobId), short(20_000).parse(notes))
       deps.sendData(['jobs'])
     },
-    'tracker:setLinks': (jobId, links) => {
-      const link = z.union([z.literal(''), httpsLink])
-      const { postingLink, applyLink } = z.object({ postingLink: link, applyLink: link }).parse(links)
-      store.jobs.setLinksByUser(id.parse(jobId), postingLink ? cleanLink(postingLink) : null, applyLink ? cleanLink(applyLink) : null)
-      deps.sendData(['jobs'])
-    },
-    'tracker:setReqId': (jobId, reqId) => {
-      store.jobs.setReqId(id.parse(jobId), short(60).parse(reqId))
+    'tracker:edit': (jobId, change) => {
+      store.editJob(id.parse(jobId), JobEdit.parse(change))
       deps.sendData(['jobs'])
     },
     'tracker:setWorkMode': (jobId, workMode) => {
@@ -148,8 +156,8 @@ export function registerIpc(deps: IpcDeps): void {
       store.companies.setNeverShow(id.parse(companyId), z.boolean().parse(on), short(500).parse(why ?? ''))
       deps.sendData(['jobs'])
     },
-    'companies:rename': (companyId, name) => {
-      store.companies.rename(id.parse(companyId), short().parse(name))
+    'companies:edit': (companyId, change) => {
+      store.editCompany(id.parse(companyId), CompanyEdit.parse(change))
       deps.sendData(['jobs', 'people'])
     },
     'companies:merge': (fromId, intoId) => {

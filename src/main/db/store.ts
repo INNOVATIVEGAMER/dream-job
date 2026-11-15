@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
-import type { JobDetail } from '../../shared/api'
+import type { CompanyEdit, JobDetail, JobEdit } from '../../shared/api'
+import { cleanLink } from '../../shared/links'
 import { askBlock, experienceMonths } from '../../shared/profile'
 import { ACTIVE_STATUSES, PORTALS, STAGES, TRACKER_VIEWS, VIEW_STATUSES, WORK_MODES } from '../../shared/types'
 import type {
@@ -23,7 +24,7 @@ import { ActivityLog } from './activity'
 import { Companies, furthest, NeverShow } from './companies'
 import { openDatabase } from './database'
 import { Emails } from './emails'
-import { JOB_FROM, JOB_ROW, Jobs } from './jobs'
+import { changeLine, JOB_FROM, JOB_ROW, Jobs } from './jobs'
 import { OutreachStore } from './outreach'
 import { People } from './people'
 import { Runs } from './runs'
@@ -98,6 +99,55 @@ export class Store {
   connectJob(companyId: number): JobRow | null {
     const askable = this.askableAt(companyId)
     return askable.find(row => ACTIVE_STATUSES.includes(row.status)) ?? askable.find(row => row.status === 'found') ?? null
+  }
+
+  /* ---------------------------------------------------------------- edits on a page */
+
+  /** One value of a job, changed on its page; the company moves it, the rest is the job's own. */
+  editJob(jobId: number, change: JobEdit): void {
+    this.transaction(() => {
+      if (change.field === 'company') this.moveJob(jobId, change.value)
+      else this.jobs.edit(jobId, change)
+    })
+  }
+
+  /**
+   * Moves a job to another company, one in the tracker or a new one, which
+   * starts at the old one's stage. Its asks stay with the job; people stay
+   * where they work, so the old company keeps them.
+   */
+  private moveJob(jobId: number, name: string): void {
+    const job = this.jobs.get(jobId)
+    if (!job) throw new Error(`no job with id ${jobId}`)
+    const from = this.companies.get(job.companyId)
+    const companyId = this.companies.resolve(name, from?.stage)
+    if (companyId === job.companyId) return
+    const to = this.companies.get(companyId)
+    this.jobs.setCompany(jobId, companyId)
+    this.activity.add({ kind: 'edit', jobId, text: `You moved it from ${job.company} to ${to?.name ?? name.trim()}` })
+  }
+
+  /** One value of a company, changed on its page, with a line in its history. */
+  editCompany(companyId: number, change: CompanyEdit): void {
+    const company = this.companies.get(companyId)
+    if (!company) throw new Error(`no company with id ${companyId}`)
+    const value = change.value.trim()
+    this.transaction(() => {
+      if (change.field === 'name') {
+        if (value === company.name) return
+        this.companies.rename(companyId, value)
+        this.activity.add({ kind: 'edit', companyId, text: changeLine('the name', company.name, value) })
+        return
+      }
+      const isLink = change.field !== 'headcount'
+      if (isLink && value && !/^https?:\/\/\S+$/i.test(value)) throw new Error('Paste the whole link, starting with https://')
+      const next = isLink && value ? cleanLink(value) : value
+      const before = company[change.field] ?? ''
+      if (before === next) return
+      this.companies.setDetail(companyId, change.field, next || null)
+      const what = { headcount: 'how many people work there', linkedinUrl: 'the LinkedIn page', website: 'the website' }[change.field]
+      this.activity.add({ kind: 'edit', companyId, text: changeLine(what, before, next) })
+    })
   }
 
   /* ---------------------------------------------------------------- tracker */
