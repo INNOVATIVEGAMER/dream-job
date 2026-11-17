@@ -7,21 +7,26 @@ import { z } from 'zod'
 
 import type { Channel, JobDetail, RunDetail } from '../shared/api'
 import { cleanLink } from '../shared/links'
-import { HUNT_WINDOWS, OUTREACH_STATES, PORTALS, SIGN_IN_SITES, SIGN_IN_URLS, SOURCES, STAGES, STATUSES, TRACKER_VIEWS, WORK_MODES } from '../shared/types'
+import { OUTREACH_STATES, SIGN_IN_SITES, SIGN_IN_URLS, STAGES, STATUSES, WORK_MODES } from '../shared/types'
 import type { AppStatus, DataTopic, ResumeInfo } from '../shared/types'
 import type { ChromeController } from './browser/chrome'
 import { findChrome } from './browser/chrome'
 import { readSignIns } from './browser/signins'
+import { modelOption } from './claude'
+import type { ChatService } from './chat/service'
 import { now } from './db/database'
+import { ModelSchema } from './db/settings'
 import type { Store } from './db/store'
 import type { Flows } from './flows'
 import { importResume } from './flows/resume'
 import type { RunEngine } from './runs/engine'
+import { CardAnswerSchema, CompanyEdit, CompanyQuery, ConnectOptions, HuntOptions, id, JobEdit, NewJob, ReferralOptions, RunQuery, short } from './schemas'
 
 export type IpcDeps = {
   store: Store
   chrome: ChromeController
   engine: RunEngine
+  chat: ChatService
   flows: Flows
   window: () => BrowserWindow | null
   status: () => AppStatus
@@ -32,50 +37,6 @@ export type IpcDeps = {
   chromeProfileDir: string
   dataDir: string
 }
-
-const id = z.number().int().positive()
-const page = z.number().int().min(0).max(100_000)
-const short = (max = 200) => z.string().max(max)
-
-const CompanyQuery = z.object({ view: z.enum(TRACKER_VIEWS), stage: short(), portal: short(), search: short(), modes: z.array(z.enum(WORK_MODES)).max(WORK_MODES.length).default([]) })
-const RunQuery = z.object({ flow: short(), portal: short(), page })
-const httpsLink = z.string().trim().url('Enter the link to the posting or the apply page.').max(2000).refine(url => /^https?:\/\//i.test(url), 'Use an https link.')
-const linkOrEmpty = z.union([z.literal(''), httpsLink])
-const JobEdit = z.discriminatedUnion('field', [
-  z.object({ field: z.literal('role'), value: z.string().trim().min(1, "The role can't be empty.").max(200) }),
-  z.object({ field: z.literal('company'), value: z.string().trim().min(1, 'Pick a company, or type a new one.').max(200) }),
-  z.object({ field: z.literal('reqId'), value: short(60) }),
-  z.object({ field: z.literal('minYears'), value: z.number().int().min(0).max(40).nullable() }),
-  z.object({ field: z.literal('score'), value: z.number().int().min(1).max(10).nullable() }),
-  z.object({ field: z.literal('portal'), value: z.enum(SOURCES) }),
-  z.object({ field: z.literal('postingLink'), value: linkOrEmpty }),
-  z.object({ field: z.literal('applyLink'), value: linkOrEmpty }),
-  z.object({ field: z.literal('pay'), value: short(200) }),
-  z.object({ field: z.literal('found'), value: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date.') }),
-])
-const CompanyEdit = z.object({ field: z.enum(['name', 'headcount', 'linkedinUrl', 'website']), value: short(2000) })
-const NewJob = z.object({
-  company: z.string().trim().min(1, 'Enter the company.').max(200),
-  stage: z.enum(STAGES),
-  role: z.string().trim().min(1, 'Enter the role.').max(200),
-  link: httpsLink,
-  reqId: short(60).default(''),
-  status: z.enum(STATUSES).refine(status => status !== 'discarded', 'A new job starts at found or later.'),
-  portal: z.enum(SOURCES),
-  workMode: z.enum(WORK_MODES).optional(),
-  notes: short(10_000),
-})
-const CardAnswerSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('approve'), texts: z.array(z.string().max(20_000)).max(20) }),
-  z.object({ kind: z.literal('cancel') }),
-  z.object({ kind: z.literal('resume') }),
-  z.object({ kind: z.literal('choose'), option: short() }),
-  z.object({ kind: z.literal('answer'), texts: z.array(z.string().max(2000)).max(20), save: z.boolean() }),
-])
-const HuntOptions = z.object({ portals: z.array(z.enum(PORTALS)).min(1, 'Pick at least one portal.'), window: z.enum(HUNT_WINDOWS) })
-// No cap on how many: each run splits the work into sessions and works through them a few at a time.
-const ConnectOptions = z.object({ companyIds: z.array(id).min(1, 'Pick at least one company.'), perCompany: z.number().int().min(1).max(30) })
-const ReferralOptions = z.object({ jobId: id, personIds: z.array(id).min(1, 'Pick at least one person.'), resume: z.boolean() })
 
 /** Counts the pages of a PDF from its page objects: close enough to tell 1 page from 2. */
 function pdfPages(path: string): number | null {
@@ -200,6 +161,17 @@ export function registerIpc(deps: IpcDeps): void {
       deps.sendData(['email', 'jobs', 'people'])
     },
 
+    'chat:state': () => deps.chat.state(),
+    'chat:list': () => deps.chat.list(),
+    'chat:open': chatId => deps.chat.open(id.parse(chatId)),
+    'chat:startNew': () => deps.chat.startNew(),
+    'chat:send': (text, route) => deps.chat.send(short(20_000).parse(text), short(200).parse(route)),
+    'chat:stop': () => deps.chat.stop(),
+    'chat:answer': (cardId, answer) => deps.chat.answer(short().parse(cardId), CardAnswerSchema.parse(answer)),
+    'chat:remove': chatId => deps.chat.remove(id.parse(chatId)),
+    'chat:showTab': () => deps.chat.showTab(),
+    'chat:setModel': model => deps.chat.setModel(ModelSchema.nullable().parse(model)),
+
     'settings:get': () => store.settings.all(),
     'settings:setPreferences': value => {
       store.settings.setPreferences(value)
@@ -216,6 +188,11 @@ export function registerIpc(deps: IpcDeps): void {
     'settings:setEmail': value => {
       store.settings.setEmail(value)
       deps.sendData(['settings'])
+    },
+    'settings:setModel': async value => {
+      store.settings.setModel(value)
+      deps.sendData(['settings'])
+      await deps.chat.defaultChanged()
     },
     'settings:setPortals': value => {
       store.settings.setPortals(value)
@@ -263,7 +240,7 @@ export function registerIpc(deps: IpcDeps): void {
     },
     'settings:importResume': () => {
       if (!existsSync(deps.resumePath)) throw new Error('Add your resume first.')
-      return importResume(deps.resumePath, deps.dataDir)
+      return importResume(deps.resumePath, deps.dataDir, modelOption(store.settings.model()))
     },
   }
 

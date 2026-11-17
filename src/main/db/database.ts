@@ -335,6 +335,31 @@ const MIGRATIONS: Migration[] = [
 
   // The words a job's years rest on: the description's, or the portal's own field when the description states none.
   db => addColumns(db, 'jobs', { years_quote: 'TEXT' }),
+
+  // Chats with Claude: each one, and every line of it.
+  db =>
+    db.exec(`
+      CREATE TABLE chats (
+        id INTEGER PRIMARY KEY,
+        title TEXT NOT NULL,
+        created TEXT NOT NULL,
+        updated TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE chat_items (
+        id INTEGER PRIMARY KEY,
+        chat_id INTEGER NOT NULL REFERENCES chats (id) ON DELETE CASCADE,
+        at TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        is_error INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX chat_items_chat ON chat_items (chat_id);
+    `),
+
+  // The model a chat picked; none follows the default in Settings.
+  db => addColumns(db, 'chats', { model: 'TEXT' }),
 ]
 
 const STATUS_MOVES: Record<string, string> = {

@@ -21,6 +21,7 @@ import type {
   TrackerView,
 } from '../../shared/types'
 import { ActivityLog } from './activity'
+import { Chats } from './chats'
 import { Companies, furthest, NeverShow } from './companies'
 import { openDatabase } from './database'
 import { Emails } from './emails'
@@ -45,6 +46,7 @@ export class Store {
   readonly runs: Runs
   readonly settings: SettingsStore
   readonly neverShow: NeverShow
+  readonly chats: Chats
 
   private constructor(private readonly db: DatabaseSync) {
     this.companies = new Companies(db)
@@ -56,6 +58,7 @@ export class Store {
     this.runs = new Runs(db)
     this.settings = new SettingsStore(db)
     this.neverShow = new NeverShow(this.companies)
+    this.chats = new Chats(db)
   }
 
   static open(path: string): Store {

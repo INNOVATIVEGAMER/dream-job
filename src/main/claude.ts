@@ -7,7 +7,8 @@ import { promisify } from 'node:util'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type { AccountInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 
-import type { ClaudeStatus } from '../shared/types'
+import { DEFAULT_MODEL } from '../shared/types'
+import type { ClaudeModel, ClaudeStatus } from '../shared/types'
 
 const run = promisify(execFile)
 
@@ -72,6 +73,9 @@ function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
   })
 }
 
+/** The `model` option for a session: none for Claude Code's own default, else the name as given. */
+export const modelOption = (model: string): string | undefined => (model === DEFAULT_MODEL ? undefined : model)
+
 const isSet = (value: string | undefined): value is string => Boolean(value) && value !== 'none'
 
 /**
@@ -111,6 +115,7 @@ export async function checkClaude(cwd: string): Promise<ClaudeStatus> {
       path: null,
       version: null,
       account: null,
+      models: [],
     }
   }
 
@@ -136,8 +141,12 @@ export async function checkClaude(cwd: string): Promise<ClaudeStatus> {
   })
   try {
     const account = await within(session.accountInfo(), CHECK_TIMEOUT_MS, 'Starting Claude Code')
+    // The models the account may use, as Claude Code's own model menu lists them. Without them, only the default shows.
+    const models: ClaudeModel[] = await within(session.supportedModels(), CHECK_TIMEOUT_MS, 'Listing models')
+      .then(list => list.map(one => ({ value: one.value, resolved: one.resolvedModel ?? null, name: one.displayName, description: one.description })))
+      .catch(() => [])
 
-    return { ...judge(account), path, version, account: { ...account } }
+    return { ...judge(account), path, version, account: { ...account }, models }
   } catch (error) {
     return {
       state: 'error',
@@ -145,6 +154,7 @@ export async function checkClaude(cwd: string): Promise<ClaudeStatus> {
       path,
       version,
       account: null,
+      models: [],
     }
   } finally {
     stop.abort()

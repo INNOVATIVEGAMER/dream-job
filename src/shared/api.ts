@@ -3,6 +3,8 @@ import type {
   AppStatus,
   BrowserInfo,
   CardAnswer,
+  ChatState,
+  ChatSummary,
   Company,
   CompanyDetail,
   CompanyList,
@@ -146,6 +148,26 @@ export type JobAppApi = {
     /** Undoes one change an email made: its Activity row's id. */
     undo: (activityId: number) => Promise<void>
   }
+  chat: {
+    /** The open chat. */
+    state: () => Promise<ChatState>
+    onState: (listener: (state: ChatState) => void) => () => void
+    /** Claude asks the screens to show a path, such as `/job/12`. */
+    onNavigate: (listener: (path: string) => void) => () => void
+    list: () => Promise<ChatSummary[]>
+    open: (id: number) => Promise<void>
+    /** An empty chat; the first message starts it. */
+    startNew: () => Promise<void>
+    /** A message, with the path of the screen the user is on. */
+    send: (text: string, route: string) => Promise<void>
+    stop: () => Promise<void>
+    answer: (cardId: string, answer: CardAnswer) => Promise<void>
+    remove: (id: number) => Promise<void>
+    /** Shows the chat's own Chrome tab. */
+    showTab: () => Promise<void>
+    /** The model for the open chat; null follows the default in Settings. */
+    setModel: (model: string | null) => Promise<void>
+  }
   settings: {
     get: () => Promise<Settings>
     setPreferences: (value: Preferences) => Promise<void>
@@ -153,6 +175,8 @@ export type JobAppApi = {
     setReferral: (value: ReferralMessage) => Promise<void>
     setPortals: (value: PortalSettings) => Promise<void>
     setEmail: (value: EmailSettings) => Promise<void>
+    /** The model runs and new chats use: a value from Claude Code's list, or `default`. */
+    setModel: (model: string) => Promise<void>
     finishSetup: () => Promise<void>
     answers: () => Promise<FormAnswer[]>
     saveAnswer: (question: string, answer: string) => Promise<void>
@@ -210,12 +234,23 @@ export const CHANNELS = [
   'flows:email',
   'email:detail',
   'email:undo',
+  'chat:state',
+  'chat:list',
+  'chat:open',
+  'chat:startNew',
+  'chat:send',
+  'chat:stop',
+  'chat:answer',
+  'chat:remove',
+  'chat:showTab',
+  'chat:setModel',
   'settings:get',
   'settings:setPreferences',
   'settings:setProfile',
   'settings:setReferral',
   'settings:setPortals',
   'settings:setEmail',
+  'settings:setModel',
   'settings:finishSetup',
   'settings:answers',
   'settings:saveAnswer',

@@ -3,8 +3,9 @@ import { join } from 'node:path'
 
 import { app, BrowserWindow, screen } from 'electron'
 
-import type { AppStatus, ClaudeStatus, DataTopic, RunState } from '../shared/types'
+import type { AppStatus, ChatState, ClaudeStatus, DataTopic, RunState } from '../shared/types'
 import { ChromeController } from './browser/chrome'
+import { ChatService } from './chat/service'
 import type { Bounds } from './browser/chrome'
 import { checkClaude } from './claude'
 import { Store } from './db/store'
@@ -30,7 +31,7 @@ const WINDOW = { width: 1200, height: 860 }
 const GAP = 8
 
 let win: BrowserWindow | null = null
-let claude: ClaudeStatus = { state: 'checking', message: 'Checking Claude Code...', path: null, version: null, account: null }
+let claude: ClaudeStatus = { state: 'checking', message: 'Checking Claude Code...', path: null, version: null, account: null, models: [] }
 let checking: Promise<void> | null = null
 
 /**
@@ -110,6 +111,25 @@ const engine = new RunEngine({
 })
 const flows = new Flows(engine, store)
 
+const chat = new ChatService({
+  store,
+  chrome,
+  engine,
+  flows,
+  resumePath,
+  cwd: dataDir,
+  ensureChrome: async () => {
+    if (!chrome.isControlled()) await openChrome('controlled')
+  },
+  onState: (state: ChatState) => win?.webContents.send('push:chat', state),
+  onData: topics => pushData(topics),
+  onAttention: () => {
+    win?.show()
+    win?.focus()
+  },
+  navigate: path => win?.webContents.send('push:navigate', path),
+})
+
 /** One check at a time; a second request while one runs waits for it. */
 function runClaudeCheck(): Promise<void> {
   checking ??= (async () => {
@@ -179,6 +199,7 @@ registerIpc({
   store,
   chrome,
   engine,
+  chat,
   flows,
   window: () => win,
   status,
@@ -200,6 +221,7 @@ void app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  void chat.close()
   void engine.stop()
   void chrome.close()
 })

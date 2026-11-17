@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
 
 import {
@@ -8,6 +9,7 @@ import {
   HandPalmIcon,
   HouseIcon,
   MagnifyingGlassIcon,
+  SparkleIcon,
   TableIcon,
   WarningIcon,
 } from '@phosphor-icons/react'
@@ -17,6 +19,7 @@ import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
+import { ChatPanel, useChat } from './chat/ChatPanel'
 import { CommandMenu } from './CommandMenu'
 import {
   Alert,
@@ -117,10 +120,54 @@ function Problems({ status }: { status: AppStatus | null }): JSX.Element | null 
   )
 }
 
-/** The app's frame: the sidebar, the command menu, and the screen. Each screen draws its own top bar. */
+const CHAT_OPEN_KEY = 'dream-job:chat-open'
+
+/** Whether the chat panel shows, remembered between launches. */
+function useChatOpen(): [boolean, (isOpen: boolean | ((was: boolean) => boolean)) => void] {
+  const [isOpen, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(CHAT_OPEN_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_OPEN_KEY, isOpen ? '1' : '0')
+    } catch {
+      // not remembered; it still opens and closes
+    }
+  }, [isOpen])
+  return [isOpen, setOpen]
+}
+
+/** The app's frame: the sidebar, the command menu, the screen, and the chat beside it. Each screen draws its own top bar. */
 export function Shell({ section, children }: { section: string; children: ReactNode }): JSX.Element {
   const status = useAppStatus()
   const home = useData(() => api.home(), [], ['jobs', 'people'])
+  const chat = useChat()
+  const [isChatOpen, setChatOpen] = useChatOpen()
+
+  // Cmd+J shows or hides the chat, from anywhere.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'j') {
+        event.preventDefault()
+        setChatOpen(was => !was)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [setChatOpen])
+
+  // Claude takes the app to the screen it is talking about.
+  useEffect(() => api.chat.onNavigate(path => go(path)), [])
+
+  // A card in the chat needs you: the chat opens to show it.
+  const cardId = chat.card?.id
+  useEffect(() => {
+    if (cardId) setChatOpen(true)
+  }, [cardId, setChatOpen])
 
   const main: NavItem[] = [
     { to: '/', label: 'Home', icon: <HouseIcon />, match: 'home' },
@@ -169,6 +216,13 @@ export function Shell({ section, children }: { section: string; children: ReactN
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton isActive={isChatOpen} onClick={() => setChatOpen(was => !was)}>
+                {chat.isBusy ? <Spinner /> : <SparkleIcon />}
+                <span>Ask Claude</span>
+              </SidebarMenuButton>
+              <SidebarMenuBadge>⌘J</SidebarMenuBadge>
+            </SidebarMenuItem>
             <NavButton item={{ to: '/settings', label: 'Settings', icon: <GearIcon />, match: 'settings' }} section={navSection} />
           </SidebarMenu>
         </SidebarFooter>
@@ -177,6 +231,7 @@ export function Shell({ section, children }: { section: string; children: ReactN
         <Problems status={status} />
         {children}
       </SidebarInset>
+      {isChatOpen && <ChatPanel chat={chat} onClose={() => setChatOpen(false)} />}
       <CommandMenu />
     </SidebarProvider>
   )

@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type { JobAppApi } from '../shared/api'
-import type { AppStatus, DataTopic } from '../shared/types'
+import type { AppStatus, ChatState, DataTopic } from '../shared/types'
 
 // The main process checks every input and answers the types in JobAppApi; `never` lets each entry take its own signature.
 const call =
@@ -76,6 +76,20 @@ const api: JobAppApi = {
     detail: call('email:detail'),
     undo: call('email:undo'),
   },
+  chat: {
+    state: call('chat:state'),
+    onState: listener => listen<ChatState>('push:chat', listener),
+    onNavigate: listener => listen<string>('push:navigate', listener),
+    list: call('chat:list'),
+    open: call('chat:open'),
+    startNew: call('chat:startNew'),
+    send: call('chat:send'),
+    stop: call('chat:stop'),
+    answer: call('chat:answer'),
+    remove: call('chat:remove'),
+    showTab: call('chat:showTab'),
+    setModel: call('chat:setModel'),
+  },
   settings: {
     get: call('settings:get'),
     setPreferences: call('settings:setPreferences'),
@@ -83,6 +97,7 @@ const api: JobAppApi = {
     setReferral: call('settings:setReferral'),
     setPortals: call('settings:setPortals'),
     setEmail: call('settings:setEmail'),
+    setModel: call('settings:setModel'),
     finishSetup: call('settings:finishSetup'),
     answers: call('settings:answers'),
     saveAnswer: call('settings:saveAnswer'),

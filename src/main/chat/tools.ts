@@ -1,0 +1,617 @@
+import { z } from 'zod'
+
+import { cleanLink } from '../../shared/links'
+import { EMAIL_COUNTS, HUNT_PORTALS, HUNT_WINDOWS, OUTREACH_STATES, PORTAL_NAMES, PORTALS, REQUESTS_PER_COMPANY, STAGES, STATUSES, TRACKER_VIEWS, WORK_MODES } from '../../shared/types'
+import type { DataTopic, FilledFact, RunState, WrittenAnswer } from '../../shared/types'
+import { approveWritten, browserTools, guarded, pressRef, refuse, REFUSE, say, typeInto } from '../browser/tools'
+import type { Store } from '../db/store'
+import { PreferencesSchema, ProfileSchema } from '../db/settings'
+import type { Flows } from '../flows'
+import { cut, defineTool } from '../runs/engine'
+import type { AnyTool, RunContext, RunEngine } from '../runs/engine'
+import { CompanyEdit, CompanyQuery, httpsLink, id, JobEdit, NewJob } from '../schemas'
+
+/** What the chat's tools reach: the tracker, the runs, the screens, and a Chrome tab of the chat's own. */
+export type ChatToolDeps = {
+  /** The chat as a run's tools see one: its own Chrome tab, its cards, its log. */
+  ctx: RunContext
+  store: Store
+  engine: RunEngine
+  flows: Flows
+  changed: (...topics: DataTopic[]) => void
+  /** Asks the user on a card in the chat; true when they confirm. */
+  confirm: (card: { title: string; body: string; quote?: string | null; facts?: FilledFact[]; yes: string }) => Promise<boolean>
+  /** Takes the app to a screen, such as `/job/12`. */
+  navigate: (path: string) => void
+}
+
+/** A tool's answer as JSON, cut to a size Claude can work with. */
+const json = (value: unknown, max = 40_000) => say(cut(JSON.stringify(value), max))
+
+const DECLINED = 'The user said no on the confirmation card. Nothing was changed. Do not try again unless they ask.'
+
+/** The screens the app has, as paths `open_screen` accepts. */
+const SCREEN =
+  /^\/(|tracker(\/(new|found|applied|outreached|referred|interview|offer|closed|discarded|all))?|job\/\d+|company\/\d+(\/ask)?|hunt|run|runs(\/\d+)?|never-show|email(\/\d+)?|settings(\/(preferences|profile|resume|message|answers|portals(\/[a-z]+)?|accounts|gmail))?)$/
+
+/** A run in a few lines: where it stands and its newest steps. */
+function runBrief(run: RunState | null): unknown {
+  if (!run) return { run: null }
+  return {
+    id: run.id,
+    title: run.title,
+    status: run.status,
+    progress: run.progress,
+    counts: run.counts,
+    waitingOnUser: run.card ? run.card.kind : null,
+    sessions: run.lanes.map(lane => ({ title: lane.title, status: lane.status, last: lane.last, result: lane.result })),
+    recent: run.events.slice(-15).map(event => `${event.kind}: ${event.text}`),
+    result: run.result,
+  }
+}
+
+function readTools(deps: ChatToolDeps): AnyTool[] {
+  const { store, engine } = deps
+  return [
+    defineTool(
+      'get_overview',
+      'The home screen in data: jobs per status, how many companies, what needs the user now, the latest runs, the last hunt and the last email check.',
+      {},
+      () => guarded(async () => json(store.home())),
+    ),
+    defineTool(
+      'search_tracker',
+      'The tracker, company first: each company with its jobs in the view (id, role, status, score, portal, work mode, years asked, last change). Filter by view, stage, portal, work modes and a search over company and role. Up to 80 companies.',
+      {
+        view: z.enum(TRACKER_VIEWS).optional().describe('Which jobs: a status view, "closed" (rejected and dead), "discarded", or "all" (everything but discarded, the default)'),
+        stage: z.enum(STAGES).optional(),
+        portal: z.string().max(40).optional().describe('A portal such as linkedin, or "manual"'),
+        search: z.string().max(200).optional().describe('Words in the company name or role'),
+        modes: z.array(z.enum(WORK_MODES)).optional(),
+      },
+      args =>
+        guarded(async () => {
+          const query = CompanyQuery.parse({ view: args.view ?? 'all', stage: args.stage ?? '', portal: args.portal ?? '', search: args.search ?? '', modes: args.modes ?? [] })
+          const list = store.trackerList(query)
+          const companies = list.companies.slice(0, 80).map(company => ({
+            id: company.id,
+            name: company.name,
+            stage: company.stage,
+            status: company.status,
+            people: company.people,
+            neverShow: company.neverShow,
+            jobs: company.jobs.map(job => ({ id: job.id, role: job.role, status: job.status, score: job.score, portal: job.portal, workMode: job.workMode, minYears: job.minYears, updated: job.updated })),
+          }))
+          return json({ shown: companies.length, matching: list.companies.length, counts: list.counts, totalJobs: list.totalJobs, companies })
+        }),
+    ),
+    defineTool(
+      'list_companies',
+      "Every company's id and name, filtered by words in the name: for finding a company the user names.",
+      { search: z.string().max(200).optional() },
+      ({ search }) =>
+        guarded(async () => {
+          const words = (search ?? '').trim().toLowerCase()
+          const names = store.companies.names().filter(one => !words || one.name.toLowerCase().includes(words))
+          return json({ total: names.length, companies: names.slice(0, 200) })
+        }),
+    ),
+    defineTool(
+      'get_job',
+      "One job in full: its fields, notes, score reasons, its company, people there, who was asked about it, and its history.",
+      { job_id: id },
+      ({ job_id }) =>
+        guarded(async () => {
+          const detail = store.jobDetail(job_id)
+          if (!detail) return refuse(`No job ${job_id}.`)
+          return json({ ...detail, activity: detail.activity.slice(0, 40) })
+        }),
+    ),
+    defineTool(
+      'get_company',
+      'One company in full: its details and notes, its jobs, everyone you know or asked there with what each was asked (outreach ids included), and its history.',
+      { company_id: id },
+      ({ company_id }) =>
+        guarded(async () => {
+          const detail = store.companyDetail(company_id)
+          if (!detail) return refuse(`No company ${company_id}.`)
+          return json({ ...detail, activity: detail.activity.slice(0, 40) })
+        }),
+    ),
+    defineTool(
+      'list_runs',
+      'Past runs, newest first, 15 a page: flow, title, status, result line and usage.',
+      { flow: z.string().max(40).optional().describe('hunt, apply, check, connect, referral or email'), page: z.number().int().min(0).max(1000).optional() },
+      ({ flow, page }) => guarded(async () => json(store.runs.page({ flow: flow ?? '', portal: '', page: page ?? 0 }))),
+    ),
+    defineTool(
+      'get_run',
+      "One past run: its summary and its activity log.",
+      { run_id: id },
+      ({ run_id }) =>
+        guarded(async () => {
+          const summary = store.runs.get(run_id)
+          if (!summary) return refuse(`No run ${run_id}.`)
+          return json({ summary, events: store.runs.events(run_id).slice(-120) })
+        }),
+    ),
+    defineTool('get_current_run', 'The run going now, or the last one: status, progress, each session, and its newest steps.', {}, () => guarded(async () => json(runBrief(engine.current())))),
+    defineTool(
+      'get_settings',
+      "The user's settings: preferences (what the hunt looks for), profile (experience, skills, links, what is never mentioned), referral message, resume, which portals are on, and the email check.",
+      {},
+      () =>
+        guarded(async () => {
+          const all = store.settings.all()
+          const portals = Object.fromEntries(Object.entries(all.portals).map(([portal, setting]) => [portal, { enabled: setting.enabled, freeBrowsing: setting.freeBrowsing }]))
+          return json({ ...all, portals })
+        }),
+    ),
+    defineTool('list_saved_answers', 'The saved answers to form questions that applications reuse, with their ids.', {}, () => guarded(async () => json(store.settings.answers()))),
+    defineTool('list_never_show', 'The companies hunts skip, with why.', {}, () => guarded(async () => json(store.neverShow.list()))),
+    defineTool(
+      'get_email_check',
+      'One email check (the last one by default): what it read, and every change it made to jobs and people, with the activity ids that undo_email_change takes.',
+      { run_id: id.optional() },
+      ({ run_id }) =>
+        guarded(async () => {
+          const runId = run_id ?? store.runs.last('email')?.id
+          if (!runId) return say('No email check has run yet.')
+          const detail = store.emailDetail(runId)
+          return detail ? json(detail) : refuse(`Run ${runId} is not an email check.`)
+        }),
+    ),
+  ]
+}
+
+function editTools(deps: ChatToolDeps): AnyTool[] {
+  const { store, changed, confirm } = deps
+  const jobName = (jobId: number): string => {
+    const job = store.jobs.row(jobId)
+    return job ? `${job.role} at ${job.company}` : `job ${jobId}`
+  }
+  const companyName = (companyId: number): string => store.companies.get(companyId)?.name ?? `company ${companyId}`
+
+  return [
+    defineTool(
+      'set_job_status',
+      'Move one or more jobs to a status. Discarding hides a job from the tracker; restore_job brings it back.',
+      { job_ids: z.array(id).min(1).max(100), status: z.enum(STATUSES) },
+      ({ job_ids, status }) =>
+        guarded(async () => {
+          const lines: string[] = []
+          for (const jobId of new Set(job_ids)) {
+            try {
+              store.jobs.setStatus(jobId, status)
+              lines.push(`${jobName(jobId)}: now ${status}`)
+            } catch (error) {
+              lines.push(`job ${jobId}: not changed, ${error instanceof Error ? error.message : String(error)}`)
+            }
+          }
+          changed('jobs')
+          return say(lines.join('\n'))
+        }),
+    ),
+    defineTool(
+      'edit_job',
+      "Change one value of a job, as its page does: role, company (one in the tracker or a new one), reqId, minYears, score (1-10), portal, postingLink, applyLink, pay, or found (YYYY-MM-DD). An empty text or null clears it.",
+      { job_id: id, change: JobEdit },
+      ({ job_id, change }) =>
+        guarded(async () => {
+          store.editJob(job_id, change)
+          changed('jobs')
+          return say(`Changed ${change.field} of ${jobName(job_id)}.`)
+        }),
+    ),
+    defineTool(
+      'set_job_notes',
+      "Replace a job's notes with this text. Read the job first and keep what should stay.",
+      { job_id: id, notes: z.string().max(20_000) },
+      ({ job_id, notes }) =>
+        guarded(async () => {
+          store.jobs.setNotes(job_id, notes)
+          changed('jobs')
+          return say(`Saved the notes on ${jobName(job_id)}.`)
+        }),
+    ),
+    defineTool(
+      'set_work_mode',
+      "Set a job's work mode.",
+      { job_id: id, work_mode: z.enum(WORK_MODES) },
+      ({ job_id, work_mode }) =>
+        guarded(async () => {
+          store.jobs.setWorkMode(job_id, work_mode)
+          changed('jobs')
+          return say(`${jobName(job_id)} is ${work_mode}.`)
+        }),
+    ),
+    defineTool(
+      'add_job',
+      'Add a job by hand, such as one a recruiter sent. It needs the company, its stage, the role, an https link, a status and the portal (or "manual"). Answers the new job id.',
+      NewJob.shape,
+      input =>
+        guarded(async () => {
+          const job = NewJob.parse(input)
+          const jobId = store.transaction(() => store.jobs.addManual({ ...job, link: cleanLink(job.link) }))
+          changed('jobs')
+          return say(`Added job ${jobId}: ${job.role} at ${job.company}.`)
+        }),
+    ),
+    defineTool(
+      'restore_job',
+      'Bring a discarded job back to found.',
+      { job_id: id },
+      ({ job_id }) =>
+        guarded(async () => {
+          store.jobs.restore(job_id)
+          changed('jobs')
+          return say(`${jobName(job_id)} is back at found.`)
+        }),
+    ),
+    defineTool(
+      'edit_company',
+      "Change one value of a company: name, headcount, linkedinUrl or website. An empty value clears all but the name.",
+      { company_id: id, change: CompanyEdit },
+      ({ company_id, change }) =>
+        guarded(async () => {
+          store.editCompany(company_id, change)
+          changed('jobs', 'people')
+          return say(`Changed ${change.field} of ${companyName(company_id)}.`)
+        }),
+    ),
+    defineTool(
+      'set_company_stage',
+      "Set a company's stage.",
+      { company_id: id, stage: z.enum(STAGES) },
+      ({ company_id, stage }) =>
+        guarded(async () => {
+          store.companies.setStage(company_id, stage)
+          changed('jobs')
+          return say(`${companyName(company_id)} is a ${stage}.`)
+        }),
+    ),
+    defineTool(
+      'set_company_notes',
+      "Replace a company's notes with this text. Read the company first and keep what should stay.",
+      { company_id: id, notes: z.string().max(20_000) },
+      ({ company_id, notes }) =>
+        guarded(async () => {
+          store.companies.setNotes(company_id, notes)
+          changed('jobs')
+          return say(`Saved the notes on ${companyName(company_id)}.`)
+        }),
+    ),
+    defineTool(
+      'set_outreach_state',
+      'Record where a referral ask stands: sent, replied, referred or declined. Referred moves its job to referred. The outreach id comes from get_job or get_company.',
+      { outreach_id: id, state: z.enum(OUTREACH_STATES) },
+      ({ outreach_id, state }) =>
+        guarded(async () => {
+          store.setOutreachState(outreach_id, state)
+          changed('jobs', 'people')
+          return say(`That ask is now ${state}.`)
+        }),
+    ),
+    defineTool(
+      'save_answer',
+      'Save an answer to a form question, for applications to reuse. A question already saved gets the new answer.',
+      { question: z.string().trim().min(1).max(300), answer: z.string().trim().min(1).max(2000) },
+      ({ question, answer }) =>
+        guarded(async () => {
+          store.settings.saveAnswer(question, answer)
+          changed('answers')
+          return say('Saved.')
+        }),
+    ),
+    defineTool(
+      'remove_answer',
+      'Remove a saved form answer by its id.',
+      { answer_id: id },
+      ({ answer_id }) =>
+        guarded(async () => {
+          store.settings.removeAnswer(answer_id)
+          changed('answers')
+          return say('Removed.')
+        }),
+    ),
+    defineTool(
+      'undo_email_change',
+      'Undo one change an email check made to a job or person, by its activity id from get_email_check.',
+      { activity_id: id },
+      ({ activity_id }) =>
+        guarded(async () => {
+          store.undoEmailChange(activity_id)
+          changed('email', 'jobs', 'people')
+          return say('Undone.')
+        }),
+    ),
+
+    // These ask on a card first.
+    defineTool(
+      'merge_companies',
+      'Move everything at one company (jobs, people, asks, history) onto another, when they are the same company under two names. The user confirms on a card first.',
+      { from_company_id: id, into_company_id: id },
+      ({ from_company_id, into_company_id }) =>
+        guarded(async () => {
+          const from = companyName(from_company_id)
+          const into = companyName(into_company_id)
+          const yes = await confirm({ title: `Merge ${from} into ${into}?`, body: `Everything at ${from} moves to ${into}: its jobs, people, asks and history. ${from} is then gone.`, yes: 'Merge' })
+          if (!yes) return refuse(DECLINED)
+          store.transaction(() => store.companies.merge(from_company_id, into_company_id))
+          changed('jobs', 'people')
+          return say(`Merged ${from} into ${into}.`)
+        }),
+    ),
+    defineTool(
+      'never_show',
+      'Turn "never show" on or off for a company: hunts skip every job at a company with it on. Give a company_id, or a company_name for one not in the tracker yet (turning it on only). The user confirms on a card first.',
+      {
+        company_id: id.optional(),
+        company_name: z.string().trim().min(1).max(200).optional(),
+        on: z.boolean(),
+        why: z.string().max(500).describe('Why, in a few words, as the user said it'),
+      },
+      ({ company_id, company_name, on, why }) =>
+        guarded(async () => {
+          const name = company_id ? companyName(company_id) : company_name
+          if (!name) return refuse('Give a company_id or a company_name.')
+          if (!company_id && !on) return refuse('Give the company_id to turn never show off.')
+          const yes = await confirm({
+            title: on ? `Never show ${name}?` : `Show ${name} again?`,
+            body: on ? `Hunts will skip every job at ${name}.${why ? ` Why: ${why}` : ''}` : `Hunts will find jobs at ${name} again.`,
+            yes: on ? 'Never show' : 'Show again',
+          })
+          if (!yes) return refuse(DECLINED)
+          if (company_id) store.companies.setNeverShow(company_id, on, why)
+          else store.neverShow.add(name, why)
+          changed('jobs')
+          return say(on ? `Hunts now skip ${name}.` : `Hunts find ${name} again.`)
+        }),
+    ),
+    defineTool(
+      'update_preferences',
+      'Change what the hunt looks for. Give only the fields that change; the rest stay. Lists replace the whole list, so read get_settings first and include what should stay. The user confirms on a card first.',
+      { changes: PreferencesSchema.partial() },
+      ({ changes }) =>
+        guarded(async () => {
+          const keys = Object.keys(changes)
+          if (keys.length === 0) return refuse('Nothing to change.')
+          const next = { ...store.settings.preferences(), ...changes }
+          PreferencesSchema.parse(next)
+          const yes = await confirm({ title: 'Change your preferences?', body: keys.map(key => `${key}: ${JSON.stringify(changes[key as keyof typeof changes])}`).join('\n'), yes: 'Save' })
+          if (!yes) return refuse(DECLINED)
+          store.settings.setPreferences(next)
+          changed('settings')
+          return say(`Saved: ${keys.join(', ')}.`)
+        }),
+    ),
+    defineTool(
+      'update_profile',
+      "Change the user's profile, the source every written answer is drawn from. Give only the fields that change; roles, projects and skills replace the whole list, so read get_settings first and keep every entry and id that should stay. Never add experience the user did not state. The user confirms on a card first.",
+      { changes: ProfileSchema.partial() },
+      ({ changes }) =>
+        guarded(async () => {
+          const keys = Object.keys(changes)
+          if (keys.length === 0) return refuse('Nothing to change.')
+          const next = { ...store.settings.profile(), ...changes }
+          ProfileSchema.parse(next)
+          const yes = await confirm({ title: 'Change your profile?', body: `Changes ${keys.join(', ')}.`, quote: cut(JSON.stringify(changes), 1200), yes: 'Save' })
+          if (!yes) return refuse(DECLINED)
+          store.settings.setProfile(next)
+          changed('settings')
+          return say(`Saved: ${keys.join(', ')}.`)
+        }),
+    ),
+    defineTool(
+      'update_referral_message',
+      'Change the saved referral message, sent word for word, or whether it attaches the resume. Slots allowed: {name}, {role}, {company}, {job link}. The user confirms on a card first.',
+      { template: z.string().max(4000).optional(), attach_resume: z.boolean().optional() },
+      ({ template, attach_resume }) =>
+        guarded(async () => {
+          const current = store.settings.referral()
+          const next = { ...current, ...(template !== undefined ? { template } : {}), ...(attach_resume !== undefined ? { attachResume: attach_resume } : {}) }
+          const yes = await confirm({
+            title: 'Change your referral message?',
+            body: next.attachResume ? 'It attaches your resume.' : 'It goes without your resume.',
+            quote: next.template,
+            yes: 'Save',
+          })
+          if (!yes) return refuse(DECLINED)
+          store.settings.setReferral(next)
+          changed('settings')
+          return say('Saved the referral message.')
+        }),
+    ),
+  ]
+}
+
+function runTools(deps: ChatToolDeps): AnyTool[] {
+  const { store, engine, flows, confirm, navigate } = deps
+  const started = (runId: number, what: string) => {
+    navigate('/run')
+    return say(`Started run ${runId}: ${what}. The app now shows the Run screen; anything it needs from the user appears there. Use get_current_run to follow it.`)
+  }
+  const jobLine = (jobId: number): string => {
+    const job = store.jobs.row(jobId)
+    return job ? `${job.company}: ${job.role}` : `job ${jobId}`
+  }
+
+  return [
+    defineTool(
+      'start_hunt',
+      "Start a hunt: search the portals for the user's target roles, score each new posting, and add the ones that fit. By default every portal turned on, over the window in their preferences. Sends nothing.",
+      { portals: z.array(z.enum(PORTALS)).min(1).optional(), window: z.enum(HUNT_WINDOWS).optional() },
+      ({ portals, window }) =>
+        guarded(async () => {
+          const on = store.settings.portals()
+          const picked = portals ?? HUNT_PORTALS.filter(portal => on[portal].enabled)
+          const runId = await flows.hunt({ portals: picked, window: window ?? store.settings.preferences().window })
+          return started(runId, `a hunt on ${picked.map(portal => PORTAL_NAMES[portal]).join(', ')}`)
+        }),
+    ),
+    defineTool(
+      'start_apply',
+      'Apply to found jobs: one session per job, 5 at a time, from the resume and saved answers. Written answers still wait for the user on the Run screen. The user confirms on a card first.',
+      { job_ids: z.array(id).min(1).max(50) },
+      ({ job_ids }) =>
+        guarded(async () => {
+          const ids = [...new Set(job_ids)]
+          const yes = await confirm({ title: `Apply to ${ids.length === 1 ? 'this job' : `${ids.length} jobs`}?`, body: ids.map(jobLine).join('\n'), yes: 'Apply' })
+          if (!yes) return refuse(DECLINED)
+          return started(await flows.apply(ids), `applying to ${ids.length} ${ids.length === 1 ? 'job' : 'jobs'}`)
+        }),
+    ),
+    defineTool(
+      'check_postings',
+      "Read jobs' postings: closed found jobs are marked dead, and each keeps the company's apply link. No ids: every found and applied job. Sends nothing.",
+      { job_ids: z.array(id).max(200).optional() },
+      ({ job_ids }) => guarded(async () => started(await flows.checkPostings(job_ids ?? []), 'checking postings')),
+    ),
+    defineTool(
+      'send_connection_requests',
+      `Send new blank LinkedIn connection requests to people at each company (${REQUESTS_PER_COMPANY} each by default), one session per company. The user confirms on a card first.`,
+      { company_ids: z.array(id).min(1).max(50), per_company: z.number().int().min(1).max(30).optional() },
+      ({ company_ids, per_company }) =>
+        guarded(async () => {
+          const ids = [...new Set(company_ids)]
+          const each = per_company ?? REQUESTS_PER_COMPANY
+          const names = ids.map(companyId => store.companies.get(companyId)?.name ?? `company ${companyId}`)
+          const yes = await confirm({
+            title: `Send connection requests at ${ids.length === 1 ? names[0] : `${ids.length} companies`}?`,
+            body: `Up to ${each} blank requests at each of: ${names.join(', ')}. LinkedIn watches bulk requests most.`,
+            yes: 'Send requests',
+          })
+          if (!yes) return refuse(DECLINED)
+          return started(await flows.connect({ companyIds: ids, perCompany: each }), 'sending connection requests')
+        }),
+    ),
+    defineTool(
+      'refresh_people',
+      "Read the user's LinkedIn connections at each company: adds people, and marks requests that were accepted. Sends nothing.",
+      { company_ids: z.array(id).min(1).max(50) },
+      ({ company_ids }) => guarded(async () => started(await flows.refreshPeople(company_ids), 'reading your connections')),
+    ),
+    defineTool(
+      'send_referral',
+      "Send the user's saved referral message, word for word, about one job to people connected at its company who were not asked about it yet. Person ids come from get_company. The user confirms on a card first.",
+      { job_id: id, person_ids: z.array(id).min(1).max(20), attach_resume: z.boolean().optional().describe('By default, as the saved message says') },
+      ({ job_id, person_ids, attach_resume }) =>
+        guarded(async () => {
+          const referral = store.settings.referral()
+          const resume = attach_resume ?? referral.attachResume
+          const names = [...new Set(person_ids)].map(personId => store.people.get(personId)?.name ?? `person ${personId}`)
+          const yes = await confirm({
+            title: `Ask ${names.length === 1 ? names[0] : `${names.length} people`} for a referral?`,
+            body: `About ${jobLine(job_id)}, to ${names.join(', ')}${resume ? ', with your resume' : ''}.`,
+            quote: referral.template,
+            yes: 'Send',
+          })
+          if (!yes) return refuse(DECLINED)
+          return started(await flows.referral({ jobId: job_id, personIds: person_ids, resume }), 'sending referral messages')
+        }),
+    ),
+    defineTool('check_accepted', 'Read the newest LinkedIn connections and mark everyone who accepted a request. Sends nothing.', {}, () => guarded(async () => started(await flows.checkAccepted(), 'checking accepted requests'))),
+    defineTool(
+      'check_email',
+      'Read the newest emails in Gmail and move the tracker on: rejections, interviews, offers and replies. Sends nothing.',
+      { count: z.number().int().optional().describe(`How many of the newest emails to read: ${EMAIL_COUNTS.join(', ')}. By default, the setting`) },
+      ({ count }) => guarded(async () => started(await flows.email(count ? { count } : {}), 'checking email')),
+    ),
+    defineTool(
+      'stop_run',
+      'Stop the run going now: waiting cards are cancelled and sessions end where they are.',
+      {},
+      () =>
+        guarded(async () => {
+          if (!engine.isBusy()) return say('No run is going.')
+          await engine.stop()
+          return say('Stopping the run.')
+        }),
+    ),
+    defineTool(
+      'open_screen',
+      'Take the app to a screen so the user sees what you mean: "/" home, "/tracker" or "/tracker/<view>", "/job/<id>", "/company/<id>", "/company/<id>/ask" (pick people to ask), "/hunt", "/run" (the run going now), "/runs/<id>", "/never-show", "/email/<run id>", "/settings/<tab>".',
+      { path: z.string().max(80) },
+      ({ path }) =>
+        guarded(async () => {
+          if (!SCREEN.test(path)) return refuse(`${path} is not a screen of the app.`)
+          navigate(path)
+          return say(`Showing ${path}.`)
+        }),
+    ),
+  ]
+}
+
+const WrittenAnswerSchema = z.object({
+  ref: z.number().int().positive().describe('The number of the text field from read_page'),
+  label: z.string().describe('The question as the form words it'),
+  text: z.string().describe('Your written answer'),
+})
+
+/** The element's own words, as the page shows them: what the user sees on the button. */
+const labelScript = (ref: number): string => `(() => {
+  const el = document.querySelector('[data-jobapp-ref="${ref}"]');
+  if (!el) return null;
+  return (el.getAttribute('aria-label') || el.innerText || el.value || el.getAttribute('title') || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+})()`
+
+/**
+ * Chrome as the chat drives it: the run tools a page needs, in a tab of the
+ * chat's own, with every send held for the user's approval.
+ */
+function chromeTools(deps: ChatToolDeps): AnyTool[] {
+  const { ctx, confirm } = deps
+  // A click on anything that sends is refused; send_on_page asks first.
+  const tools = browserTools(ctx, REFUSE.hunt).filter(one => one.name !== 'ask_user')
+  tools.push(
+    defineTool(
+      'send_on_page',
+      "Press a button that sends something on the page (submit, apply, send, post, connect, follow, message) once the user approves. Give the button's number from read_page, one sentence on what it sends, and every free-text answer you wrote into the form so the user can check and edit it first. Nothing is pressed unless they approve.",
+      {
+        ref: z.number().int().positive().describe('The number of the button from read_page'),
+        what: z.string().max(300).describe('What pressing it sends, in one sentence'),
+        written_answers: z.array(WrittenAnswerSchema).max(10).describe('Free-text answers you wrote; empty when there are none'),
+      },
+      ({ ref, what, written_answers }) =>
+        guarded(async () => {
+          const label = await ctx.chrome.evaluate<string | null>(labelScript(ref))
+          if (label === null) return refuse(`No element ${ref}. Read the page again.`)
+          const page = await ctx.chrome.page()
+          await ctx.chrome.bringToFront()
+          let answers: WrittenAnswer[] = written_answers
+          if (answers.length) {
+            const approved = await approveWritten(ctx, answers, [{ label: 'Button', value: label || '(no label)' }, { label: 'Page', value: page.url }])
+            if (!approved) return refuse(DECLINED)
+            answers = approved.texts
+            for (const answer of answers) await typeInto(ctx, answer.ref, answer.text)
+          } else {
+            const yes = await confirm({ title: `Press "${label || 'this button'}"?`, body: what, quote: `${page.title}\n${page.url}`, yes: 'Press it' })
+            if (!yes) return refuse(DECLINED)
+          }
+          await ctx.chrome.allowSubmit()
+          await pressRef(ctx, ref)
+          await ctx.chrome.settle()
+          ctx.log('good', `Pressed "${label}"`)
+          const after = await ctx.chrome.page()
+          return say(`Pressed "${label}". Now at ${after.url} (${after.title}). Read the page to confirm it went through.`)
+        }),
+    ),
+    defineTool(
+      'show_link',
+      "Open a link in the chat's Chrome tab and bring it to the front for the user to look at, without reading it.",
+      { url: httpsLink },
+      ({ url }) =>
+        guarded(async () => {
+          await ctx.chrome.openPage(url)
+          await ctx.chrome.bringToFront()
+          return say(`Showing ${url} in Chrome.`)
+        }),
+    ),
+  )
+  return tools
+}
+
+/** Every tool the chat gets, by area. */
+export function chatTools(deps: ChatToolDeps): AnyTool[] {
+  return [...readTools(deps), ...editTools(deps), ...runTools(deps), ...chromeTools(deps)]
+}

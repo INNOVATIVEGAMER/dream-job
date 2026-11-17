@@ -21,6 +21,7 @@ import {
   RocketIcon,
   RocketLaunchIcon,
   SignInIcon,
+  SparkleIcon,
   TerminalWindowIcon,
   TrashIcon,
   UploadSimpleIcon,
@@ -32,16 +33,17 @@ import { GMAIL_PLAYBOOK, PLAYBOOKS } from '../../../../shared/playbooks'
 import { profileExperience } from '../../../../shared/profile'
 import { fillTemplate } from '../../../../shared/referral'
 import type { TemplateValues } from '../../../../shared/referral'
-import { EMAIL_COUNTS, GMAIL_TOOLS, isSignInSite, PORTAL_NAMES, PORTAL_TOOL_GROUP_NAMES, PORTAL_TOOLS, PORTALS, SIGN_IN_SITES, SITE_NAMES } from '../../../../shared/types'
+import { DEFAULT_MODEL, EMAIL_COUNTS, GMAIL_TOOLS, isSignInSite, PORTAL_NAMES, PORTAL_TOOL_GROUP_NAMES, PORTAL_TOOLS, PORTALS, SIGN_IN_SITES, SITE_NAMES } from '../../../../shared/types'
 import type { EmailCount, EmailSettings, FormAnswer, Portal, PortalSetting, Preferences, Profile, Settings as SettingsValue, SignInSite, SiteState } from '../../../../shared/types'
 import { api } from '../../lib/api'
 import { useAutosaved } from '../../lib/autosave'
 import { useData } from '../../lib/data'
 import { day, when } from '../../lib/format'
+import { modelLabel } from '../../lib/models'
 import { go } from '../../lib/router'
 import { useAppStatus } from '../../lib/status'
 import { attempt, ErrorNote, Group, Hidden, Loading, Page, Tip } from '../../ui/common'
-import { End, ListBox, ListRow, Rows, Segments, Tags } from '../../ui/fields'
+import { Choice, End, ListBox, ListRow, Rows, Segments, Tags } from '../../ui/fields'
 import {
   Alert,
   AlertContent,
@@ -613,6 +615,36 @@ function StateMark({ ok }: { ok: boolean }): JSX.Element {
 const signInText = (site: SiteState | undefined): string =>
   site?.state === 'signed-in' ? `Signed in${site.checked ? `, checked ${when(site.checked)}` : ''}` : site?.state === 'signed-out' ? 'Signed out' : 'Not checked yet'
 
+/** The model runs and new chats use, from the list Claude Code gives this account. */
+function ModelRow(): JSX.Element {
+  const status = useAppStatus()
+  const settings = useData(() => api.settings.get(), [], ['settings'])
+  const models = status?.claude.models ?? []
+  const value = settings.data?.model ?? DEFAULT_MODEL
+  const options = models.map(model => ({ value: model.value, label: modelLabel(model, models) }))
+  // A saved model the list no longer offers, or no list yet: it still shows as chosen.
+  if (!options.some(option => option.value === value)) options.unshift({ value, label: value === DEFAULT_MODEL ? "Claude Code's default" : value })
+
+  return (
+    <ListRow
+      media={<SparkleIcon size={18} />}
+      title="Model"
+      detail={models.length ? 'Runs, resume reading and new chats use it. A chat can pick another beside its message box.' : 'Claude Code lists its models when the check above finishes.'}
+      actions={
+        <Choice
+          ariaLabel="Model for runs and new chats"
+          size="sm"
+          className="nx:w-[240px]"
+          value={value}
+          options={options}
+          disabled={!settings.data}
+          onChange={model => void attempt(() => api.settings.setModel(model), 'Model saved')}
+        />
+      }
+    />
+  )
+}
+
 function AccountsSection(): JSX.Element {
   const status = useAppStatus()
   const sites = useData(() => api.settings.sites(), [], ['sites'])
@@ -639,6 +671,7 @@ function AccountsSection(): JSX.Element {
             </>
           }
         />
+        <ModelRow />
         <ListRow
           media={<BrowserIcon size={18} />}
           title="Chrome"

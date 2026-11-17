@@ -30,7 +30,7 @@ import type {
   ToolSite,
 } from '../../shared/types'
 import type { ChromeController, PageDriver, Tab } from '../browser/chrome'
-import { claudeEnv, findClaude } from '../claude'
+import { claudeEnv, findClaude, modelOption } from '../claude'
 import type { Store } from '../db/store'
 
 export const TOOL_SERVER = 'jobapp'
@@ -160,7 +160,8 @@ export function schemaOf(output: z.ZodType): Record<string, unknown> {
 export const cut = (text: string, length: number): string =>
   text.length > length ? `${text.slice(0, length).trimEnd()}...` : text
 
-function describeCall(name: string, input: unknown): string {
+/** A tool call in a few words, for an activity line. */
+export function describeCall(name: string, input: unknown): string {
   const short = name.replace(`mcp__${TOOL_SERVER}__`, '')
   const args = input && typeof input === 'object' ? Object.values(input as Record<string, unknown>) : []
   const text = args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg) : String(arg))).join(', ')
@@ -370,6 +371,7 @@ export class RunEngine {
         pathToClaudeCodeExecutable: path,
         cwd: this.deps.cwd,
         env: claudeEnv(),
+        model: modelOption(this.deps.store.settings.model()),
         settingSources: [],
         tools: [],
         mcpServers: { [TOOL_SERVER]: createSdkMcpServer({ name: TOOL_SERVER, version: '1.0.0', tools }) },

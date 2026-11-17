@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 
 import { z } from 'zod'
 
-import { CURRENCIES, EMAIL_COUNTS, GMAIL_TOOLS, HUNT_WINDOWS, PAY_PERIODS, PORTAL_TOOLS, PORTALS } from '../../shared/types'
+import { CURRENCIES, DEFAULT_MODEL, EMAIL_COUNTS, GMAIL_TOOLS, HUNT_WINDOWS, PAY_PERIODS, PORTAL_TOOLS, PORTALS } from '../../shared/types'
 import type {
   EmailSettings,
   FormAnswer,
@@ -18,6 +18,9 @@ import type {
 import { now, questionKey, today } from './database'
 
 const text = (max: number) => z.string().trim().max(max)
+
+/** A model as Claude Code names it: `default`, an alias such as `sonnet`, or a model id. */
+export const ModelSchema = z.string().trim().min(1).max(100).regex(/^[a-z0-9][a-z0-9.\-\[\]]*$/i, 'That is not a model name.')
 const list = (max: number, each: number) => z.array(z.string().trim().min(1).max(each)).max(max)
 
 export const PreferencesSchema = z.object({
@@ -176,7 +179,19 @@ export class SettingsStore {
       portals: this.portals(),
       isSetUp: this.isSetUp(),
       email: this.email(),
+      model: this.model(),
     }
+  }
+
+  /** The model runs and new chats use; `default` leaves the choice to Claude Code. */
+  model(): string {
+    return this.read('claude.model', ModelSchema, DEFAULT_MODEL)
+  }
+
+  setModel(value: unknown): string {
+    const parsed = ModelSchema.parse(value)
+    this.write('claude.model', parsed)
+    return parsed
   }
 
   /** The email check's settings, with any tool a newer release added switched on. */

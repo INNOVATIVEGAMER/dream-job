@@ -50,7 +50,7 @@ const PROMPT = (path: string): string =>
   ].join(' ')
 
 /** Reads the user's resume with their own Claude Code and answers what it found, for them to review. */
-export async function importResume(resumePath: string, cwd: string): Promise<ResumeImport> {
+export async function importResume(resumePath: string, cwd: string, model?: string): Promise<ResumeImport> {
   const path = await findClaude()
   if (!path) throw new Error('Claude Code was not found. Finish step 1 first.')
 
@@ -75,6 +75,7 @@ export async function importResume(resumePath: string, cwd: string): Promise<Res
       pathToClaudeCodeExecutable: path,
       cwd,
       env: claudeEnv(),
+      model,
       settingSources: [],
       tools: ['Read'],
       permissionMode: 'default',

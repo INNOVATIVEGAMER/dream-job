@@ -36,6 +36,19 @@ export type ClaudeAccount = {
   apiProvider?: string
 }
 
+/** A model Claude Code offers this account, as its own model menu lists it. */
+export type ClaudeModel = {
+  /** What to ask Claude Code for: "default", an alias such as "sonnet", or a full model id. */
+  value: string
+  /** The model id it stands for now, such as claude-sonnet-5-5. */
+  resolved: string | null
+  name: string
+  description: string
+}
+
+/** Claude Code's own default: no model is named, and it picks. */
+export const DEFAULT_MODEL = 'default'
+
 export type ClaudeStatus = {
   state: ClaudeState
   /** One line: what was found, or what to do. */
@@ -43,6 +56,8 @@ export type ClaudeStatus = {
   path: string | null
   version: string | null
   account: ClaudeAccount | null
+  /** The models this account may use; empty until the check reads them. */
+  models: ClaudeModel[]
 }
 
 /* ------------------------------------------------------------------ */
@@ -501,6 +516,8 @@ export type Settings = {
   /** Onboarding finished. */
   isSetUp: boolean
   email: EmailSettings
+  /** The model runs and new chats use: a value from Claude Code's list, or `default`. */
+  model: string
 }
 
 /* ------------------------------------------------------------------ */
@@ -856,3 +873,40 @@ export type EmailRunDetail = {
 
 /** Home's line on the email check. */
 export type EmailSummary = { lastRunId: number | null; lastChecked: string | null; moved: number }
+
+/* ------------------------------------------------------------------ */
+/* Chat                                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One line of a chat: what you wrote, what Claude wrote, a tool it used, or a
+ * note from the app. Claude's text grows while it streams, then is kept.
+ */
+export type ChatItem = {
+  id: string
+  kind: 'user' | 'assistant' | 'tool' | 'note'
+  text: string
+  at: string
+  /** A tool call that was refused or failed, or a note about an error. */
+  isError: boolean
+}
+
+/** A kept chat, as the history lists it. */
+export type ChatSummary = { id: number; title: string; updated: string }
+
+/** The open chat, pushed to the screens on every change. */
+export type ChatState = {
+  /** Null until the first message starts a new chat. */
+  id: number | null
+  title: string
+  items: ChatItem[]
+  /** Claude is working on a reply. */
+  isBusy: boolean
+  /** What Claude waits on you for: a confirmation, an approval, or a step in Chrome. */
+  card: RunCard | null
+  usage: { inputTokens: number; outputTokens: number }
+  /** The model this chat uses: its own pick, or the default from Settings. */
+  model: string
+  /** No model picked for this chat: it follows the default in Settings. */
+  followsDefault: boolean
+}

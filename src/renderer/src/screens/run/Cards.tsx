@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import type { JSX } from 'react'
 
 import { BrowserIcon, CaretDownIcon, CheckIcon, PaperPlaneTiltIcon, PlayIcon } from '@phosphor-icons/react'
@@ -35,9 +35,19 @@ import {
   Textarea,
 } from '../../ui/nx'
 
-const answer = (card: RunCard, reply: CardAnswer): Promise<void | undefined> => attempt(() => api.runs.answer(card.id, reply))
-/** Shows the tab of the session waiting on this card: its own tab when the run has several, else the one Chrome shows. */
-const showTab = (card: RunCard): Promise<void | undefined> => attempt(() => api.runs.showTab(card.id))
+/** Where a card's answer goes, and which Chrome tab it shows: a run's, or the chat's. */
+export type CardActions = {
+  answer: (card: RunCard, reply: CardAnswer) => Promise<void | undefined>
+  showTab: (card: RunCard) => Promise<void | undefined>
+}
+
+const RUN_ACTIONS: CardActions = {
+  answer: (card, reply) => attempt(() => api.runs.answer(card.id, reply)),
+  /** Shows the tab of the session waiting on this card: its own tab when the run has several, else the one Chrome shows. */
+  showTab: card => attempt(() => api.runs.showTab(card.id)),
+}
+
+const Actions = createContext<CardActions>(RUN_ACTIONS)
 
 function Footer({ children, end }: { children: JSX.Element | JSX.Element[]; end?: JSX.Element }): JSX.Element {
   return (
@@ -51,6 +61,7 @@ function Footer({ children, end }: { children: JSX.Element | JSX.Element[]; end?
 }
 
 function ApproveCard({ card }: { card: Extract<RunCard, { kind: 'approve' }> }): JSX.Element {
+  const { answer, showTab } = useContext(Actions)
   const [texts, setTexts] = useState(card.answers.map(one => one.text))
   useEffect(() => setTexts(card.answers.map(one => one.text)), [card.id])
   const submit = (): void => void answer(card, { kind: 'approve', texts })
@@ -138,6 +149,7 @@ const HANDOVER_TITLE: Record<Extract<RunCard, { kind: 'handover' }>['what'], str
 }
 
 function HandoverCard({ card }: { card: Extract<RunCard, { kind: 'handover' }> }): JSX.Element {
+  const { answer, showTab } = useContext(Actions)
   return (
     <Card>
       <CardHeader>
@@ -162,11 +174,12 @@ function HandoverCard({ card }: { card: Extract<RunCard, { kind: 'handover' }> }
 }
 
 function DecisionCard({ card }: { card: Extract<RunCard, { kind: 'decision' }> }): JSX.Element {
+  const { answer } = useContext(Actions)
   return (
     <Card>
       <CardHeader>
         <CardTitle>{card.title}</CardTitle>
-        {card.body && <CardDescription>{card.body}</CardDescription>}
+        {card.body && <CardDescription className="nx:whitespace-pre-line">{card.body}</CardDescription>}
       </CardHeader>
       {(card.facts.length > 0 || card.quote) && (
         <CardContent>
@@ -181,7 +194,7 @@ function DecisionCard({ card }: { card: Extract<RunCard, { kind: 'decision' }> }
                 ))}
               </div>
             )}
-            {card.quote && <q className="nx:typography-body-small nx:text-muted-foreground">{card.quote}</q>}
+            {card.quote && <q className="nx:typography-body-small nx:text-muted-foreground nx:whitespace-pre-wrap">{card.quote}</q>}
           </div>
         </CardContent>
       )}
@@ -197,6 +210,7 @@ function DecisionCard({ card }: { card: Extract<RunCard, { kind: 'decision' }> }
 }
 
 function QuestionCard({ card }: { card: Extract<RunCard, { kind: 'question' }> }): JSX.Element {
+  const { answer } = useContext(Actions)
   const [texts, setTexts] = useState(card.questions.map(() => ''))
   const [save, setSave] = useState(true)
   useEffect(() => setTexts(card.questions.map(() => '')), [card.id])
@@ -241,6 +255,7 @@ function QuestionCard({ card }: { card: Extract<RunCard, { kind: 'question' }> }
 }
 
 function ToolOffCard({ card }: { card: Extract<RunCard, { kind: 'tool-off' }> }): JSX.Element {
+  const { answer, showTab } = useContext(Actions)
   return (
     <Card>
       <CardHeader>
@@ -275,8 +290,18 @@ function ToolOffCard({ card }: { card: Extract<RunCard, { kind: 'tool-off' }> })
   )
 }
 
-/** The card a waiting session shows, by kind. */
-export function RunCardView({ card }: { card: RunCard }): JSX.Element {
+/** The card a waiting session or the chat shows, by kind. A run's card by default; the chat passes its own `actions`. */
+export function RunCardView({ card, actions }: { card: RunCard; actions?: CardActions }): JSX.Element {
+  return actions ? (
+    <Actions.Provider value={actions}>
+      <CardByKind card={card} />
+    </Actions.Provider>
+  ) : (
+    <CardByKind card={card} />
+  )
+}
+
+function CardByKind({ card }: { card: RunCard }): JSX.Element {
   switch (card.kind) {
     case 'approve':
       return <ApproveCard card={card} />
