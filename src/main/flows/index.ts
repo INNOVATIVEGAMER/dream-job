@@ -1,4 +1,5 @@
 import type { ConnectOptions, HuntOptions, ReferralOptions } from '../../shared/api'
+import { isUndisclosed, UNDISCLOSED_WHY } from '../../shared/referral'
 import { ACTIVE_STATUSES, CHECK_STATUSES, HUNT_PORTALS } from '../../shared/types'
 import type { Store } from '../db/store'
 import type { Company, Job, Status } from '../../shared/types'
@@ -70,13 +71,19 @@ export class Flows {
     if (!this.store.settings.portals().linkedin.enabled) throw new Error('LinkedIn is turned off in Settings, Portals.')
     const picked = [...new Set(options.companyIds)].map(id => this.store.companies.get(id)).filter((company): company is Company => !!company)
     const companies = picked.filter(company => !!this.store.connectJob(company.id))
+    // A client a recruiting firm doesn't name: nobody at the company hiring can be found, so no requests go.
+    const undisclosed = picked.filter(company => isUndisclosed(company.name))
     // Companies whose every job asks too many years: nobody there would ever be asked, so no requests go.
-    const tooSenior = picked.filter(company => !this.store.connectJob(company.id) && this.store.jobs.forCompany(company.id).some(row => REQUEST_STATUSES.includes(row.status)))
+    const tooSenior = picked.filter(
+      company => !isUndisclosed(company.name) && !this.store.connectJob(company.id) && this.store.jobs.forCompany(company.id).some(row => REQUEST_STATUSES.includes(row.status)),
+    )
     if (companies.length === 0) {
+      if (undisclosed.length && tooSenior.length) throw new Error('Nobody at those companies would be asked for a referral: each hides who is hiring, or every job there asks more than a year past your experience. No requests sent.')
+      if (undisclosed.length) throw new Error(`${undisclosed.length === 1 ? undisclosed[0]!.name : 'Those companies'}: ${UNDISCLOSED_WHY}. No requests sent.`)
       if (tooSenior.length) throw new Error(`${tooSenior.length === 1 ? `Every job at ${tooSenior[0]!.name} asks` : 'Every job at those companies asks'} more than a year past your experience, so you won't ask anyone there for a referral. No requests sent.`)
       throw new Error('Pick a company with a found or applied job: requests point at one.')
     }
-    return this.engine.start(connectPlan(this.store, companies, options.perCompany, tooSenior.length))
+    return this.engine.start(connectPlan(this.store, companies, options.perCompany, { tooSenior: tooSenior.length, undisclosed: undisclosed.length }))
   }
 
   /** Reads the user's LinkedIn connections at each company, so its people and their statuses are current. */
@@ -95,6 +102,7 @@ export class Flows {
     if (options.resume && !this.store.settings.resume()) throw new Error('The message attaches your resume: add it in Settings first, or send it without.')
     const job = this.store.jobs.row(options.jobId)
     if (!job) throw new Error('That job is no longer in the tracker.')
+    if (isUndisclosed(job.company)) throw new Error(`${job.role} at ${job.company}: ${UNDISCLOSED_WHY}, so the app doesn't ask.`)
     const block = this.store.askBlock(job)
     if (block) throw new Error(`${job.role} at ${job.company}: ${block}. Asking for more than a year past your experience costs you credibility, so the app doesn't ask.`)
     const personIds = [...new Set(options.personIds)].filter(id => {

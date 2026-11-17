@@ -27,6 +27,17 @@ export function fillTemplate(template: string, values: TemplateValues): string {
   return kept.replace(SLOTS, slot => filled[slot] ?? slot)
 }
 
+/**
+ * A posting a recruiting firm made for a client it doesn't name: the hunt
+ * files its company as "Undisclosed (via <firm>)". Nobody there is asked for
+ * a referral or sent a request, since nobody at the company hiring can be
+ * found. Naming the client on the company page lifts it.
+ */
+export const isUndisclosed = (companyName: string): boolean => /^Undisclosed \(via /i.test(companyName.trim())
+
+/** Why nobody at an undisclosed company is reached, in one line for the screens and refusals. */
+export const UNDISCLOSED_WHY = "A recruiting firm posted this for a client it doesn't name, so there's nobody at the company hiring to reach"
+
 /** The first name a message opens with: the first real word of the name, not an initial or a title. */
 export function firstName(full: string): string {
   const words = full.replace(/\(.*?\)|,.*$/g, ' ').split(/\s+/).filter(Boolean)

@@ -5,6 +5,7 @@ import { ArrowRightIcon, ArrowSquareOutIcon, ChatTextIcon, CheckIcon, DotsThreeI
 
 import { isPortalLink } from '../../../shared/links'
 import { askBlock } from '../../../shared/profile'
+import { isUndisclosed, UNDISCLOSED_WHY } from '../../../shared/referral'
 import type { JobEdit } from '../../../shared/api'
 import { ACTIVE_STATUSES, OUTREACH_STATE_NAMES, OUTREACH_STATES, SOURCE_NAMES, SOURCES, STATUS_NAMES, STATUSES, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
 import type { JobOutreach, OutreachState, PeopleCount, Source, WorkMode } from '../../../shared/types'
@@ -121,6 +122,8 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
   const isActive = ACTIVE_STATUSES.includes(job.status)
   const save = (change: JobEdit): Promise<void> => api.tracker.edit(job.id, change)
   const tooSenior = askBlock(job.minYears, months)
+  // A client a recruiting firm doesn't name: nobody is asked or sent a request.
+  const hidden = isUndisclosed(company.name)
   const apply = async (): Promise<void> => {
     if (await attempt(() => api.flows.apply([job.id]))) go('/run')
   }
@@ -138,8 +141,16 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
       variant="outline"
       size="sm"
       startIcon={<ChatTextIcon />}
-      disabled={!isActive || !!tooSenior}
-      title={!isActive ? 'Asks point at a job you have applied to' : tooSenior ? `${tooSenior}: more than a year past your experience, so the app won't ask` : undefined}
+      disabled={!isActive || hidden || !!tooSenior}
+      title={
+        !isActive
+          ? 'Asks point at a job you have applied to'
+          : hidden
+            ? UNDISCLOSED_WHY
+            : tooSenior
+              ? `${tooSenior}: more than a year past your experience, so the app won't ask`
+              : undefined
+      }
       onClick={() => setAsking(true)}
     >
       Ask for a referral
@@ -166,7 +177,7 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => go(companyTo)}>Open company</DropdownMenuItem>
-              <DropdownMenuItem disabled={isBusy} onSelect={() => void sendRequests([job.companyId])}>
+              <DropdownMenuItem disabled={isBusy || hidden} onSelect={() => void sendRequests([job.companyId])}>
                 Send connection requests
               </DropdownMenuItem>
             </DropdownMenuContent>

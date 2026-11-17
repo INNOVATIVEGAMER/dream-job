@@ -4,7 +4,7 @@ import type { JSX } from 'react'
 import { PaperPlaneTiltIcon, WarningIcon } from '@phosphor-icons/react'
 
 import { askBlock, experienceMonths, experienceText } from '../../../shared/profile'
-import { fillTemplate, firstName } from '../../../shared/referral'
+import { fillTemplate, firstName, isUndisclosed, UNDISCLOSED_WHY } from '../../../shared/referral'
 import { ACTIVE_STATUSES, STATUS_NAMES } from '../../../shared/types'
 import type { CompanyPerson, JobRow } from '../../../shared/types'
 import { api, messageOf } from '../lib/api'
@@ -130,6 +130,24 @@ function Ask({ companyId, jobId, onClose }: { companyId: number; jobId?: number;
   const send = async (): Promise<void> => {
     if (chosenJobId === null) return
     if (await attempt(() => api.flows.referral({ jobId: chosenJobId, personIds: picked, resume: attach }))) go('/run')
+  }
+
+  if (isUndisclosed(company.name)) {
+    return (
+      <>
+        {header}
+        <DialogBody>
+          <span className="nx:typography-body-small nx:text-muted-foreground">
+            {UNDISCLOSED_WHY}, so the app doesn't ask anyone. If you find out who is hiring, rename the company on its page and asks open up.
+          </span>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </>
+    )
   }
 
   if (jobs.length > 0 && openJobs.length === 0) {

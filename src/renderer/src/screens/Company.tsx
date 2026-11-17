@@ -5,6 +5,7 @@ import { ArrowSquareOutIcon, ArrowsClockwiseIcon, ChatTextIcon, DotsThreeIcon, P
 
 import type { CompanyEdit } from '../../../shared/api'
 import { askBlock } from '../../../shared/profile'
+import { isUndisclosed, UNDISCLOSED_WHY } from '../../../shared/referral'
 import { OUTREACH_STATE_NAMES, REQUESTS_PER_COMPANY, SOURCE_NAMES } from '../../../shared/types'
 import type { CompanyPerson, JobRow } from '../../../shared/types'
 import { api } from '../lib/api'
@@ -134,19 +135,29 @@ export function CompanyScreen({ id, asking = false }: { id: number; asking?: boo
   const connected = current.filter(person => person.state === 'connected').length
   const requested = current.length - connected
   const edit = (change: CompanyEdit): Promise<void> => api.companies.edit(id, change)
-  // Asks and requests point at a job the user may ask about: none asking more than a year past their experience.
-  const fits = (job: JobRow): boolean => !askBlock(job.minYears, months)
+  // Asks and requests point at a job the user may ask about: none asking more than a year past their experience,
+  // and none at a client a recruiting firm doesn't name.
+  const hidden = isUndisclosed(company.name)
+  const fits = (job: JobRow): boolean => !hidden && !askBlock(job.minYears, months)
   const applied = askableJobs(jobs)
   const canAsk = applied.some(fits)
-  const askTitle = canAsk ? undefined : applied.length ? 'Every job you applied to here asks more than a year past your experience' : 'Asks point at a job you have applied to'
+  const askTitle = canAsk
+    ? undefined
+    : hidden
+      ? UNDISCLOSED_WHY
+      : applied.length
+        ? 'Every job you applied to here asks more than a year past your experience'
+        : 'Asks point at a job you have applied to'
   // Requests point at a job: one found, or one applied to that is still in play.
   const requestable = [...jobs.filter(job => job.status === 'found'), ...applied]
   const canRequest = requestable.some(fits)
   const requestTitle = canRequest
     ? `Up to ${REQUESTS_PER_COMPANY} new people here, never with a note`
-    : requestable.length
-      ? 'Every job here asks more than a year past your experience: nobody here would be asked'
-      : 'Requests point at a job: add one here first'
+    : hidden
+      ? UNDISCLOSED_WHY
+      : requestable.length
+        ? 'Every job here asks more than a year past your experience: nobody here would be asked'
+        : 'Requests point at a job: add one here first'
   // Refreshing stays on this page: the list fills in as the run finds people.
   const refresh = async (): Promise<void> => {
     const runId = await attempt(() => api.flows.refreshPeople([id]), `Reading your LinkedIn connections at ${company.name}`)

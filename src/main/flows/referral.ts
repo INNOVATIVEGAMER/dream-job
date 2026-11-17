@@ -36,7 +36,6 @@ export function connectSpec(store: Store, company: Company, perCompany: number):
   const job = store.connectJob(company.id)
   const before = knownAt(store, company.id)
   const linkedinId = job?.portal === 'linkedin' ? portalIdOf('linkedin', job.portalLink) : null
-  const undisclosed = /^Undisclosed \(via /i.test(company.name)
 
   return {
     flow: 'connect',
@@ -50,7 +49,6 @@ export function connectSpec(store: Store, company: Company, perCompany: number):
       '',
       `The company: ${company.name}${company.linkedinUrl ? ` (LinkedIn page ${company.linkedinUrl})` : ''}. Up to ${perCompany} new requests.`,
       job ? `The job: ${job.status === 'found' ? 'about to apply for' : 'applied for'} "${job.role}"${linkedinId ? ` (LinkedIn job ${linkedinId})` : ''}.` : '',
-      undisclosed ? 'The client is undisclosed: the recruiting firm\'s recruiter who posted it is the person to connect with.' : '',
       '',
       'Steps:',
       '1. Find its LinkedIn page. For a LinkedIn job, linkedin_read_job gives the company page and the hiring team. Otherwise linkedin_find_people looks the company up by name.',
@@ -75,10 +73,13 @@ export function connectSpec(store: Store, company: Company, perCompany: number):
 }
 
 /** Connection requests: one session per company, 5 at a time, each in its own tab. */
-export function connectPlan(store: Store, companies: Company[], perCompany: number, tooSenior = 0): RunPlan {
+export function connectPlan(store: Store, companies: Company[], perCompany: number, left: { tooSenior: number; undisclosed: number } = { tooSenior: 0, undisclosed: 0 }): RunPlan {
   const before = companies.reduce((sum, company) => sum + knownAt(store, company.id), 0)
   const sessions = companies.map(company => connectSpec(store, company, perCompany))
-  const skipped = tooSenior ? `. ${plural(tooSenior, 'company', 'companies')} skipped: every job there asks too many years` : ''
+  const skipped = [
+    left.undisclosed ? `. ${plural(left.undisclosed, 'company', 'companies')} skipped: who is hiring isn't named` : '',
+    left.tooSenior ? `. ${plural(left.tooSenior, 'company', 'companies')} skipped: every job there asks too many years` : '',
+  ].join('')
   if (sessions.length === 1) return onePlan({ ...sessions[0]!, subtitle: `${sessions[0]!.subtitle}${skipped}` })
   return {
     flow: 'connect',

@@ -3,6 +3,7 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import type { CompanyEdit, JobDetail, JobEdit } from '../../shared/api'
 import { cleanLink } from '../../shared/links'
 import { askBlock, experienceMonths } from '../../shared/profile'
+import { isUndisclosed } from '../../shared/referral'
 import { ACTIVE_STATUSES, SOURCES, STAGES, TRACKER_VIEWS, VIEW_STATUSES, WORK_MODES } from '../../shared/types'
 import type {
   CompanyDetail,
@@ -83,8 +84,13 @@ export class Store {
     return askBlock(job.minYears, experienceMonths(this.settings.profile()))
   }
 
-  /** A company's jobs the user may ask about, newest first: none asks more than a year past their experience. */
+  /**
+   * A company's jobs the user may ask about, newest first: none asks more than
+   * a year past their experience, and none at a client a recruiting firm doesn't name.
+   */
   private askableAt(companyId: number): JobRow[] {
+    const company = this.companies.get(companyId)
+    if (!company || isUndisclosed(company.name)) return []
     const months = experienceMonths(this.settings.profile())
     return this.jobs.forCompany(companyId).filter(row => !askBlock(row.minYears, months))
   }
