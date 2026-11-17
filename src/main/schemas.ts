@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { HUNT_WINDOWS, PORTALS, SOURCES, STAGES, STATUSES, TRACKER_VIEWS, WORK_MODES } from '../shared/types'
+import { EMPLOYERS, EXPERIENCE_FITS, HUNT_WINDOWS, PORTALS, SOURCES, STAGES, STATUSES, TRACKER_VIEWS, WORK_MODES } from '../shared/types'
 
 /**
  * The checks every input from outside the main process passes: the screens'
@@ -18,6 +18,8 @@ export const CompanyQuery = z.object({
   portals: z.array(z.enum(SOURCES)).max(SOURCES.length).default([]),
   search: short(),
   modes: z.array(z.enum(WORK_MODES)).max(WORK_MODES.length).default([]),
+  employers: z.array(z.enum(EMPLOYERS)).max(EMPLOYERS.length).default([]),
+  experience: z.array(z.enum(EXPERIENCE_FITS)).max(EXPERIENCE_FITS.length).default([]),
 })
 export const RunQuery = z.object({ flow: short(), portal: short(), page })
 export const httpsLink = z.string().trim().url('Enter the link to the posting or the apply page.').max(2000).refine(url => /^https?:\/\//i.test(url), 'Use an https link.')

@@ -21,12 +21,16 @@ import {
   XIcon,
 } from '@phosphor-icons/react'
 
-import { askBlock, experienceMonths } from '../../../shared/profile'
+import { askBlock, experienceMonths, maxAskableYears } from '../../../shared/profile'
 import {
   AT_ONCE,
   CHECK_STATUSES,
   DISCARD_REASON_NAMES,
   DISCARD_REASONS,
+  EMPLOYER_NAMES,
+  EMPLOYERS,
+  EXPERIENCE_FIT_NAMES,
+  EXPERIENCE_FITS,
   REQUESTS_PER_COMPANY,
   SOURCE_NAMES,
   SOURCES,
@@ -38,7 +42,21 @@ import {
   WORK_MODES,
   isTrackerTab,
 } from '../../../shared/types'
-import type { CompanyList, CompanyQuery, CompanyRow, DiscardReason, JobRow, Preferences, Source, Stage, Status, TrackerTab, WorkMode } from '../../../shared/types'
+import type {
+  CompanyList,
+  CompanyQuery,
+  CompanyRow,
+  DiscardReason,
+  Employer,
+  ExperienceFit,
+  JobRow,
+  Preferences,
+  Source,
+  Stage,
+  Status,
+  TrackerTab,
+  WorkMode,
+} from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { capitalize, day, plural } from '../lib/format'
@@ -470,7 +488,7 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
   const settings = useData(() => api.settings.get(), [], ['settings'])
   const months = settings.data ? experienceMonths(settings.data.profile) : null
   const defaultModes = settings.data ? preferredModes(settings.data.preferences) : null
-  const [filters, setFilters] = useState<Filters>({ stages: [], portals: [], search: '' })
+  const [filters, setFilters] = useState<Filters>({ stages: [], portals: [], search: '', employers: [], experience: [] })
   const [pickedModes, setPickedModes] = useState<WorkMode[] | null>(null)
   const [reason, setReason] = useState<DiscardReason | 'all'>('all')
   // Opens on the modes the user prefers, until they pick their own.
@@ -558,6 +576,12 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
 
   const sizeNames = filters.stages.map(stage => capitalize(stage))
   const portalNames = filters.portals.map(portal => SOURCE_NAMES[portal])
+  const employerNames = filters.employers.map(one => EMPLOYER_NAMES[one])
+  const fitNames = filters.experience.map(one => EXPERIENCE_FIT_NAMES[one])
+  // The choices carry the years that split them, by the same rule as referral asks: up to a year past the user's.
+  const most = maxAskableYears(months)
+  const fitLabel = (fit: ExperienceFit): string =>
+    most === null || fit === 'not-stated' ? EXPERIENCE_FIT_NAMES[fit] : `${EXPERIENCE_FIT_NAMES[fit]} (${fit === 'within' ? `up to ${most} yrs` : `${most + 1}+ yrs`})`
   const railFilters: RailFilter[] = [
     ...(isDiscarded
       ? [
@@ -610,6 +634,30 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
       chosen: filters.portals,
       choose: (value, on) => setFilters(current => ({ ...current, portals: toggled(SOURCES, current.portals, value as Source, on) })),
       clear: () => setFilters(current => ({ ...current, portals: [] })),
+    },
+    {
+      key: 'experience',
+      name: 'Experience',
+      isOn: filters.experience.length > 0,
+      value: filters.experience.map(fitLabel).join(', '),
+      short: fitList(fitNames),
+      isMulti: true,
+      choices: EXPERIENCE_FITS.map(fit => ({ value: fit, label: fitLabel(fit) })),
+      chosen: filters.experience,
+      choose: (value, on) => setFilters(current => ({ ...current, experience: toggled(EXPERIENCE_FITS, current.experience, value as ExperienceFit, on) })),
+      clear: () => setFilters(current => ({ ...current, experience: [] })),
+    },
+    {
+      key: 'employer',
+      name: 'Employer',
+      isOn: filters.employers.length > 0,
+      value: employerNames.join(', '),
+      short: fitList(employerNames),
+      isMulti: true,
+      choices: EMPLOYERS.map(one => ({ value: one, label: one === 'undisclosed' ? 'Undisclosed (via a firm)' : EMPLOYER_NAMES[one] })),
+      chosen: filters.employers,
+      choose: (value, on) => setFilters(current => ({ ...current, employers: toggled(EMPLOYERS, current.employers, value as Employer, on) })),
+      clear: () => setFilters(current => ({ ...current, employers: [] })),
     },
   ]
   const isFiltered = !!filters.search || railFilters.some(filter => filter.isOn)

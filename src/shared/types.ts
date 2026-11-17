@@ -156,6 +156,21 @@ export type WorkMode = (typeof WORK_MODES)[number]
 
 export const WORK_MODE_NAMES: Record<WorkMode, string> = { remote: 'Remote', hybrid: 'Hybrid', onsite: 'On-site', 'not-stated': 'Not stated' }
 
+/** Whether a posting names the company hiring, or a recruiting firm posted it for a client it keeps undisclosed. */
+export const EMPLOYERS = ['named', 'undisclosed'] as const
+export type Employer = (typeof EMPLOYERS)[number]
+
+export const EMPLOYER_NAMES: Record<Employer, string> = { named: 'Named', undisclosed: 'Undisclosed' }
+
+/**
+ * Where the years a job asks sit against the user's experience, by the
+ * referral rule: within a year past it, more than that, or not stated.
+ */
+export const EXPERIENCE_FITS = ['within', 'above', 'not-stated'] as const
+export type ExperienceFit = (typeof EXPERIENCE_FITS)[number]
+
+export const EXPERIENCE_FIT_NAMES: Record<ExperienceFit, string> = { within: 'In your experience', above: 'Above your experience', 'not-stated': 'Years not stated' }
+
 /** Reads the label from a free-text mode such as "Hybrid, Bengaluru". Says not-stated rather than guess. */
 export function workModeOf(text: string): WorkMode {
   const value = text.toLowerCase()
@@ -314,7 +329,15 @@ export type CompanyRow = {
 }
 
 /** Each list empty means no filter on it: every size, every portal, every work mode. */
-export type CompanyQuery = { view: TrackerView; stages: Stage[]; portals: Source[]; search: string; modes: WorkMode[] }
+export type CompanyQuery = {
+  view: TrackerView
+  stages: Stage[]
+  portals: Source[]
+  search: string
+  modes: WorkMode[]
+  employers: Employer[]
+  experience: ExperienceFit[]
+}
 
 export type CompanyList = {
   companies: CompanyRow[]

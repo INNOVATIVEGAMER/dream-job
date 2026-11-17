@@ -1,4 +1,4 @@
-import type { Profile, Role } from './types'
+import type { ExperienceFit, Profile, Role } from './types'
 
 /** An internship: it shows on the profile, but postings mean years of work, so it doesn't count toward them. */
 export const isInternship = (role: Pick<Role, 'title'>): boolean => /\binterns?(hip)?\b/i.test(role.title)
@@ -69,4 +69,15 @@ export function askBlock(minYears: number | null, months: number | null): string
   if (minYears === null || months === null) return null
   if (minYears * 12 <= months + ASK_STRETCH_YEARS * 12) return null
   return `Asks ${minYears}+ years, you have ${experienceText(months)}`
+}
+
+/** Where a job's years sit against the user's experience, by the same rule as askBlock, for the tracker's filter. */
+export function experienceFit(minYears: number | null, months: number | null): ExperienceFit {
+  if (minYears === null) return 'not-stated'
+  return askBlock(minYears, months) ? 'above' : 'within'
+}
+
+/** The most years a job may ask and still be in the user's experience, or null when no role has dates. */
+export function maxAskableYears(months: number | null): number | null {
+  return months === null ? null : Math.floor((months + ASK_STRETCH_YEARS * 12) / 12)
 }

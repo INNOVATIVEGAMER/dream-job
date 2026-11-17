@@ -2,9 +2,9 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
 import type { CompanyEdit, JobDetail, JobEdit } from '../../shared/api'
 import { cleanLink } from '../../shared/links'
-import { askBlock, experienceMonths } from '../../shared/profile'
+import { askBlock, experienceFit, experienceMonths } from '../../shared/profile'
 import { isUndisclosed } from '../../shared/referral'
-import { ACTIVE_STATUSES, SOURCES, STAGES, TRACKER_VIEWS, VIEW_STATUSES, WORK_MODES } from '../../shared/types'
+import { ACTIVE_STATUSES, EMPLOYERS, EXPERIENCE_FITS, SOURCES, STAGES, TRACKER_VIEWS, VIEW_STATUSES, WORK_MODES } from '../../shared/types'
 import type {
   CompanyDetail,
   CompanyList,
@@ -187,10 +187,16 @@ export class Store {
       where.push('(lower(c.name) LIKE ? OR lower(j.role) LIKE ?)')
       params.push(`%${search}%`, `%${search}%`)
     }
+    // Employer and experience go by the same rules that stop outreach, so they are read here rather than in SQL.
+    const employers = query.employers.filter(one => (EMPLOYERS as readonly string[]).includes(one))
+    const fits = query.experience.filter(one => (EXPERIENCE_FITS as readonly string[]).includes(one))
+    const months = fits.length ? experienceMonths(this.settings.profile()) : null
     const shown = this.db
       .prepare(`SELECT ${JOB_ROW} FROM ${JOB_FROM} WHERE ${where.join(' AND ')} ORDER BY updated DESC, j.id DESC`)
       .all(...params)
       .map(row => ({ ...row }) as JobRow)
+      .filter(job => !employers.length || employers.includes(isUndisclosed(job.company) ? 'undisclosed' : 'named'))
+      .filter(job => !fits.length || fits.includes(experienceFit(job.minYears, months)))
 
     const byCompany = new Map<number, JobRow[]>()
     for (const job of shown) byCompany.set(job.companyId, [...(byCompany.get(job.companyId) ?? []), job])

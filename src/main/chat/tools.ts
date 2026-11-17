@@ -1,7 +1,22 @@
 import { z } from 'zod'
 
 import { cleanLink } from '../../shared/links'
-import { EMAIL_COUNTS, HUNT_PORTALS, HUNT_WINDOWS, OUTREACH_STATES, PORTAL_NAMES, PORTALS, REQUESTS_PER_COMPANY, SOURCES, STAGES, STATUSES, TRACKER_VIEWS, WORK_MODES } from '../../shared/types'
+import {
+  EMAIL_COUNTS,
+  EMPLOYERS,
+  EXPERIENCE_FITS,
+  HUNT_PORTALS,
+  HUNT_WINDOWS,
+  OUTREACH_STATES,
+  PORTAL_NAMES,
+  PORTALS,
+  REQUESTS_PER_COMPANY,
+  SOURCES,
+  STAGES,
+  STATUSES,
+  TRACKER_VIEWS,
+  WORK_MODES,
+} from '../../shared/types'
 import type { DataTopic, FilledFact, RunState, WrittenAnswer } from '../../shared/types'
 import { approveWritten, browserTools, guarded, pressRef, refuse, REFUSE, say, typeInto } from '../browser/tools'
 import type { Store } from '../db/store'
@@ -68,10 +83,23 @@ function readTools(deps: ChatToolDeps): AnyTool[] {
         portals: z.array(z.enum(SOURCES)).optional().describe('Portals to keep, such as linkedin, or "manual" for jobs added by hand; none means every portal'),
         search: z.string().max(200).optional().describe('Words in the company name or role'),
         modes: z.array(z.enum(WORK_MODES)).optional(),
+        employers: z.array(z.enum(EMPLOYERS)).optional().describe('"named", or "undisclosed" for a recruiting firm\'s posting for a client it doesn\'t name; none means both'),
+        experience: z
+          .array(z.enum(EXPERIENCE_FITS))
+          .optional()
+          .describe('"within": asks no more than a year past the user\'s experience; "above": asks more, so no referral asks; "not-stated"; none means all'),
       },
       args =>
         guarded(async () => {
-          const query = CompanyQuery.parse({ view: args.view ?? 'all', stages: args.stages ?? [], portals: args.portals ?? [], search: args.search ?? '', modes: args.modes ?? [] })
+          const query = CompanyQuery.parse({
+            view: args.view ?? 'all',
+            stages: args.stages ?? [],
+            portals: args.portals ?? [],
+            search: args.search ?? '',
+            modes: args.modes ?? [],
+            employers: args.employers ?? [],
+            experience: args.experience ?? [],
+          })
           const list = store.trackerList(query)
           const companies = list.companies.slice(0, 80).map(company => ({
             id: company.id,
