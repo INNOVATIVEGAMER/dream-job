@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { JSX } from 'react'
+import type { JSX, ReactNode } from 'react'
 
 import {
   ArchiveIcon,
@@ -11,13 +11,13 @@ import {
   CircleDashedIcon,
   DotsThreeIcon,
   EnvelopeIcon,
-  FunnelIcon,
   ListChecksIcon,
   MagnifyingGlassIcon,
   PaperPlaneTiltIcon,
   PlusIcon,
   UserPlusIcon,
   WarningIcon,
+  XCircleIcon,
   XIcon,
 } from '@phosphor-icons/react'
 
@@ -34,15 +34,15 @@ import {
   STATUS_NAMES,
   STATUSES,
   TRACKER_VIEW_NAMES,
-  TRACKER_VIEWS,
   WORK_MODE_NAMES,
   WORK_MODES,
+  isTrackerTab,
 } from '../../../shared/types'
-import type { CompanyList, CompanyQuery, CompanyRow, DiscardReason, JobRow, Preferences, Status, TrackerView, WorkMode } from '../../../shared/types'
+import type { CompanyList, CompanyQuery, CompanyRow, DiscardReason, JobRow, Preferences, Source, Stage, Status, TrackerTab, WorkMode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { capitalize, day, plural } from '../lib/format'
-import { go } from '../lib/router'
+import { go, replace } from '../lib/router'
 import { useAppStatus } from '../lib/status'
 import { checkPostings, sendRequests } from '../ui/CommandMenu'
 import { attempt, ErrorNote, Hidden, Loading, Page, StatusBadge } from '../ui/common'
@@ -58,12 +58,14 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
   EmptyState,
   EmptyStateDescription,
   EmptyStateHeader,
   EmptyStateTitle,
-  FilterChip,
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
@@ -75,9 +77,6 @@ import {
   TableRow,
   TableSelectionCell,
   TableSelectionHead,
-  Tabs,
-  TabsList,
-  TabsTrigger,
   Toolbar,
   ToolbarButton,
   ToolbarSeparator,
@@ -96,6 +95,15 @@ function preferredModes(prefs: Preferences): WorkMode[] {
 }
 
 const modeList = (modes: WorkMode[]): string => modes.map(mode => WORK_MODE_NAMES[mode]).join(', ')
+
+/** Ticks one choice on or off. None ticked, or every one, is no filter at all, so that comes back empty. */
+function toggled<T extends string>(all: readonly T[], chosen: readonly T[], value: T, on: boolean): T[] {
+  const next = all.filter(one => (one === value ? on : chosen.includes(one)))
+  return next.length === all.length ? [] : next
+}
+
+/** Names that fit in a filter chip: the first two, then how many more. */
+const fitList = (names: string[]): string => (names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', '))
 
 const sourceName = (job: JobRow): string => SOURCE_NAMES[job.portal] ?? job.portal
 
@@ -118,7 +126,7 @@ function sameYears(jobs: JobRow[]): number | null {
 }
 
 /** The tab's number: companies in each view, but jobs in Discarded, which lists jobs. */
-const countOf = (data: CompanyList | undefined, view: TrackerView): number | string => (data ? (view === 'discarded' ? data.discardedJobs : data.counts[view]) : '')
+const countOf = (data: CompanyList | undefined, view: TrackerTab): number | string => (data ? (view === 'discarded' ? data.discardedJobs : data.counts[view]) : '')
 
 function ModeBadge({ mode }: { mode: WorkMode }): JSX.Element {
   return (
@@ -253,26 +261,221 @@ function DiscardedTable({ jobs }: { jobs: JobRow[] }): JSX.Element {
   )
 }
 
+/** The tabs a job moves through, in order. Closed and Discarded are where jobs leave. */
+const PIPELINE: TrackerTab[] = ['found', 'applied', 'outreached', 'referred', 'interview', 'offer']
+const EXITS: { tab: TrackerTab; icon: JSX.Element }[] = [
+  { tab: 'closed', icon: <XCircleIcon /> },
+  { tab: 'discarded', icon: <ArchiveIcon /> },
+]
+
+/** One filter as the rail shows it: what it is set to, the choices that change it, and how to take it off. */
+type RailFilter = {
+  key: string
+  name: string
+  isOn: boolean
+  /** The whole value, and the part that fits in the chip. */
+  value: string
+  short: string
+  /** Several choices at once (Mode), or one. */
+  isMulti: boolean
+  choices: { value: string; label: string }[]
+  chosen: string[]
+  choose: (value: string, on: boolean) => void
+  clear: () => void
+}
+
+/** A filter that is on: its name, its value (click to change it there), and × to take it off. */
+function RailFilterChip({ filter }: { filter: RailFilter }): JSX.Element {
+  return (
+    <div className="nx:flex nx:items-stretch nx:h-8 nx:box-border nx:rounded-md nx:border-default nx:border-border-default nx:bg-background">
+      <span className="nx:flex nx:shrink-0 nx:items-center nx:px-2 nx:typography-body-small nx:text-muted-foreground nx:border-r-default nx:border-border-default">{filter.name}</span>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            title={filter.value}
+            aria-label={`Change ${filter.name}: ${filter.value}`}
+            className="nx:flex nx:flex-1 nx:min-w-0 nx:items-center nx:px-2 nx:border-0 nx:bg-transparent nx:hover:bg-background-hover nx:data-[state=open]:bg-muted nx:text-foreground nx:text-left nx:cursor-pointer"
+          >
+            <span className="nx:truncate nx:typography-label-small">{filter.short}</span>
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="nx:min-w-[204px]">
+          <DropdownMenuLabel>{filter.isMulti ? 'Any of these' : `One ${filter.name.toLowerCase()}`}</DropdownMenuLabel>
+          {filter.isMulti ? (
+            filter.choices.map(choice => (
+              <DropdownMenuCheckboxItem
+                key={choice.value}
+                checked={filter.chosen.includes(choice.value)}
+                onCheckedChange={on => filter.choose(choice.value, on === true)}
+                onSelect={event => event.preventDefault()}
+              >
+                {choice.label}
+              </DropdownMenuCheckboxItem>
+            ))
+          ) : (
+            <DropdownMenuRadioGroup value={filter.chosen[0]} onValueChange={value => filter.choose(value, true)}>
+              {filter.choices.map(choice => (
+                <DropdownMenuRadioItem key={choice.value} value={choice.value}>
+                  {choice.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <button
+        type="button"
+        aria-label={`Remove ${filter.name} filter`}
+        className="nx:flex nx:w-7 nx:shrink-0 nx:items-center nx:justify-center nx:border-0 nx:border-l-default nx:border-border-default nx:rounded-r-md nx:bg-transparent nx:hover:bg-background-hover nx:text-muted-foreground nx:cursor-pointer"
+        onClick={filter.clear}
+      >
+        <XIcon size={14} />
+      </button>
+    </div>
+  )
+}
+
+/** The filters under the pipeline: each one that is on as a chip, Add filter for the rest, and Clear all. */
+function RailFilters({ filters }: { filters: RailFilter[] }): JSX.Element {
+  const on = filters.filter(filter => filter.isOn)
+  const off = filters.filter(filter => !filter.isOn)
+  return (
+    <>
+      <div aria-hidden="true" className="nx:h-px nx:mx-2 nx:my-3 nx:bg-border-default" />
+      <div className="nx:flex nx:items-center nx:justify-between nx:gap-2 nx:px-2 nx:py-1">
+        <span className="nx:typography-label-small nx:text-muted-foreground">Filters</span>
+        {on.length > 0 && (
+          <button
+            type="button"
+            className="nx:p-0 nx:border-0 nx:bg-transparent nx:cursor-pointer nx:typography-label-small nx:text-muted-foreground nx:underline nx:underline-offset-[3px]"
+            onClick={() => on.forEach(filter => filter.clear())}
+          >
+            Clear all
+          </button>
+        )}
+      </div>
+      <div className="nx:flex nx:flex-col nx:gap-[6px]">
+        {on.map(filter => (
+          <RailFilterChip key={filter.key} filter={filter} />
+        ))}
+        {off.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="nx:flex nx:items-center nx:gap-1 nx:h-8 nx:box-border nx:px-2 nx:rounded-md nx:border-dashed nx:border-default nx:border-border-default nx:bg-transparent nx:hover:bg-background-hover nx:text-muted-foreground nx:cursor-pointer nx:typography-label-small"
+              >
+                <PlusIcon size={14} /> Add filter
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="nx:min-w-[204px]">
+              {off.map(filter => (
+                <DropdownMenuSub key={filter.key}>
+                  <DropdownMenuSubTrigger>{filter.name}</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {filter.choices.map(choice => (
+                      <DropdownMenuItem key={choice.value} onSelect={() => filter.choose(choice.value, true)}>
+                        {choice.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+    </>
+  )
+}
+
+/** The tabs down the left: the pipeline on a line from Found to Offer, Closed and Discarded below it, then the filters. */
+function PipelineRail({ view, data, children }: { view: TrackerTab; data: CompanyList | undefined; children?: ReactNode }): JSX.Element {
+  const item = (tab: TrackerTab, mark: JSX.Element): JSX.Element => {
+    const isOn = tab === view
+    const count = countOf(data, tab)
+    const look = isOn ? 'nx:bg-primary-subtle nx:text-primary-subtle-foreground' : `nx:bg-transparent nx:hover:bg-background-hover ${count === 0 ? 'nx:text-muted-foreground' : 'nx:text-foreground'}`
+    return (
+      <button
+        key={tab}
+        type="button"
+        aria-current={isOn ? 'page' : undefined}
+        className={`nx:relative nx:flex nx:items-center nx:gap-2 nx:h-9 nx:px-2 nx:border-0 nx:rounded-md nx:cursor-pointer nx:text-left nx:typography-label-default ${look}`}
+        onClick={() => go(`/tracker/${tab}`)}
+      >
+        <span aria-hidden="true" className="nx:flex nx:w-4 nx:shrink-0 nx:justify-center">
+          {mark}
+        </span>
+        <span className="nx:flex-1 nx:min-w-0 nx:truncate">{TRACKER_VIEW_NAMES[tab]}</span>
+        <span className={`nx:typography-body-small nx:tabular-nums ${isOn ? '' : 'nx:text-muted-foreground'}`}>{count}</span>
+      </button>
+    )
+  }
+  const dot = (tab: TrackerTab): JSX.Element => {
+    const color = tab === view ? 'var(--nx-color-primary-background)' : 'var(--nx-color-muted-foreground)'
+    return <span style={{ width: 10, height: 10, boxSizing: 'border-box', borderRadius: 999, border: `2px solid ${color}`, background: tab === view ? color : 'var(--nx-color-background)' }} />
+  }
+  return (
+    <aside className="nx:w-[220px] nx:shrink-0 nx:box-border nx:border-r-default nx:border-border-default">
+      <nav aria-label="Tracker tabs and filters" className="nx:sticky nx:top-12 nx:max-h-[calc(100svh-3rem)] nx:overflow-y-auto nx:box-border nx:flex nx:flex-col nx:gap-1 nx:px-2 nx:py-3">
+        <span className="nx:typography-label-small nx:text-muted-foreground nx:px-2 nx:py-1">Pipeline</span>
+        <div className="nx:relative nx:flex nx:flex-col nx:gap-[2px]">
+          <span aria-hidden="true" className="nx:absolute nx:left-[15px] nx:top-[18px] nx:bottom-[18px] nx:w-[2px] nx:bg-border-default" />
+          {PIPELINE.map(tab => item(tab, dot(tab)))}
+        </div>
+        <div aria-hidden="true" className="nx:h-px nx:mx-2 nx:my-3 nx:bg-border-default" />
+        <span className="nx:typography-label-small nx:text-muted-foreground nx:px-2 nx:py-1">Out of the pipeline</span>
+        {EXITS.map(({ tab, icon }) => item(tab, icon))}
+        {children}
+      </nav>
+    </aside>
+  )
+}
+
 type Filters = Omit<CompanyQuery, 'view' | 'modes'>
 
+const LAST_TAB_KEY = 'dream-job:tracker-tab'
+
+/** The tab the tracker was last on, remembered between screens and launches; Found the first time. */
+function lastTab(): TrackerTab {
+  try {
+    const saved = localStorage.getItem(LAST_TAB_KEY) ?? undefined
+    return isTrackerTab(saved) ? saved : 'found'
+  } catch {
+    return 'found'
+  }
+}
+
+/**
+ * The tracker at its address. `/tracker/applied` opens Applied and remembers it;
+ * `/tracker` opens the tab last open, and the address follows so it names the tab.
+ */
+export function TrackerRoute({ part }: { part?: string }): JSX.Element {
+  const view = isTrackerTab(part) ? part : lastTab()
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAST_TAB_KEY, view)
+    } catch {
+      // not remembered; the tracker opens on Found next time
+    }
+    if (part !== view && part !== 'new') replace(`/tracker/${view}`)
+  }, [part, view])
+  return <Tracker adding={part === 'new'} view={view} />
+}
+
 /** The tracker, company first: each company with its jobs as rows beneath it. Discarded lists jobs, with why. */
-export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; view?: TrackerView }): JSX.Element {
+function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab }): JSX.Element {
   const status = useAppStatus()
   const settings = useData(() => api.settings.get(), [], ['settings'])
   const months = settings.data ? experienceMonths(settings.data.profile) : null
   const defaultModes = settings.data ? preferredModes(settings.data.preferences) : null
-  const [filters, setFilters] = useState<Filters>({ stage: 'all', portal: 'all', search: '' })
+  const [filters, setFilters] = useState<Filters>({ stages: [], portals: [], search: '' })
   const [pickedModes, setPickedModes] = useState<WorkMode[] | null>(null)
   const [reason, setReason] = useState<DiscardReason | 'all'>('all')
   // Opens on the modes the user prefers, until they pick their own.
   const modes = pickedModes ?? defaultModes ?? []
   const shown: CompanyQuery = { ...filters, view, modes }
-  const toggleMode = (mode: WorkMode, on: boolean): void => {
-    const current = modes.length ? modes : [...WORK_MODES]
-    const next = WORK_MODES.filter(one => (one === mode ? on : current.includes(one)))
-    if (next.length === 0) return
-    setPickedModes(next.length === WORK_MODES.length ? [] : next)
-  }
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState<Set<number>>(new Set())
   const [closed, setClosed] = useState<Set<number>>(new Set())
@@ -353,15 +556,66 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
     clear()
   }
 
-  const chips: { key: string; label: string; clear: () => void }[] = []
-  if (filters.stage !== 'all') chips.push({ key: 'stage', label: `Stage: ${capitalize(filters.stage)}`, clear: () => setFilters(current => ({ ...current, stage: 'all' })) })
-  if (filters.portal !== 'all') {
-    const name = SOURCE_NAMES[filters.portal as keyof typeof SOURCE_NAMES] ?? filters.portal
-    chips.push({ key: 'portal', label: `Portal: ${name}`, clear: () => setFilters(current => ({ ...current, portal: 'all' })) })
-  }
-  if (modes.length) chips.push({ key: 'mode', label: `Mode: ${modeList(modes)}`, clear: () => setPickedModes([]) })
-  if (isDiscarded && reason !== 'all') chips.push({ key: 'reason', label: `Reason: ${DISCARD_REASON_NAMES[reason].toLowerCase()}`, clear: () => setReason('all') })
-  const isFiltered = !!filters.search || chips.length > 0
+  const sizeNames = filters.stages.map(stage => capitalize(stage))
+  const portalNames = filters.portals.map(portal => SOURCE_NAMES[portal])
+  const railFilters: RailFilter[] = [
+    ...(isDiscarded
+      ? [
+          {
+            key: 'reason',
+            name: 'Reason',
+            isOn: reason !== 'all',
+            value: reason === 'all' ? '' : DISCARD_REASON_NAMES[reason],
+            short: reason === 'all' ? '' : DISCARD_REASON_NAMES[reason],
+            isMulti: false,
+            choices: DISCARD_REASONS.map(one => ({ value: one, label: DISCARD_REASON_NAMES[one] })),
+            chosen: [reason],
+            choose: (value: string) => setReason(value as DiscardReason),
+            clear: () => setReason('all'),
+          },
+        ]
+      : []),
+    {
+      key: 'mode',
+      name: 'Mode',
+      isOn: modes.length > 0,
+      value: modeList(modes),
+      short: fitList(modes.map(mode => WORK_MODE_NAMES[mode])),
+      isMulti: true,
+      choices: WORK_MODES.map(mode => ({ value: mode, label: WORK_MODE_NAMES[mode] })),
+      chosen: modes,
+      choose: (value, on) => setPickedModes(toggled(WORK_MODES, modes, value as WorkMode, on)),
+      clear: () => setPickedModes([]),
+    },
+    {
+      key: 'size',
+      name: 'Size',
+      isOn: filters.stages.length > 0,
+      value: sizeNames.join(', '),
+      short: fitList(sizeNames),
+      isMulti: true,
+      choices: STAGES.map(stage => ({ value: stage, label: capitalize(stage) })),
+      chosen: filters.stages,
+      choose: (value, on) => setFilters(current => ({ ...current, stages: toggled(STAGES, current.stages, value as Stage, on) })),
+      clear: () => setFilters(current => ({ ...current, stages: [] })),
+    },
+    {
+      key: 'portal',
+      name: 'Portal',
+      isOn: filters.portals.length > 0,
+      value: portalNames.join(', '),
+      short: fitList(portalNames),
+      isMulti: true,
+      choices: SOURCES.map(source => ({ value: source, label: SOURCE_NAMES[source] })),
+      chosen: filters.portals,
+      choose: (value, on) => setFilters(current => ({ ...current, portals: toggled(SOURCES, current.portals, value as Source, on) })),
+      clear: () => setFilters(current => ({ ...current, portals: [] })),
+    },
+  ]
+  const isFiltered = !!filters.search || railFilters.some(filter => filter.isOn)
+  // The tab's counts are its totals; the list is what the filters and search let through.
+  const total = data ? (isDiscarded ? plural(data.discardedJobs, 'job') : plural(data.counts[view], 'company', 'companies')) : ''
+  const summary = `${isFiltered ? `${isDiscarded ? discarded.length : companies.length} of ` : ''}${total}${isDiscarded ? ' a hunt ruled out' : ''}`
   const isEmpty = isDiscarded ? discarded.length === 0 : companies.length === 0
   const viewName = TRACKER_VIEW_NAMES[view].toLowerCase()
 
@@ -381,231 +635,167 @@ export function Tracker({ adding = false, view = 'all' }: { adding?: boolean; vi
         </>
       }
     >
-      <div className="nx:flex nx:flex-wrap nx:items-center nx:justify-between nx:gap-3 nx:px-4 nx:py-2 nx:border-b-default nx:border-border-default">
-        <Tabs value={view} onValueChange={next => go(`/tracker/${next}`)}>
-          <TabsList variant="underline" size="sm">
-            {TRACKER_VIEWS.map(one => (
-              <TabsTrigger key={one} value={one}>
-                {TRACKER_VIEW_NAMES[one]}
-                <span className="nx:ml-1 nx:text-muted-foreground">{countOf(data, one)}</span>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-        <div className="nx:flex nx:items-center nx:gap-2">
-          <div className="nx:w-60">
-            <InputGroup>
-              <InputGroupAddon align="inline-start">
-                <MagnifyingGlassIcon />
-              </InputGroupAddon>
-              <InputGroupInput type="search" aria-label="Search companies and roles" placeholder="Search companies and roles" value={search} onChange={event => setSearch(event.target.value)} />
-            </InputGroup>
+      <div className="nx:flex nx:flex-1 nx:items-stretch nx:min-h-0">
+        <PipelineRail view={view} data={data}>
+          <RailFilters filters={railFilters} />
+        </PipelineRail>
+        <div className="nx:flex-1 nx:min-w-0">
+          <div className="nx:flex nx:flex-wrap nx:items-center nx:justify-between nx:gap-3 nx:px-4 nx:py-2">
+            <div className="nx:flex nx:items-baseline nx:gap-2 nx:min-w-0">
+              <span className="nx:typography-label-default">{TRACKER_VIEW_NAMES[view]}</span>
+              {data && <span className="nx:typography-body-small nx:text-muted-foreground nx:truncate">{summary}</span>}
+            </div>
+            <div className="nx:w-60">
+              <InputGroup>
+                <InputGroupAddon align="inline-start">
+                  <MagnifyingGlassIcon />
+                </InputGroupAddon>
+                <InputGroupInput type="search" aria-label="Search companies and roles" placeholder="Search companies and roles" value={search} onChange={event => setSearch(event.target.value)} />
+              </InputGroup>
+            </div>
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" startIcon={<FunnelIcon />}>
-                Filter
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {isDiscarded && (
-                <>
-                  <DropdownMenuLabel>Reason</DropdownMenuLabel>
-                  <DropdownMenuRadioGroup value={reason} onValueChange={value => setReason(value as DiscardReason | 'all')}>
-                    <DropdownMenuRadioItem value="all">Any reason</DropdownMenuRadioItem>
-                    {DISCARD_REASONS.map(one => (
-                      <DropdownMenuRadioItem key={one} value={one}>
-                        {DISCARD_REASON_NAMES[one]}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                  <DropdownMenuSeparator />
-                </>
-              )}
-              <DropdownMenuLabel>Stage</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={filters.stage} onValueChange={stage => setFilters(current => ({ ...current, stage }))}>
-                <DropdownMenuRadioItem value="all">Any stage</DropdownMenuRadioItem>
-                {STAGES.map(stage => (
-                  <DropdownMenuRadioItem key={stage} value={stage}>
-                    {capitalize(stage)}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Portal</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={filters.portal} onValueChange={portal => setFilters(current => ({ ...current, portal }))}>
-                <DropdownMenuRadioItem value="all">Any portal</DropdownMenuRadioItem>
-                {SOURCES.map(source => (
-                  <DropdownMenuRadioItem key={source} value={source}>
-                    {SOURCE_NAMES[source]}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Work mode</DropdownMenuLabel>
-              {WORK_MODES.map(mode => (
-                <DropdownMenuCheckboxItem
-                  key={mode}
-                  checked={modes.length === 0 || modes.includes(mode)}
-                  onCheckedChange={on => toggleMode(mode, on === true)}
-                  onSelect={event => event.preventDefault()}
-                >
-                  {WORK_MODE_NAMES[mode]}
-                </DropdownMenuCheckboxItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-      {chips.length > 0 && (
-        <div className="nx:flex nx:flex-wrap nx:gap-2 nx:px-4 nx:py-2">
-          {chips.map(chip => (
-            <FilterChip key={chip.key} name={chip.key} value={chip.key} aria-label={`Remove ${chip.label}`} onClick={chip.clear}>
-              {chip.label}
-            </FilterChip>
-          ))}
-        </div>
-      )}
 
-      <div className="nx:px-2 nx:pb-24">
-        {list.error && <ErrorNote text={list.error} />}
-        {!data ? (
-          <div className="nx:p-4">
-            <Loading />
-          </div>
-        ) : isEmpty ? (
-          <div className="nx:p-8">
-            <EmptyState>
-              <EmptyStateHeader>
-                <EmptyStateTitle>{isFiltered ? 'Nothing matches' : isDiscarded ? 'Nothing discarded' : view === 'all' ? 'No jobs yet' : `No ${viewName} jobs`}</EmptyStateTitle>
-                <EmptyStateDescription>
-                  {isDiscarded ? 'Jobs a hunt rules out land here, with the words that ruled them out.' : view === 'found' || view === 'all' ? 'A hunt adds jobs here.' : 'Try another view.'}
-                </EmptyStateDescription>
-              </EmptyStateHeader>
-            </EmptyState>
-          </div>
-        ) : isDiscarded ? (
-          <DiscardedTable jobs={discarded} />
-        ) : (
-          <Table aria-label="Companies and their jobs" density="compact">
-            <TableHeader>
-              <TableRow>
-                <TableSelectionHead>
-                  <Checkbox
-                    aria-label="Pick every job in this view"
-                    checked={pickedHere === 0 ? false : pickedHere === allIds.length ? true : 'indeterminate'}
-                    onCheckedChange={on => pick(allIds, on === true)}
-                  />
-                </TableSelectionHead>
-                <TableHead>Company</TableHead>
-                <TableHead>Mode</TableHead>
-                <TableHead className="nx:text-end">Min exp</TableHead>
-                <TableHead>Stage</TableHead>
-                <TableHead className="nx:text-end">Best score</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>People</TableHead>
-                <TableHead>Updated</TableHead>
-                <TableHead>
-                  <Hidden>Actions</Hidden>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {companies.map(row => {
-                const ids = row.jobs.map(job => job.id)
-                const n = ids.filter(id => picked.has(id)).length
-                const expanded = isOpen(row)
-                return [
-                  <TableRow key={`c-${row.id}`} className="nx:group" data-state={n === ids.length && n > 0 ? 'selected' : undefined}>
-                    <TableSelectionCell>
-                      <Checkbox aria-label={`Pick ${row.name}`} checked={n === 0 ? false : n === ids.length ? true : 'indeterminate'} onCheckedChange={on => pick(ids, on === true)} />
-                    </TableSelectionCell>
-                    <TableCell>
-                      <div className="nx:flex nx:items-center nx:gap-1 nx:min-w-0">
-                        <Button variant="ghost" size="icon-sm" aria-label={expanded ? `Hide jobs at ${row.name}` : `Show jobs at ${row.name}`} onClick={() => toggleOpen(row)}>
-                          {expanded ? <CaretDownIcon /> : <CaretRightIcon />}
-                        </Button>
-                        <button type="button" className="nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:typography-label-default nx:text-foreground nx:whitespace-nowrap" onClick={() => go(`/company/${row.id}`)}>
-                          {row.name}
-                        </button>
-                        <span className="nx:typography-body-small nx:text-muted-foreground nx:whitespace-nowrap">{plural(row.jobCount, 'job')}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Modes jobs={row.jobs} />
-                    </TableCell>
-                    <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap"><Years years={sameYears(row.jobs)} months={months} /></TableCell>
-                    <TableCell className="nx:typography-body-small">{capitalize(row.stage)}</TableCell>
-                    <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{row.bestScore ?? ''}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={row.status} />
-                    </TableCell>
-                    <TableCell className="nx:typography-body-small">
-                      <People row={row} />
-                    </TableCell>
-                    <TableCell className="nx:typography-body-small nx:text-muted-foreground nx:tabular-nums nx:whitespace-nowrap">{day(row.updated)}</TableCell>
-                    <TableCell className="nx:text-end">
-                      <div className={HOVER}>
-                        <CompanyMenu row={row} />
-                      </div>
-                    </TableCell>
-                  </TableRow>,
-                  ...(expanded
-                    ? row.jobs.map(job => (
-                        <TableRow key={`j-${job.id}`} className="nx:group" data-state={picked.has(job.id) ? 'selected' : undefined}>
-                          <TableSelectionCell>
-                            <Checkbox aria-label={`Pick ${job.role}`} checked={picked.has(job.id)} onCheckedChange={on => pick([job.id], on === true)} />
-                          </TableSelectionCell>
-                          <TableCell>
-                            <button
-                              type="button"
-                              className="nx:flex nx:items-center nx:gap-2 nx:min-w-0 nx:max-w-[360px] nx:pl-9 nx:bg-transparent nx:border-0 nx:py-0 nx:pr-0 nx:cursor-pointer nx:text-left"
-                              onClick={() => go(`/job/${job.id}`)}
-                            >
-                              <span className="nx:typography-body-default nx:text-foreground nx:truncate">{job.role}</span>
-                              <span className="nx:typography-body-small nx:text-muted-foreground nx:whitespace-nowrap">{sourceName(job)}</span>
-                              {job.postingState === 'unreadable' && (
-                                <span title="Apply page not readable" aria-label="Apply page not readable" className="nx:inline-flex nx:shrink-0 nx:text-warning-subtle-foreground">
-                                  <WarningIcon size={14} />
-                                </span>
-                              )}
+          <div className="nx:px-2 nx:pb-24">
+            {list.error && <ErrorNote text={list.error} />}
+            {!data ? (
+              <div className="nx:p-4">
+                <Loading />
+              </div>
+            ) : isEmpty ? (
+              <div className="nx:p-8">
+                <EmptyState>
+                  <EmptyStateHeader>
+                    <EmptyStateTitle>{isFiltered ? 'Nothing matches' : isDiscarded ? 'Nothing discarded' : `No ${viewName} jobs`}</EmptyStateTitle>
+                    <EmptyStateDescription>
+                      {isDiscarded ? 'Jobs a hunt rules out land here, with the words that ruled them out.' : view === 'found' ? 'A hunt adds jobs here.' : 'Try another tab.'}
+                    </EmptyStateDescription>
+                  </EmptyStateHeader>
+                </EmptyState>
+              </div>
+            ) : isDiscarded ? (
+              <DiscardedTable jobs={discarded} />
+            ) : (
+              <Table aria-label="Companies and their jobs" density="compact">
+                <TableHeader>
+                  <TableRow>
+                    <TableSelectionHead>
+                      <Checkbox
+                        aria-label="Pick every job in this view"
+                        checked={pickedHere === 0 ? false : pickedHere === allIds.length ? true : 'indeterminate'}
+                        onCheckedChange={on => pick(allIds, on === true)}
+                      />
+                    </TableSelectionHead>
+                    <TableHead>Company</TableHead>
+                    <TableHead>Mode</TableHead>
+                    <TableHead className="nx:text-end">Min exp</TableHead>
+                    <TableHead>Size</TableHead>
+                    <TableHead className="nx:text-end">Best score</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>People</TableHead>
+                    <TableHead>Updated</TableHead>
+                    <TableHead>
+                      <Hidden>Actions</Hidden>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {companies.map(row => {
+                    const ids = row.jobs.map(job => job.id)
+                    const n = ids.filter(id => picked.has(id)).length
+                    const expanded = isOpen(row)
+                    return [
+                      <TableRow key={`c-${row.id}`} className="nx:group" data-state={n === ids.length && n > 0 ? 'selected' : undefined}>
+                        <TableSelectionCell>
+                          <Checkbox aria-label={`Pick ${row.name}`} checked={n === 0 ? false : n === ids.length ? true : 'indeterminate'} onCheckedChange={on => pick(ids, on === true)} />
+                        </TableSelectionCell>
+                        <TableCell>
+                          <div className="nx:flex nx:items-center nx:gap-1 nx:min-w-0">
+                            <Button variant="ghost" size="icon-sm" aria-label={expanded ? `Hide jobs at ${row.name}` : `Show jobs at ${row.name}`} onClick={() => toggleOpen(row)}>
+                              {expanded ? <CaretDownIcon /> : <CaretRightIcon />}
+                            </Button>
+                            <button type="button" className="nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:typography-label-default nx:text-foreground nx:whitespace-nowrap" onClick={() => go(`/company/${row.id}`)}>
+                              {row.name}
                             </button>
-                          </TableCell>
-                          <TableCell>
-                            <ModeBadge mode={job.workMode} />
-                          </TableCell>
-                          <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap"><Years years={job.minYears} months={months} /></TableCell>
-                          <TableCell />
-                          <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{job.score ?? ''}</TableCell>
-                          <TableCell>
-                            <StatusBadge status={job.status} />
-                          </TableCell>
-                          <TableCell />
-                          <TableCell className="nx:typography-body-small nx:text-muted-foreground nx:tabular-nums nx:whitespace-nowrap">{day(job.updated)}</TableCell>
-                          <TableCell className="nx:text-end">
-                            <div className={`nx:flex nx:items-center nx:justify-end nx:gap-1 ${HOVER}`}>
-                              {job.status === 'found' && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  startIcon={<PaperPlaneTiltIcon />}
-                                  disabled={isBusy}
-                                  onClick={() => void attempt(() => api.flows.apply([job.id])).then(runId => runId && go('/run'))}
+                            <span className="nx:typography-body-small nx:text-muted-foreground nx:whitespace-nowrap">{plural(row.jobCount, 'job')}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Modes jobs={row.jobs} />
+                        </TableCell>
+                        <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap"><Years years={sameYears(row.jobs)} months={months} /></TableCell>
+                        <TableCell className="nx:typography-body-small">{capitalize(row.stage)}</TableCell>
+                        <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{row.bestScore ?? ''}</TableCell>
+                        <TableCell>
+                          <StatusBadge status={row.status} />
+                        </TableCell>
+                        <TableCell className="nx:typography-body-small">
+                          <People row={row} />
+                        </TableCell>
+                        <TableCell className="nx:typography-body-small nx:text-muted-foreground nx:tabular-nums nx:whitespace-nowrap">{day(row.updated)}</TableCell>
+                        <TableCell className="nx:text-end">
+                          <div className={HOVER}>
+                            <CompanyMenu row={row} />
+                          </div>
+                        </TableCell>
+                      </TableRow>,
+                      ...(expanded
+                        ? row.jobs.map(job => (
+                            <TableRow key={`j-${job.id}`} className="nx:group" data-state={picked.has(job.id) ? 'selected' : undefined}>
+                              <TableSelectionCell>
+                                <Checkbox aria-label={`Pick ${job.role}`} checked={picked.has(job.id)} onCheckedChange={on => pick([job.id], on === true)} />
+                              </TableSelectionCell>
+                              <TableCell>
+                                <button
+                                  type="button"
+                                  className="nx:flex nx:items-center nx:gap-2 nx:min-w-0 nx:max-w-[360px] nx:pl-9 nx:bg-transparent nx:border-0 nx:py-0 nx:pr-0 nx:cursor-pointer nx:text-left"
+                                  onClick={() => go(`/job/${job.id}`)}
                                 >
-                                  Apply
-                                </Button>
-                              )}
-                              <JobMenu job={job} />
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    : []),
-                ]
-              })}
-            </TableBody>
-          </Table>
-        )}
+                                  <span className="nx:typography-body-default nx:text-foreground nx:truncate">{job.role}</span>
+                                  <span className="nx:typography-body-small nx:text-muted-foreground nx:whitespace-nowrap">{sourceName(job)}</span>
+                                  {job.postingState === 'unreadable' && (
+                                    <span title="Apply page not readable" aria-label="Apply page not readable" className="nx:inline-flex nx:shrink-0 nx:text-warning-subtle-foreground">
+                                      <WarningIcon size={14} />
+                                    </span>
+                                  )}
+                                </button>
+                              </TableCell>
+                              <TableCell>
+                                <ModeBadge mode={job.workMode} />
+                              </TableCell>
+                              <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small nx:whitespace-nowrap"><Years years={job.minYears} months={months} /></TableCell>
+                              <TableCell />
+                              <TableCell className="nx:text-end nx:tabular-nums nx:typography-body-small">{job.score ?? ''}</TableCell>
+                              <TableCell>
+                                <StatusBadge status={job.status} />
+                              </TableCell>
+                              <TableCell />
+                              <TableCell className="nx:typography-body-small nx:text-muted-foreground nx:tabular-nums nx:whitespace-nowrap">{day(job.updated)}</TableCell>
+                              <TableCell className="nx:text-end">
+                                <div className={`nx:flex nx:items-center nx:justify-end nx:gap-1 ${HOVER}`}>
+                                  {job.status === 'found' && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      startIcon={<PaperPlaneTiltIcon />}
+                                      disabled={isBusy}
+                                      onClick={() => void attempt(() => api.flows.apply([job.id])).then(runId => runId && go('/run'))}
+                                    >
+                                      Apply
+                                    </Button>
+                                  )}
+                                  <JobMenu job={job} />
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        : []),
+                    ]
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        </div>
       </div>
 
       {!isDiscarded && pickedJobs.length > 0 && (

@@ -255,6 +255,11 @@ export const VIEW_STATUSES: Record<TrackerView, readonly Status[]> = {
   all: STATUSES.filter(status => status !== 'discarded'),
 }
 
+/** The tracker's tabs: the pipeline from Found to Offer, then Closed and Discarded. All is for the chat's searches only. */
+export type TrackerTab = Exclude<TrackerView, 'all'>
+export const TRACKER_TABS = TRACKER_VIEWS.filter((view): view is TrackerTab => view !== 'all')
+export const isTrackerTab = (value: string | undefined): value is TrackerTab => (TRACKER_TABS as readonly string[]).includes(value ?? '')
+
 export const TRACKER_VIEW_NAMES: Record<TrackerView, string> = {
   found: 'Found',
   applied: 'Applied',
@@ -308,8 +313,8 @@ export type CompanyRow = {
   jobs: JobRow[]
 }
 
-/** `modes` empty means every work mode. */
-export type CompanyQuery = { view: TrackerView; stage: string; portal: string; search: string; modes: WorkMode[] }
+/** Each list empty means no filter on it: every size, every portal, every work mode. */
+export type CompanyQuery = { view: TrackerView; stages: Stage[]; portals: Source[]; search: string; modes: WorkMode[] }
 
 export type CompanyList = {
   companies: CompanyRow[]

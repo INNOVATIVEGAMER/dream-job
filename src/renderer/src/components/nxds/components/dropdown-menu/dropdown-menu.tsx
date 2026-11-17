@@ -95,24 +95,27 @@ type DropdownMenuSubContentProps = React.ComponentProps<
 >;
 
 /**
- * The panel that holds a submenu's items.
+ * The panel that holds a submenu's items. Opens in a portal, like the menu
+ * itself, so the parent menu's scrolling box never clips it.
  */
 function DropdownMenuSubContent({
   className,
   ...props
 }: DropdownMenuSubContentProps) {
   return (
-    <DropdownMenuPrimitive.SubContent
-      data-slot="dropdown-menu-sub-content"
-      className={cn(
-        'nx:z-popover nx:min-w-32 nx:overflow-hidden',
-        popoverSurfaceClassName,
-        'nx:p-1',
-        overlayFloatingTransitionClassName,
-        className
-      )}
-      {...props}
-    />
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.SubContent
+        data-slot="dropdown-menu-sub-content"
+        className={cn(
+          'nx:z-popover nx:min-w-32 nx:overflow-hidden',
+          popoverSurfaceClassName,
+          'nx:p-1',
+          overlayFloatingTransitionClassName,
+          className
+        )}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
   );
 }
 

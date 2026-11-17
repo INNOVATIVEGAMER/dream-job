@@ -17,3 +17,8 @@ export function useRoute(): string[] {
 export function go(path: string): void {
   window.location.hash = path
 }
+
+/** Swaps the current address for another, without a step in history. */
+export function replace(path: string): void {
+  window.location.replace(`#${path}`)
+}

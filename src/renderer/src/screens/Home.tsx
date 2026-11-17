@@ -2,7 +2,6 @@ import { Fragment } from 'react'
 import type { JSX, ReactNode } from 'react'
 
 import {
-  BrowserIcon,
   ChatCircleIcon,
   EnvelopeIcon,
   HandPalmIcon,
@@ -23,7 +22,7 @@ import { when } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
 import { openCommandMenu } from '../ui/CommandMenu'
-import { attempt, Group, Hidden, Loading, Page, RunStatusBadge } from '../ui/common'
+import { Group, Hidden, Loading, Page, RunStatusBadge } from '../ui/common'
 import {
   Button,
   EmptyState,
@@ -118,16 +117,9 @@ export function Home(): JSX.Element {
     </button>
   )
 
-  const actions =
-    status?.browser.mode === 'closed' ? (
-      <Button variant="ghost" size="sm" startIcon={<BrowserIcon />} onClick={() => void attempt(() => api.chrome.open('controlled'))}>
-        Open Chrome
-      </Button>
-    ) : undefined
-
   if (jobs === 0 && summary.recentRuns.length === 0) {
     return (
-      <Page title="Home" narrow actions={actions}>
+      <Page title="Home" narrow>
         {search}
         <EmptyState>
           <EmptyStateHeader>
@@ -191,7 +183,7 @@ export function Home(): JSX.Element {
   )
 
   return (
-    <Page title="Home" narrow actions={actions}>
+    <Page title="Home" narrow>
       <div className="nx:flex nx:flex-col nx:gap-3">
         {search}
         <div className="nx:flex nx:flex-wrap nx:gap-2">

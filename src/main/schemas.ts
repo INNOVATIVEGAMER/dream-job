@@ -12,7 +12,13 @@ export const id = z.number().int().positive()
 export const page = z.number().int().min(0).max(100_000)
 export const short = (max = 200) => z.string().max(max)
 
-export const CompanyQuery = z.object({ view: z.enum(TRACKER_VIEWS), stage: short(), portal: short(), search: short(), modes: z.array(z.enum(WORK_MODES)).max(WORK_MODES.length).default([]) })
+export const CompanyQuery = z.object({
+  view: z.enum(TRACKER_VIEWS),
+  stages: z.array(z.enum(STAGES)).max(STAGES.length).default([]),
+  portals: z.array(z.enum(SOURCES)).max(SOURCES.length).default([]),
+  search: short(),
+  modes: z.array(z.enum(WORK_MODES)).max(WORK_MODES.length).default([]),
+})
 export const RunQuery = z.object({ flow: short(), portal: short(), page })
 export const httpsLink = z.string().trim().url('Enter the link to the posting or the apply page.').max(2000).refine(url => /^https?:\/\//i.test(url), 'Use an https link.')
 const linkOrEmpty = z.union([z.literal(''), httpsLink])

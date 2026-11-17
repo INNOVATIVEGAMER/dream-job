@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import { cleanLink } from '../../shared/links'
-import { EMAIL_COUNTS, HUNT_PORTALS, HUNT_WINDOWS, OUTREACH_STATES, PORTAL_NAMES, PORTALS, REQUESTS_PER_COMPANY, STAGES, STATUSES, TRACKER_VIEWS, WORK_MODES } from '../../shared/types'
+import { EMAIL_COUNTS, HUNT_PORTALS, HUNT_WINDOWS, OUTREACH_STATES, PORTAL_NAMES, PORTALS, REQUESTS_PER_COMPANY, SOURCES, STAGES, STATUSES, TRACKER_VIEWS, WORK_MODES } from '../../shared/types'
 import type { DataTopic, FilledFact, RunState, WrittenAnswer } from '../../shared/types'
 import { approveWritten, browserTools, guarded, pressRef, refuse, REFUSE, say, typeInto } from '../browser/tools'
 import type { Store } from '../db/store'
@@ -32,7 +32,7 @@ const DECLINED = 'The user said no on the confirmation card. Nothing was changed
 
 /** The screens the app has, as paths `open_screen` accepts. */
 const SCREEN =
-  /^\/(|tracker(\/(new|found|applied|outreached|referred|interview|offer|closed|discarded|all))?|job\/\d+|company\/\d+(\/ask)?|hunt|run|runs(\/\d+)?|never-show|email(\/\d+)?|settings(\/(preferences|profile|resume|message|answers|portals(\/[a-z]+)?|accounts|gmail))?)$/
+  /^\/(|tracker(\/(new|found|applied|outreached|referred|interview|offer|closed|discarded))?|job\/\d+|company\/\d+(\/ask)?|hunt|run|runs(\/\d+)?|never-show|email(\/\d+)?|settings(\/(preferences|profile|resume|message|answers|portals(\/[a-z]+)?|accounts|gmail))?)$/
 
 /** A run in a few lines: where it stands and its newest steps. */
 function runBrief(run: RunState | null): unknown {
@@ -61,17 +61,17 @@ function readTools(deps: ChatToolDeps): AnyTool[] {
     ),
     defineTool(
       'search_tracker',
-      'The tracker, company first: each company with its jobs in the view (id, role, status, score, portal, work mode, years asked, last change). Filter by view, stage, portal, work modes and a search over company and role. Up to 80 companies.',
+      'The tracker, company first: each company with its jobs in the view (id, role, status, score, portal, work mode, years asked, last change). Filter by view, company sizes, portals, work modes and a search over company and role. Up to 80 companies.',
       {
         view: z.enum(TRACKER_VIEWS).optional().describe('Which jobs: a status view, "closed" (rejected and dead), "discarded", or "all" (everything but discarded, the default)'),
-        stage: z.enum(STAGES).optional(),
-        portal: z.string().max(40).optional().describe('A portal such as linkedin, or "manual"'),
+        stages: z.array(z.enum(STAGES)).optional().describe('Company sizes to keep; none means every size'),
+        portals: z.array(z.enum(SOURCES)).optional().describe('Portals to keep, such as linkedin, or "manual" for jobs added by hand; none means every portal'),
         search: z.string().max(200).optional().describe('Words in the company name or role'),
         modes: z.array(z.enum(WORK_MODES)).optional(),
       },
       args =>
         guarded(async () => {
-          const query = CompanyQuery.parse({ view: args.view ?? 'all', stage: args.stage ?? '', portal: args.portal ?? '', search: args.search ?? '', modes: args.modes ?? [] })
+          const query = CompanyQuery.parse({ view: args.view ?? 'all', stages: args.stages ?? [], portals: args.portals ?? [], search: args.search ?? '', modes: args.modes ?? [] })
           const list = store.trackerList(query)
           const companies = list.companies.slice(0, 80).map(company => ({
             id: company.id,

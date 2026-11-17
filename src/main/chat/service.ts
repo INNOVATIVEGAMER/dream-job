@@ -473,7 +473,7 @@ export class ChatService {
         return second === 'ask' ? `${name}, picking people to ask for a referral` : name
       }
       case 'tracker':
-        return first === 'new' ? 'The tracker, adding a job by hand' : `The tracker, ${first ?? 'all'} view`
+        return first === 'new' ? 'The tracker, adding a job by hand' : first ? `The tracker, ${first} tab` : 'The tracker'
       case 'run': {
         const run = engine.current()
         return run ? `The run screen: run ${run.id}, ${run.title}, ${run.status}` : 'The run screen, with no run'

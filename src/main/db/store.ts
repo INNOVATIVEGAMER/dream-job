@@ -3,7 +3,7 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import type { CompanyEdit, JobDetail, JobEdit } from '../../shared/api'
 import { cleanLink } from '../../shared/links'
 import { askBlock, experienceMonths } from '../../shared/profile'
-import { ACTIVE_STATUSES, PORTALS, STAGES, TRACKER_VIEWS, VIEW_STATUSES, WORK_MODES } from '../../shared/types'
+import { ACTIVE_STATUSES, SOURCES, STAGES, TRACKER_VIEWS, VIEW_STATUSES, WORK_MODES } from '../../shared/types'
 import type {
   CompanyDetail,
   CompanyList,
@@ -160,15 +160,16 @@ export class Store {
     const statuses = VIEW_STATUSES[query.view]
     const where = [`j.status IN (${statuses.map(() => '?').join(', ')})`]
     const params: SQLInputValue[] = [...statuses]
-    if ((STAGES as readonly string[]).includes(query.stage)) {
-      where.push('c.stage = ?')
-      params.push(query.stage)
+    // Each list empty, or holding every choice, filters nothing.
+    const stages = query.stages.filter(stage => (STAGES as readonly string[]).includes(stage))
+    if (stages.length && stages.length < STAGES.length) {
+      where.push(`c.stage IN (${stages.map(() => '?').join(', ')})`)
+      params.push(...stages)
     }
-    if ((PORTALS as readonly string[]).includes(query.portal)) {
-      where.push('j.portal = ?')
-      params.push(query.portal)
-    } else if (query.portal === 'other' || query.portal === 'manual') {
-      where.push("j.portal = 'manual'")
+    const portals = query.portals.filter(portal => (SOURCES as readonly string[]).includes(portal))
+    if (portals.length && portals.length < SOURCES.length) {
+      where.push(`j.portal IN (${portals.map(() => '?').join(', ')})`)
+      params.push(...portals)
     }
     const modes = query.modes.filter(mode => (WORK_MODES as readonly string[]).includes(mode))
     if (modes.length && modes.length < WORK_MODES.length) {

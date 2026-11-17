@@ -1,7 +1,5 @@
 import type { JSX } from 'react'
 
-import { TRACKER_VIEWS } from '../../shared/types'
-import type { TrackerView } from '../../shared/types'
 import { api } from './lib/api'
 import { useData } from './lib/data'
 import { useRoute } from './lib/router'
@@ -16,7 +14,7 @@ import { Onboarding } from './screens/onboarding/Onboarding'
 import { RunScreen } from './screens/run/RunScreen'
 import { Runs } from './screens/Runs'
 import { Settings } from './screens/settings/Settings'
-import { Tracker } from './screens/Tracker'
+import { TrackerRoute } from './screens/Tracker'
 import { ErrorNote, Loading } from './ui/common'
 import { Shell } from './ui/Shell'
 
@@ -24,7 +22,7 @@ function Screen({ route }: { route: string[] }): JSX.Element {
   const [section = 'home', first, second] = route
   switch (section) {
     case 'tracker':
-      return <Tracker adding={first === 'new'} view={(TRACKER_VIEWS as readonly string[]).includes(first ?? '') ? (first as TrackerView) : 'all'} />
+      return <TrackerRoute part={first} />
     case 'job':
       return <JobScreen id={Number(first)} />
     case 'company':

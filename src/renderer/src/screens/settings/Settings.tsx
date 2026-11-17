@@ -123,7 +123,7 @@ function keyOf(tab: string, sub?: string): Key {
 
 function SettingsNav({ active }: { active: Key }): JSX.Element {
   return (
-    <nav aria-label="Settings" className="nx:flex nx:flex-col nx:gap-0.5 nx:w-[200px] nx:shrink-0 nx:sticky nx:top-0">
+    <nav aria-label="Settings" className="nx:flex nx:flex-col nx:gap-0.5 nx:w-[200px] nx:shrink-0 nx:sticky nx:top-12">
       {NAV.map(group => (
         <div key={group.group} className="nx:flex nx:flex-col nx:gap-0.5">
           <span className="nx:typography-label-caps nx:text-muted-foreground nx:px-2 nx:pt-3 nx:pb-1">{group.group}</span>

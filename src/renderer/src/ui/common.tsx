@@ -7,6 +7,7 @@ import { OUTREACH_STATE_NAMES, PERSON_STATE_NAMES, STATUS_NAMES } from '../../..
 import type { OutreachState, PersonState, RunStatus, Status } from '../../../shared/types'
 import { messageOf } from '../lib/api'
 import { go } from '../lib/router'
+import { ChromeButton } from './ChromeButton'
 import {
   Alert,
   AlertContent,
@@ -29,13 +30,18 @@ import {
 
 export type Crumb = { label: string; to: string }
 
-/** The slim bar every screen starts with: the sidebar toggle, where you are, and the screen's actions. */
+/**
+ * The slim bar every screen starts with: the sidebar toggle, where you are, the
+ * screen's actions, and Chrome. It stays at the top as the screen scrolls.
+ */
 export function TopBar({ left, right }: { left: ReactNode; right?: ReactNode }): JSX.Element {
   return (
-    <header className="nx:flex nx:items-center nx:gap-2 nx:min-h-12 nx:box-border nx:px-4 nx:py-2 nx:border-b-default nx:border-border-default">
+    <header className="nx:sticky nx:top-0 nx:z-10 nx:flex nx:items-center nx:gap-2 nx:min-h-12 nx:box-border nx:px-4 nx:py-2 nx:bg-background nx:border-b-default nx:border-border-default">
       <SidebarTrigger aria-label="Show or hide the sidebar" />
       <div className="nx:flex nx:flex-1 nx:min-w-0 nx:items-center nx:gap-2">{left}</div>
       {right && <div className="nx:flex nx:items-center nx:gap-2">{right}</div>}
+      {right && <div aria-hidden="true" className="nx:w-px nx:h-5 nx:bg-border-default" />}
+      <ChromeButton />
     </header>
   )
 }
