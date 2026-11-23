@@ -397,7 +397,7 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: Company
         {
           company: z.string().min(1).max(200).describe('The company\'s name'),
           company_page: z.string().max(300).optional().describe('Its LinkedIn page link, linkedin.com/company/<slug>/...'),
-          keywords: z.string().max(100).describe('Words their profiles should match, such as "frontend engineer"'),
+          keywords: z.string().max(100).describe('Words their profiles should match: the kind of work or a title, taken from the role or the user\'s field'),
           more: z.number().int().min(0).max(4).optional().describe('How many times to load more results, 0 by default'),
         },
         async ({ company: name, company_page, keywords, more }) => {

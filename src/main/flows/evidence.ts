@@ -76,7 +76,7 @@ export const MIN_YEARS =
   'The fewest years of overall experience the job asks for, as a number: 3 for "3-5 years" or "3+ years", 4 for "a minimum of four years", 0 for freshers. ' +
   'Only the words the company wrote count: the posting\'s description, or its apply page; where the two differ, the apply page\'s. ' +
   'Never a portal\'s own experience field (the "Experience field" or "Experience asked" line read_job shows): the app reads that itself, and uses it only when the description states no years. ' +
-  'Years with one technology or area ("2+ years with React") are not overall experience. null when the description states no overall years'
+  'Years with one skill, tool or area ("2+ years with a particular tool") are not overall experience. null when the description states no overall years'
 export const YEARS_QUOTE =
   'Just the description\'s exact words that state the overall years asked for, such as "3-5 years of experience", copied from what read_job or read_apply_page returned; "" when min_years is null'
 

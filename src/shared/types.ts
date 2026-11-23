@@ -621,7 +621,7 @@ export const PORTAL_TOOLS: Record<Portal, PortalToolInfo[]> = {
     { name: 'read_job', label: 'Read a posting', detail: "Place, regions, years asked, description, and the company's apply page", group: 'find' },
   ],
   workatastartup: [
-    { name: 'search_jobs', label: 'Search jobs', detail: 'Engineering roles at YC startups, newest first', group: 'find' },
+    { name: 'search_jobs', label: 'Search jobs', detail: 'Roles of the kind you want at YC startups, newest first', group: 'find' },
     { name: 'read_job', label: 'Read a posting', detail: 'Place, visa, pay, years asked, the company, and whether you applied', group: 'find' },
     {
       name: 'open_apply',

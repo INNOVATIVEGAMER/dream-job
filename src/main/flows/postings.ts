@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { isPortalLink, linkKey } from '../../shared/links'
 import { AT_ONCE, CHECK_STATUSES, PORTALS, WORK_MODES } from '../../shared/types'
 import type { Job, Portal } from '../../shared/types'
+import { overCeiling } from '../../shared/years'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { Store } from '../db/store'
 import { huntTools, portalIdOf, READ_BY } from '../portals'
@@ -17,10 +18,10 @@ const BATCH = 8
 
 const Output = z.object({ summary: z.string().describe('One line: what these jobs came to') })
 
-/** `closed`: found jobs marked dead; `closedApplied`: postings closed after the user applied, noted only. */
-type Tally = { checked: number; closed: number; closedApplied: number; linked: number; unreadable: number }
+/** `closed`: found jobs marked dead; `closedApplied`: postings closed after the user applied, noted only; `overCeiling`: found jobs discarded for the years they ask. */
+type Tally = { checked: number; closed: number; closedApplied: number; overCeiling: number; linked: number; unreadable: number }
 
-const NO_TALLY = (): Tally => ({ checked: 0, closed: 0, closedApplied: 0, linked: 0, unreadable: 0 })
+const NO_TALLY = (): Tally => ({ checked: 0, closed: 0, closedApplied: 0, overCeiling: 0, linked: 0, unreadable: 0 })
 
 function portalOf(row: Job): Portal | null {
   const key = row.portal.toLowerCase()
@@ -59,7 +60,7 @@ function system(rows: Job[]): string {
     '',
     'The app takes each job\'s links and apply route from those pages itself: you never type a link. What you give is held to the pages too:',
     '- Closed, expired, filled, no longer accepting applications, or not found, on either page: state "closed", with line the page\'s exact words that say so. For a job already applied to, record it the same way: the app only notes it, and the application stands.',
-    '- min_years with years_quote: the overall years the description asks for, in its exact words, copied from what read_job or read_apply_page returned. The app checks the words are in the description and hold the number. Never take it from a portal\'s own experience field: when the description states no years, give null and "", and the app uses the field itself.',
+    '- min_years with years_quote: the overall years the description asks for, in its exact words, copied from what read_job or read_apply_page returned. The app checks the words are in the description and hold the number. Never take it from a portal\'s own experience field: when the description states no years, give null and "", and the app uses the field itself. A job not applied to yet that asks more than the user\'s experience ceiling is discarded by the app.',
     '- An apply page that is a sign-in wall, a bot check, or does not show this job: apply_page_shows_job false, and say what you saw in notes.',
     '- Where the apply page differs from the portal on place or work mode, give its in mode and work_mode, and anything else in notes. Never drop a job for these: the user decides.',
     '- A job whose page will not open (signed out, read_job turned off, or the portal limiting how fast pages open): leave it unrecorded, so it stays as it was for the next check, and name it in your summary.',
@@ -115,6 +116,9 @@ function recordTool(ctx: RunContext, store: Store, rows: Job[], evidence: Eviden
         const jobs = store.jobs
         const isFound = row.status === 'found'
         const isNewLink = !!apply?.link && linkKey(apply.link) !== linkKey(row.link ?? '')
+        // A job not applied to yet that turns out to ask more than the ceiling leaves Found, as the hunt would have left it.
+        const ceiling = store.settings.preferences().ceilingYears
+        const tooSenior = isFound && input.state === 'open' && overCeiling(years.value, ceiling) && !!years.quote
         store.transaction(() => {
           jobs.setLinks(row.id, { link: apply?.link ?? null, portalLink: read?.postingLink ?? null, applyRoute: apply?.route ?? read?.route ?? null })
           if (input.work_mode && input.work_mode !== row.workMode) jobs.setWorkMode(row.id, input.work_mode)
@@ -132,30 +136,34 @@ function recordTool(ctx: RunContext, store: Store, rows: Job[], evidence: Eviden
             jobs.setPosting(row.id, apply?.state ?? 'open', apply?.note ?? null)
           }
           if (input.notes.trim()) jobs.appendNote(row.id, `Posting check (run ${ctx.runId}): ${input.notes.trim()}`)
+          if (tooSenior) jobs.discard(row.id, years.quote!, 'over-ceiling', ctx.runId)
         })
 
         done.add(row.id)
         bump('checked')
         if (input.state === 'closed') bump(isFound ? 'closed' : 'closedApplied')
+        else if (tooSenior) bump('overCeiling')
         else if (apply?.state === 'unreadable') bump('unreadable')
         if (isNewLink) bump('linked')
         ctx.progress('Jobs checked', done.size, rows.length)
         ctx.changed('jobs')
         ctx.log(
-          input.state === 'closed' ? 'warn' : 'good',
+          input.state === 'closed' || tooSenior ? 'warn' : 'good',
           `${row.company}: ${
             input.state === 'closed'
               ? isFound
                 ? 'closed, marked dead'
                 : 'posting closed after you applied, noted'
-              : apply?.state === 'unreadable'
-                ? 'apply page not readable'
-                : isNewLink
-                  ? 'apply link saved'
-                  : 'still open'
+              : tooSenior
+                ? `asks more than your ${ceiling}-year ceiling, discarded`
+                : apply?.state === 'unreadable'
+                  ? 'apply page not readable'
+                  : isNewLink
+                    ? 'apply link saved'
+                    : 'still open'
           }${years.value !== null ? `, ${years.value}+ years` : ''}`,
         )
-        return say('Recorded.')
+        return say(tooSenior ? `Recorded, and discarded: it asks ${years.value}+ years, over the user's ${ceiling}-year ceiling.` : 'Recorded.')
       }),
   )
 }
@@ -165,6 +173,7 @@ const tallyLine = (tally: Tally, of: number): string =>
     `Checked ${tally.checked} of ${of}.`,
     tally.closed ? `${tally.closed} closed, marked dead.` : '',
     tally.closedApplied ? `${tally.closedApplied} ${tally.closedApplied === 1 ? 'posting' : 'postings'} you applied to closed, noted on the ${tally.closedApplied === 1 ? 'job' : 'jobs'}.` : '',
+    tally.overCeiling ? `${tally.overCeiling} over your experience ceiling, discarded.` : '',
     tally.linked ? `${tally.linked} got their apply link.` : '',
     tally.unreadable ? `${tally.unreadable} with an apply page that couldn't be read.` : '',
   ]

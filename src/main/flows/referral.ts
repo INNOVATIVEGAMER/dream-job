@@ -53,7 +53,7 @@ export function connectSpec(store: Store, company: Company, perCompany: number):
       'Steps:',
       '1. Find its LinkedIn page. For a LinkedIn job, linkedin_read_job gives the company page and the hiring team. Otherwise linkedin_find_people looks the company up by name.',
       '2. linkedin_find_people with keywords for the user\'s field, loading more when too few come back.',
-      `3. Pick up to ${perCompany} people whose work is closest to the role: engineers in the same area, their managers, and anyone on the hiring team. Skip students, interns, and anyone whose headline says they have left.`,
+      `3. Pick up to ${perCompany} people whose work is closest to the role: people doing the same kind of work, their managers, and anyone on the hiring team. Skip students, interns, and anyone whose headline says they have left.`,
       '4. linkedin_send_blank_request for each. Someone already connected or already pending is recorded, not sent.',
       'If LinkedIn says the invitation limit is reached, stop sending at once and finish.',
       '',

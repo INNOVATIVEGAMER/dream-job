@@ -31,6 +31,9 @@ export function yearsStated(text: string): number[] {
   return [...text.matchAll(YEARS)].map(match => numberOf(match[1]!)).filter(n => Number.isFinite(n) && n <= 40)
 }
 
+/** Whether a job asks for more years than the user's ceiling. Years not stated, or no ceiling set, never are. */
+export const overCeiling = (minYears: number | null, ceiling: number | null): boolean => minYears !== null && ceiling !== null && minYears > ceiling
+
 /** The fewest years a portal's own experience field states, such as "4-6 Years" or "Any (new grads ok)"; null when it states none. */
 export function fieldYears(text: string): number | null {
   const stated = yearsStated(text)

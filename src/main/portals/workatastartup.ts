@@ -9,7 +9,7 @@ import type { OnRead } from './common'
 /*
  * Work at a Startup's own tools, written from its live pages (signed in with
  * a YC account):
- * - /companies takes its filters in the URL: role=eng, remote=only,
+ * - /companies takes its filters in the URL: role=eng (or another kind), remote=only,
  *   sortBy=created_desc (newest jobs first), layout=list-compact. Results
  *   load in the page after it opens, grouped by company: each job links to
  *   /jobs/<id> with a line such as "San Francisco, CA, US · Fulltime · Will
@@ -27,6 +27,27 @@ import type { OnRead } from './common'
 
 const BASE = 'https://www.workatastartup.com'
 export const jobLink = (jobId: string): string => `${BASE}/jobs/${jobId}`
+
+/**
+ * The kinds of role the /companies filter takes as role=, with their names.
+ * eng is read from the live pages; the others are the filter's own names,
+ * and a search whose page drops the value says so rather than list the wrong jobs.
+ */
+const ROLES = {
+  eng: 'engineering',
+  design: 'design',
+  product: 'product',
+  science: 'science',
+  sales: 'sales',
+  marketing: 'marketing',
+  support: 'support',
+  operations: 'operations',
+  recruiting: 'recruiting and HR',
+  finance: 'finance',
+  legal: 'legal',
+} as const
+type Role = keyof typeof ROLES
+const ROLE_KEYS = Object.keys(ROLES) as [Role, ...Role[]]
 
 type Row = { jobId: string; title: string; company: string; details: string }
 
@@ -162,13 +183,20 @@ export function workatastartupTools(ctx: RunContext, options: { hunt?: { onSearc
         ctx,
         'workatastartup',
         'search_jobs',
-        'List engineering jobs at YC startups, newest first. Postings show no dates, so it answers the newest few dozen. Answers new postings only; ones the user has seen are left out and counted. Call it once per kind.',
-        { remote_only: z.boolean().describe('true: remote roles only; false: every engineering role') },
-        async ({ remote_only }) => {
-          const url = `${BASE}/companies?role=eng&sortBy=created_desc&layout=list-compact${remote_only ? '&remote=only' : ''}`
+        'List jobs of one kind of role at YC startups, newest first. Postings show no dates, so it answers the newest few dozen. Answers new postings only; ones the user has seen are left out and counted. Call it once per kind of role.',
+        {
+          role: z
+            .enum(ROLE_KEYS)
+            .describe(`The kind of role: ${ROLE_KEYS.map(key => (key === ROLES[key] ? key : `${key} (${ROLES[key]})`)).join(', ')}`),
+          remote_only: z.boolean().describe('true: remote roles only; false: every role of that kind'),
+        },
+        async ({ role, remote_only }) => {
+          const url = `${BASE}/companies?role=${role}&sortBy=created_desc&layout=list-compact${remote_only ? '&remote=only' : ''}`
           await ctx.chrome.openPage(url)
           await waitFor(ctx, `document.querySelector('a[href*="/jobs/"]') || /Showing 0 matching/.test(document.body.innerText)`, 15_000)
           await sleep(1000)
+          const kept = await ctx.chrome.evaluate<boolean>(`new URLSearchParams(location.search).get('role') === ${JSON.stringify(role)}`)
+          if (!kept) return refuse(`Work at a Startup did not take role "${role}": its page dropped the filter, so its list is not ${ROLES[role]} roles. Skip this kind.`)
           let read = await ctx.chrome.evaluate<{ rows: Row[]; showing: string }>(ROWS_SCRIPT)
           // Scroll once or twice for more of the newest.
           for (let i = 0; i < 2 && read.rows.length < 40; i++) {
@@ -179,10 +207,10 @@ export function workatastartupTools(ctx: RunContext, options: { hunt?: { onSearc
           const fresh = read.rows.filter(row => !isKnown(ctx, 'workatastartup', row.jobId, row.company, row.title))
           const left = read.rows.length - fresh.length
           if (left) ctx.count('skipped', left)
-          hunt.onSearch(`workatastartup:${remote_only}`, fresh.map(row => `workatastartup:${row.jobId}`))
+          hunt.onSearch(`workatastartup:${role}:${remote_only}`, fresh.map(row => `workatastartup:${row.jobId}`))
           return say(
             [
-              `Work at a Startup ${remote_only ? 'remote' : 'all'}: ${read.showing || `${read.rows.length} jobs`}; ${fresh.length} new, ${left} already known.`,
+              `Work at a Startup, ${ROLES[role]}, ${remote_only ? 'remote' : 'all'}: ${read.showing || `${read.rows.length} jobs`}; ${fresh.length} new, ${left} already known.`,
               ...fresh.map(row => [`[${row.jobId}] ${row.title}`, row.company, row.details].filter(Boolean).join(' | ')),
             ].join('\n'),
           )

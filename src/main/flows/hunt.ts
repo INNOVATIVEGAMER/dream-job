@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { AT_ONCE, DISCARD_REASONS, HUNT_WINDOW_NAMES, PORTAL_NAMES, STAGES, WORK_MODES } from '../../shared/types'
 import { isPortalLink } from '../../shared/links'
+import { overCeiling } from '../../shared/years'
 import type { HuntWindow, Portal, Preferences, Profile } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { Store } from '../db/store'
@@ -36,6 +37,9 @@ const listNames = (portals: Portal[]): string => listOf(portals.map(portal => PO
 
 const Output = z.object({ summary: z.string().describe('One or two sentences on what this hunt found') })
 
+/** The fewest fit points a posting needs to be added: below it, the core work is not the user's. */
+const ADD_BAR = 6
+
 function howToSearch(portal: Portal, searches: Search[], prefs: Preferences): string[] {
   const modes = (['remote', 'hybrid', 'onsite'] as const).filter(mode => prefs.modes[mode])
   switch (portal) {
@@ -62,7 +66,7 @@ function howToSearch(portal: Portal, searches: Search[], prefs: Preferences): st
       ]
     case 'workatastartup':
       return [
-        `Work at a Startup: call workatastartup_search_jobs with remote_only ${prefs.modes.hybrid || prefs.modes.onsite ? 'false' : 'true'}. It lists the newest engineering jobs at YC startups; postings show no dates. Read postings with workatastartup_read_job by job id.`,
+        `Work at a Startup: call workatastartup_search_jobs once for each kind of role the roles wanted fall under (${prefs.targetRoles.join('; ') || 'the user\'s headline'}), with remote_only ${prefs.modes.hybrid || prefs.modes.onsite ? 'false' : 'true'}. It lists the newest jobs of that kind at YC startups; postings show no dates. Read postings with workatastartup_read_job by job id.`,
       ]
     case 'weekday':
       return [
@@ -92,9 +96,9 @@ function system(prefs: Preferences, profile: Profile, portal: Portal, searches: 
     '',
     'How to judge:',
     '- The kind of company is never a cut: product or services, recruiter, consultancy, employer of record, foreign or local, any size.',
-    '- Title and seniority never cut a posting. Years asked for are a ceiling: within it, any level is fine. Over it, discard as over-ceiling quoting the line, unless the match is unusually strong on substance; then add it with a score of at most 6 and say so in notes. The years asked are the description\'s; a portal\'s own experience field counts only when the description states none.',
+    '- Title and seniority never cut a posting. Years asked for are a ceiling: within it, any level is fine. Over it, discard as over-ceiling quoting the line, however well the work matches: add_posting discards it itself when min_years is over the ceiling. The years asked are the description\'s; a portal\'s own experience field counts only when the description states none.',
     '- Pay: discard as below-floor only when the whole band shown sits below the floor, quoting it. No pay shown is recorded as "not shown" and is never a reason.',
-    '- A role that is mainly a kind the user skips: discard as skipped-role, quoting the line that shows it.',
+    '- A role that is mainly or heavily a kind the user skips: discard as skipped-role, quoting the line that shows it. Its title or its must-haves are enough: a title that names the skipped kind as the role\'s weight, or deep expertise in that kind of work among the requirements, rules it out. A role where that kind of work is one part among others is not skipped.',
     '- Work mode never rules a posting out, whatever modes the user prefers: the user sorts by it later. Record it as work_mode: remote, hybrid or onsite only when the posting says so (remote, work from home, hybrid, in office, on-site); a posting that names only a place is not-stated. Mode does not change the score.',
     '- Place: a remote role limited to regions the user cannot work from, or a hybrid, on-site or not-stated role in a place outside their cities, is discarded as location, quoting the line that names the place. Look for the place across the whole posting first: its location field, the description, the company details. A posting that names no place anywhere is never discarded for location: add it and record the place as not stated.' +
       (prefs.needsVisa ? ' The user needs sponsorship: a posting that says it offers none is discarded as location.' : ''),
@@ -102,7 +106,12 @@ function system(prefs: Preferences, profile: Profile, portal: Portal, searches: 
     '- A recruiting firm hiring for a client is added like any posting. Company is the client where named, otherwise "Undisclosed (via <firm>)"; put what the firm says about the client in notes.',
     '- Stage: as read_job gives it from headcount. Where the portal shows none, use scaleup and say it is provisional in notes.',
     '- Years asked: min_years is the fewest years of overall experience the description asks for, with years_quote, its exact words, copied from what read_job or read_apply_page returned. The app checks the words are in the description and hold the number. Never take it from a portal\'s own experience field: when the description states no years, give null and "", and the app uses the field itself.',
-    '- Score 1 to 10 for fit: how closely the work matches the roles wanted and the user\'s skills and experience. Add postings scoring 5 or more. Below 5, discard as other, quoting the line that shows the mismatch.',
+    '- Score 1 to 10 for fit: how much of the job\'s core work is work the user has done. Judge it only against who the user is above: their roles, what they did in them, their projects and their skills. Nothing else sets what counts as their work.',
+    '  9-10: a role they want, whose core work is what their roles show them doing, with skills they list.',
+    '  7-8: a role they want, with one gap they could close quickly: a skill close to one they list, or the same work in a new domain.',
+    '  6: a fair match: the core work is theirs, with a few gaps around it.',
+    '  5 or less: the core of the job rests on skills the profile doesn\'t show, or it is a different kind of work from the roles they want and the roles they have held. When a reason you would give says the core work is outside the profile, the score is here.',
+    `  Add postings scoring ${ADD_BAR} or more. Below ${ADD_BAR}, discard as other, quoting the line that shows the mismatch.`,
     '- The same role at the same company is one posting, whichever portal shows it: add_posting says when it is already tracked, perhaps from another portal, and leaves it.',
     '- A discard\'s line is the posting\'s own words, copied exactly.',
     '- If a tool says the portal is limiting how fast pages open, stop using that portal: finish with what you have, and say so in your summary.',
@@ -138,12 +147,13 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
         pay: z.string().max(200).describe('The band as shown, or "not shown"'),
         min_years: z.number().int().min(0).max(40).nullable().describe(MIN_YEARS),
         years_quote: z.string().max(300).describe(YEARS_QUOTE),
-        score: z.number().int().min(1).max(10),
+        score: z.number().int().min(1).max(10).describe(`Fit on the scale above; ${ADD_BAR} or more to add`),
         reasons: z.array(z.string().max(200)).min(1).max(4).describe('Short lines: what matched or fell short'),
         notes: z.string().max(2000).describe('Anything worth knowing before applying, or ""'),
       },
       input =>
         guarded(async () => {
+          if (input.score < ADD_BAR) return refuse(`A score of ${input.score} is below ${ADD_BAR}: discard it as other with discard_posting, quoting the line that shows the mismatch.`)
           // Links and route come from the pages read, never from what Claude types.
           const read = postingFor(evidence, input.portal, input.job_id)
           if (!read) return refuse(`Read it with ${input.portal}_read_job first: its links and apply route come from that page.`)
@@ -159,6 +169,16 @@ function recordTools(ctx: RunContext, portal: Portal, tallies: Tally[], onDecide
           if (store.jobs.findExisting({ portalLink: read.postingLink, link: applyLink, company: input.company, role: input.role })) return say('Already in the tracker: left as it is.')
           const never = store.neverShow.match(input.company)
           if (never) return refuse(`${input.company} is on never show again (${never.why}). Leave it.`)
+          // The ceiling is the user's, not a judgement: a job over it is discarded however well it matches.
+          const ceiling = store.settings.preferences().ceilingYears
+          if (overCeiling(years.value, ceiling) && years.quote) {
+            store.jobs.addDiscarded({ company: input.company, role: input.role, portal: input.portal, portalLink: read.postingLink, line: years.quote, reason: 'over-ceiling' }, ctx.runId)
+            for (const tally of tallies) tally.discarded++
+            ctx.count('discarded')
+            ctx.changed('jobs')
+            ctx.log('step', `Discarded ${input.company}, ${input.role}: over-ceiling (asks ${years.value}+ years)`)
+            return say(`Discarded as over-ceiling: it asks ${years.value}+ years, over the user's ceiling of ${ceiling}.`)
+          }
           store.jobs.addFound(
             {
               company: input.company,

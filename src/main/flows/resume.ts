@@ -21,8 +21,8 @@ const ImportOutput = z.object({
         start: z.string().describe('YYYY-MM; YYYY-01 when only the year is given; empty if unknown'),
         end: z.string().describe('YYYY-MM, or empty when it is their current role'),
         isCurrent: z.boolean(),
-        built: z.string().describe('What they built there and with what, one point per line, in their own words lightly tidied'),
-        skills: z.array(z.string()).describe('Technologies and skills this role names'),
+        built: z.string().describe('What they did there and with what, one point per line, in their own words lightly tidied'),
+        skills: z.array(z.string()).describe('Skills, tools and methods this role names'),
       }),
     )
     .max(30),
@@ -45,7 +45,7 @@ const PROMPT = (path: string): string =>
   [
     `Read the resume PDF at ${path} with the Read tool, then answer with what it says.`,
     'Copy facts exactly from the resume. Never add a role, skill, number or link it does not contain; leave a field empty when it does not say.',
-    'For each role, put what they built there as one point per line, keeping their own words, lightly tidied.',
+    'For each role, put what they did there as one point per line, keeping their own words, lightly tidied.',
     'Years with a skill: count the years of the roles that name it. Only include a starter answer you can take from the resume.',
   ].join(' ')
 

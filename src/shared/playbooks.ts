@@ -49,7 +49,7 @@ export const PLAYBOOKS: Record<Portal, string[]> = {
     'read_job reads the posting\'s job record: years asked as months, skills, and the company\'s own posting, where the application goes.',
   ],
   workatastartup: [
-    'YC startups. search_jobs lists engineering roles, newest first; postings show no dates, so the newest few dozen stand in for the window.',
+    'YC startups. search_jobs lists one kind of role (engineering, design, product, sales and so on), newest first; postings show no dates, so the newest few dozen stand in for the window.',
     'read_job gives the location, experience asked ("3+ years"), salary, visa sponsorship, the company with its YC batch and size, and whether the user already applied there.',
     'Work at a Startup may say the user\'s location is not eligible for a role: that is a location discard.',
     'Applying happens on Work at a Startup: open_apply opens a form with a message to the founders and the company\'s own questions. Write them from the profile; submit_form shows the user every written answer before it goes.',
