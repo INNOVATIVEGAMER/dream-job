@@ -139,12 +139,13 @@ export function registerIpc(deps: IpcDeps): void {
     'runs:page': query => store.runs.page(RunQuery.parse(query)),
     'runs:get': (runId): RunDetail | null => {
       const summary = store.runs.get(id.parse(runId))
-      return summary ? { summary, events: store.runs.events(summary.id) } : null
+      return summary ? { summary, events: store.runs.events(summary.id), state: store.runs.state(summary.id) } : null
     },
     'runs:answer': (cardId, answer) => deps.engine.answer(short().parse(cardId), CardAnswerSchema.parse(answer)),
     'runs:stop': () => deps.engine.stop(),
     'runs:showTab': key => deps.engine.showTab(short().parse(key)),
     'runs:jobs': runId => store.jobs.byRun(id.parse(runId)),
+    'runs:discarded': runId => store.jobs.discardedByRun(id.parse(runId)),
 
     'flows:hunt': options => deps.flows.hunt(HuntOptions.parse(options)),
     'flows:apply': jobIds => deps.flows.apply(z.array(id).min(1, 'Pick at least one job.').parse(jobIds)),

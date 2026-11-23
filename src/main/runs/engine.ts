@@ -36,6 +36,9 @@ import type { Store } from '../db/store'
 export const TOOL_SERVER = 'jobapp'
 const MAX_EVENTS = 300
 const MAX_LANE_EVENTS = 80
+
+/** A session's fields a past run shows: a change to any of them is saved at once. */
+const SAVED_LANE_FIELDS: (keyof RunLane)[] = ['status', 'started', 'ended', 'result', 'usage']
 /** Sessions start this far apart, so five Claude Code processes don't all boot at once. */
 const STAGGER_MS = 2000
 
@@ -235,7 +238,8 @@ export class RunEngine {
     const path = await findClaude()
     if (!path) throw new Error('Claude Code was not found. Install it and sign in, then try again.')
 
-    const runId = this.deps.store.runs.start(plan.flow, plan.title, plan.portal, plan.jobId ?? null)
+    const atOnce = Math.max(1, Math.min(plan.atOnce ?? 1, plan.sessions.length))
+    const runId = this.deps.store.runs.start(plan.flow, plan.title, plan.portal, plan.jobId ?? null, plan.subtitle ?? null, atOnce)
     this.isStopping = false
     this.haltReason = null
     this.cards.clear()
@@ -280,8 +284,9 @@ export class RunEngine {
       usage: { ...NO_USAGE },
       result: null,
       lanes: this.lanes.map(lane => lane.state),
-      atOnce: Math.max(1, Math.min(plan.atOnce ?? 1, plan.sessions.length)),
+      atOnce,
     }
+    for (const lane of this.lanes) this.deps.store.runs.saveLane(runId, lane.state)
     this.refresh(plan)
     this.deps.onData(['runs'])
     void this.run(plan, path, runId)
@@ -599,7 +604,7 @@ export class RunEngine {
   private log(lane: Lane, kind: RunEventKind, text: string): void {
     if (!this.state) return
     const named = this.lanes.length > 1 ? `${lane.state.title}: ${text}` : text
-    const event: RunEvent = this.deps.store.runs.addEvent(this.state.id, kind, named)
+    const event: RunEvent = this.deps.store.runs.addEvent(this.state.id, kind, named, lane.state.key)
     this.setLane(lane, { events: [...lane.state.events, { ...event, text }].slice(-MAX_LANE_EVENTS), last: kind === 'claude' ? lane.state.last : text })
     this.state = { ...this.state, events: [...this.state.events, event].slice(-MAX_EVENTS) }
     this.push()
@@ -613,10 +618,12 @@ export class RunEngine {
     this.push()
   }
 
-  /** Changes one session's state; the run's list of sessions follows. */
+  /** Changes one session's state; the run's list of sessions follows, and what a past run shows is saved. */
   private setLane(lane: Lane, patch: Partial<RunLane>): void {
     lane.state = { ...lane.state, ...patch }
-    if (this.state) this.state = { ...this.state, lanes: this.lanes.map(one => one.state) }
+    if (!this.state) return
+    this.state = { ...this.state, lanes: this.lanes.map(one => one.state) }
+    if (SAVED_LANE_FIELDS.some(field => field in patch)) this.deps.store.runs.saveLane(this.state.id, lane.state)
   }
 
   private push(): void {

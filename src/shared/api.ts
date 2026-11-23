@@ -32,6 +32,7 @@ import type {
   RunEvent,
   RunPage,
   RunQuery,
+  RunState,
   RunSummary,
   Settings,
   SignInSite,
@@ -43,7 +44,8 @@ import type {
 /** One job's page: the job, its company, its history, and who was asked about it. */
 export type JobDetail = { job: Job; company: Company; companyJobs: number; people: PeopleCount; activity: Activity[]; outreach: JobOutreach[] }
 
-export type RunDetail = { summary: RunSummary; events: RunEvent[] }
+/** A past run: its line in history, every step, and, when its sessions were saved, the run as its screen showed it. */
+export type RunDetail = { summary: RunSummary; events: RunEvent[]; state: RunState | null }
 
 export type HuntOptions = { portals: Portal[]; window: HuntWindow }
 export type ConnectOptions = { companyIds: number[]; perCompany: number }
@@ -126,6 +128,8 @@ export type JobAppApi = {
     showTab: (key: string) => Promise<void>
     /** The jobs a run added: what a hunt found. */
     jobs: (runId: number) => Promise<JobRow[]>
+    /** The jobs a run ruled out, with the line and reason for each, whatever their status now. */
+    discarded: (runId: number) => Promise<JobRow[]>
   }
   flows: {
     hunt: (options: HuntOptions) => Promise<number>
@@ -224,6 +228,7 @@ export const CHANNELS = [
   'runs:stop',
   'runs:showTab',
   'runs:jobs',
+  'runs:discarded',
   'flows:hunt',
   'flows:apply',
   'flows:checkPostings',

@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
 import { FLOWS } from '../../shared/types'
-import type { Flow, RunEvent, RunEventKind, RunPage, RunQuery, RunStatus, RunSummary, RunUsage } from '../../shared/types'
+import type { Flow, LaneStatus, RunEvent, RunEventKind, RunLane, RunPage, RunQuery, RunState, RunStatus, RunSummary, RunUsage } from '../../shared/types'
 import { now, paging } from './database'
 
 export const RUNS_PAGE_SIZE = 15
@@ -28,11 +28,38 @@ const toSummary = (row: RunRow): RunSummary => ({
 export class Runs {
   constructor(private readonly db: DatabaseSync) {}
 
-  start(flow: Flow, title: string, portal: string | null, jobId: number | null): number {
+  start(flow: Flow, title: string, portal: string | null, jobId: number | null, subtitle: string | null, atOnce: number): number {
     const result = this.db
-      .prepare(`INSERT INTO runs (flow, title, portal, job_id, started, status) VALUES (?, ?, ?, ?, ?, 'running')`)
-      .run(flow, title, portal, jobId, now())
+      .prepare(`INSERT INTO runs (flow, title, portal, job_id, started, status, subtitle, at_once) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)`)
+      .run(flow, title, portal, jobId, now(), subtitle, atOnce)
     return Number(result.lastInsertRowid)
+  }
+
+  /** Saves one session as it stands: written when the run starts, and again each time it moves on. */
+  saveLane(runId: number, lane: RunLane): void {
+    this.db
+      .prepare(
+        `INSERT INTO run_lanes (run_id, key, title, subtitle, portal, job_id, status, started, ended, result, turns, input_tokens, output_tokens, ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (run_id, key) DO UPDATE SET status = excluded.status, started = excluded.started, ended = excluded.ended, result = excluded.result,
+           turns = excluded.turns, input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens, ms = excluded.ms`,
+      )
+      .run(
+        runId,
+        lane.key,
+        lane.title,
+        lane.subtitle,
+        lane.portal,
+        lane.jobId,
+        lane.status,
+        lane.started,
+        lane.ended,
+        lane.result,
+        lane.usage.turns,
+        lane.usage.inputTokens,
+        lane.usage.outputTokens,
+        lane.usage.ms,
+      )
   }
 
   setStatus(id: number, status: RunStatus): void {
@@ -51,15 +78,80 @@ export class Runs {
 
   /** Runs the app was killed in the middle of: marked stopped on the next start, since nothing is running them. */
   closeAbandoned(): void {
+    const at = now()
     this.db
-      .prepare(`UPDATE runs SET status = 'stopped', result = 'The app closed during the run.', ended = ? WHERE status IN ('running', 'waiting')`)
-      .run(now())
+      .prepare(
+        `UPDATE run_lanes SET status = 'stopped', ended = COALESCE(ended, ?), result = COALESCE(result, 'The app closed during the run.')
+         WHERE status IN ('running', 'waiting', 'queued') AND run_id IN (SELECT id FROM runs WHERE status IN ('running', 'waiting'))`,
+      )
+      .run(at)
+    this.db.prepare(`UPDATE runs SET status = 'stopped', result = 'The app closed during the run.', ended = ? WHERE status IN ('running', 'waiting')`).run(at)
   }
 
-  addEvent(runId: number, kind: RunEventKind, text: string): RunEvent {
+  /** One step, with the session it came from; a line about the whole run has none. */
+  addEvent(runId: number, kind: RunEventKind, text: string, lane: string | null = null): RunEvent {
     const at = now()
-    const result = this.db.prepare('INSERT INTO run_events (run_id, at, kind, text) VALUES (?, ?, ?, ?)').run(runId, at, kind, text)
+    const result = this.db.prepare('INSERT INTO run_events (run_id, at, kind, text, lane) VALUES (?, ?, ?, ?, ?)').run(runId, at, kind, text, lane)
     return { id: Number(result.lastInsertRowid), at, kind, text }
+  }
+
+  /**
+   * A past run as its screen showed it: every session with its own steps.
+   * Null for a run whose sessions were never saved, from before they were.
+   */
+  state(id: number): RunState | null {
+    const summary = this.get(id)
+    if (!summary) return null
+    const rows = this.db.prepare('SELECT * FROM run_lanes WHERE run_id = ? ORDER BY CAST(key AS INTEGER)').all(id) as Record<string, unknown>[]
+    if (rows.length === 0) return null
+    const extra = this.db.prepare('SELECT subtitle, at_once AS atOnce FROM runs WHERE id = ?').get(id) as { subtitle: string | null; atOnce: number }
+    const steps = this.db.prepare('SELECT id, at, kind, text, lane FROM run_events WHERE run_id = ? ORDER BY id ASC').all(id) as (RunEvent & { lane: string | null })[]
+    const isMany = rows.length > 1
+    const lanes: RunLane[] = rows.map(row => {
+      const key = String(row['key'])
+      const title = String(row['title'])
+      // With several sessions each step was saved with its session's name in front; the session's own list leaves it off.
+      const events = steps
+        .filter(step => step.lane === key)
+        .map(({ lane: _lane, ...step }) => ({ ...step, text: isMany && step.text.startsWith(`${title}: `) ? step.text.slice(title.length + 2) : step.text }))
+      const said = events.filter(event => event.kind !== 'claude' && event.kind !== 'tool')
+      return {
+        key,
+        title,
+        subtitle: (row['subtitle'] as string | null) ?? null,
+        portal: (row['portal'] as string | null) ?? null,
+        jobId: (row['job_id'] as number | null) ?? null,
+        status: row['status'] as LaneStatus,
+        started: (row['started'] as string | null) ?? null,
+        ended: (row['ended'] as string | null) ?? null,
+        progress: null,
+        counts: {},
+        card: null,
+        events,
+        last: said[said.length - 1]?.text ?? null,
+        usage: { turns: Number(row['turns']), inputTokens: Number(row['input_tokens']), outputTokens: Number(row['output_tokens']), ms: Number(row['ms']) },
+        result: (row['result'] as string | null) ?? null,
+      }
+    })
+    return {
+      id: summary.id,
+      flow: summary.flow,
+      title: summary.title,
+      subtitle: extra.subtitle,
+      portal: summary.portal,
+      jobId: summary.jobId,
+      status: summary.status,
+      started: summary.started,
+      model: null,
+      progress: null,
+      counts: {},
+      card: null,
+      events: steps.map(({ lane: _lane, ...step }) => step),
+      usage: summary.usage,
+      result: summary.result,
+      lanes,
+      atOnce: extra.atOnce,
+    }
   }
 
   events(runId: number): RunEvent[] {

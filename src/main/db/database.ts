@@ -3,7 +3,8 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { SQLInputValue } from 'node:sqlite'
 
-import { PORTALS, workModeOf } from '../../shared/types'
+import { AT_ONCE, PORTAL_NAMES, PORTALS, workModeOf } from '../../shared/types'
+import type { Portal } from '../../shared/types'
 
 /** Today as YYYY-MM-DD in local time, the form the tracker's date columns use. */
 export function today(at = new Date()): string {
@@ -360,7 +361,85 @@ const MIGRATIONS: Migration[] = [
 
   // The model a chat picked; none follows the default in Settings.
   db => addColumns(db, 'chats', { model: 'TEXT' }),
+
+  // Each session of a run in a row of its own, and each step tagged with its
+  // session, so a past run shows as it ran. Past hunts are rebuilt from their steps.
+  db => {
+    db.exec(`
+      CREATE TABLE run_lanes (
+        run_id INTEGER NOT NULL REFERENCES runs (id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        subtitle TEXT,
+        portal TEXT,
+        job_id INTEGER,
+        status TEXT NOT NULL,
+        started TEXT,
+        ended TEXT,
+        result TEXT,
+        turns INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        ms INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (run_id, key)
+      );
+    `)
+    addColumns(db, 'run_events', { lane: 'TEXT' })
+    addColumns(db, 'runs', { subtitle: 'TEXT', at_once: 'INTEGER NOT NULL DEFAULT 1' })
+    backfillHuntLanes(db)
+  },
 ]
+
+type StepRow = { id: number; at: string; kind: string; text: string }
+
+/** How a session ended, from the kind of its last step: the line it ends on is logged as good, error or a plain step. */
+const endedAs = (step: StepRow): { status: string; result: string | null } =>
+  step.kind === 'good' || step.kind === 'error'
+    ? { status: step.kind === 'good' ? 'done' : 'failed', result: step.text }
+    : { status: 'stopped', result: /^(Stopped|Not started)/.test(step.text) ? step.text : null }
+
+/**
+ * Hunts run before sessions had rows of their own, rebuilt from their steps.
+ * With several sessions each step starts with its session's name, which for a
+ * hunt is the portal's; a hunt of one session owns every step. A session's
+ * times are its first and last step.
+ */
+function backfillHuntLanes(db: DatabaseSync): void {
+  const addLane = db.prepare('INSERT INTO run_lanes (run_id, key, title, portal, status, started, ended, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+  const tag = db.prepare('UPDATE run_events SET lane = ? WHERE id = ?')
+  const setAtOnce = db.prepare('UPDATE runs SET at_once = ? WHERE id = ?')
+  const hunts = db.prepare("SELECT id, title, portal, status, started, ended, result FROM runs WHERE flow = 'hunt'").all() as {
+    id: number
+    title: string
+    portal: string | null
+    status: string
+    started: string
+    ended: string | null
+    result: string | null
+  }[]
+  for (const run of hunts) {
+    const steps = db.prepare('SELECT id, at, kind, text FROM run_events WHERE run_id = ? ORDER BY id').all(run.id) as StepRow[]
+    const portals = (Object.entries(PORTAL_NAMES) as [Portal, string][])
+      .filter(([, name]) => steps.some(step => step.text.startsWith(`${name}: `)))
+      .sort(([, a], [, b]) => run.title.indexOf(a) - run.title.indexOf(b))
+    if (portals.length === 0) {
+      const title = run.portal && run.portal in PORTAL_NAMES ? PORTAL_NAMES[run.portal as Portal] : run.title
+      const status = ['done', 'failed', 'stopped'].includes(run.status) ? run.status : 'stopped'
+      addLane.run(run.id, '0', title, run.portal, status, run.started, run.ended, run.result)
+      for (const step of steps) tag.run('0', step.id)
+      continue
+    }
+    portals.forEach(([portal, name], i) => {
+      const prefix = `${name}: `
+      const mine = steps.filter(step => step.text.startsWith(prefix))
+      for (const step of mine) tag.run(String(i), step.id)
+      const last = mine[mine.length - 1]!
+      const ended = endedAs({ ...last, text: last.text.slice(prefix.length) })
+      addLane.run(run.id, String(i), name, portal, ended.status, mine[0]!.at, last.at, ended.result)
+    })
+    setAtOnce.run(Math.min(AT_ONCE, portals.length), run.id)
+  }
+}
 
 const STATUS_MOVES: Record<string, string> = {
   found: 'found',

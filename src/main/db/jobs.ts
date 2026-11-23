@@ -113,6 +113,11 @@ export class Jobs {
     return this.rows("j.id IN (SELECT job_id FROM activity WHERE run_id = ? AND kind = 'status' AND to_state = 'found')", [runId], 'j.score DESC, j.id ASC')
   }
 
+  /** The jobs a run ruled out: their discarded row names the run. Newest first, whatever their status now. */
+  discardedByRun(runId: number): JobRow[] {
+    return this.rows("j.id IN (SELECT job_id FROM activity WHERE run_id = ? AND kind = 'status' AND to_state = 'discarded')", [runId], 'j.id DESC')
+  }
+
   counts(): Record<string, number> {
     const counts: Record<string, number> = {}
     for (const row of this.db.prepare('SELECT status, COUNT(*) AS n FROM jobs GROUP BY status').all()) {

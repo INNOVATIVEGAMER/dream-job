@@ -24,6 +24,8 @@ import { duration, tokens, when } from '../lib/format'
 import { go } from '../lib/router'
 import { ErrorNote, Group, Hidden, Loading, Numbers, Page, RunStatusBadge } from '../ui/common'
 import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs, TabsList, TabsTrigger } from '../ui/nx'
+import { useAppStatus } from '../lib/status'
+import { RunView } from './run/RunScreen'
 
 const FLOW_ICON: Record<string, ReactNode> = {
   hunt: <MagnifyingGlassIcon size={14} />,
@@ -46,10 +48,26 @@ const STEP: Record<RunEvent['kind'], ReactNode> = {
 /** One past run: what it did and what it came to. */
 function RunPage({ id }: { id: number }): JSX.Element {
   const detail = useData(() => api.runs.get(id), [id], ['runs'])
+  const live = useAppStatus()?.run
   const crumbs = [{ label: 'Run history', to: '/runs' }]
   if (detail.error) return <Page title={`Run ${id}`} crumbs={crumbs}><ErrorNote text={detail.error} /></Page>
   if (!detail.data) return <Page title={`Run ${id}`} crumbs={crumbs}><Loading /></Page>
-  const { summary, events } = detail.data
+  const { summary, events, state } = detail.data
+  // A hunt, or a run of several sessions, shows as it ran: the run going now from the live state, a past one from what was saved.
+  const shown = live?.id === summary.id ? live : state
+  if (shown && (shown.flow === 'hunt' || shown.lanes.length > 1)) {
+    return (
+      <Page
+        title={summary.title}
+        crumbs={crumbs}
+        badge={<RunStatusBadge status={shown.status} />}
+        meta={`Run ${summary.id} · ${when(summary.started)}${shown.lanes.length > 1 ? ` · ${shown.atOnce} at a time` : ''}`}
+        layout="bare"
+      >
+        <RunView run={shown} />
+      </Page>
+    )
+  }
   const steps = events.filter(event => event.kind !== 'claude' && event.kind !== 'tool')
   return (
     <Page
