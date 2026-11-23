@@ -109,7 +109,7 @@ const engine = new RunEngine({
     win?.focus()
   },
 })
-const flows = new Flows(engine, store)
+const flows = new Flows(engine, store, resumePath)
 
 const chat = new ChatService({
   store,

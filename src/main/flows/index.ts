@@ -10,6 +10,7 @@ import { emailSpec } from './email'
 import { huntPlan, plannedSearches } from './hunt'
 import { checkPostingsPlan, isCheckable } from './postings'
 import { checkSpec, connectPlan, peoplePlan, referralPlan } from './referral'
+import { resumeText } from './resume'
 
 /** The jobs connection requests can be for: found, or still in play after applying. */
 const REQUEST_STATUSES: readonly Status[] = ['found', ...ACTIVE_STATUSES]
@@ -22,6 +23,7 @@ export class Flows {
   constructor(
     private readonly engine: RunEngine,
     private readonly store: Store,
+    private readonly resumePath: string,
   ) {}
 
   async hunt(options: HuntOptions): Promise<number> {
@@ -52,7 +54,8 @@ export class Flows {
       else rows.push(row!)
     }
     if (rows.length === 0) throw new Error(firstProblem ?? 'Pick at least one found job.')
-    return this.engine.start(applyPlan(this.store, rows))
+    // Read once for the run: every session gets the resume's text with the profile, so facts it states are never asked.
+    return this.engine.start(applyPlan(this.store, rows, await resumeText(this.resumePath)))
   }
 
   /**

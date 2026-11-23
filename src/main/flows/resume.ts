@@ -1,4 +1,7 @@
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { promisify } from 'node:util'
 
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type { CanUseTool, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
@@ -38,7 +41,7 @@ const ImportOutput = z.object({
   answers: z
     .array(z.object({ question: z.string(), answer: z.string() }))
     .max(12)
-    .describe('Starter form answers the resume states: Email, Phone, Current location, and Years with each of their 3 main skills'),
+    .describe('Starter form answers the resume states: Email, Phone and Current location'),
 })
 
 const PROMPT = (path: string): string =>
@@ -46,7 +49,7 @@ const PROMPT = (path: string): string =>
     `Read the resume PDF at ${path} with the Read tool, then answer with what it says.`,
     'Copy facts exactly from the resume. Never add a role, skill, number or link it does not contain; leave a field empty when it does not say.',
     'For each role, put what they did there as one point per line, keeping their own words, lightly tidied.',
-    'Years with a skill: count the years of the roles that name it. Only include a starter answer you can take from the resume.',
+    'Only include a starter answer you can take from the resume.',
   ].join(' ')
 
 /** Reads the user's resume with their own Claude Code and answers what it found, for them to review. */
@@ -124,5 +127,31 @@ export async function importResume(resumePath: string, cwd: string, model?: stri
   } finally {
     end.abort()
     session.close()
+  }
+}
+
+const execFileAsync = promisify(execFile)
+
+/** Reads a PDF's text with macOS's own PDFKit, through osascript: nothing to bundle, and nothing leaves the computer. */
+const PDF_TEXT = 'ObjC.import("PDFKit"); function run(argv) { const doc = $.PDFDocument.alloc.initWithURL($.NSURL.fileURLWithPath(argv[0])); return doc.isNil() ? "" : doc.string.js }'
+
+/**
+ * The resume's text, read fresh for each run that fills forms, so every
+ * session knows what it says beyond the profile, such as education. A PDF
+ * often sets a word's first letter apart ("D" then "esigned" on the next
+ * line): a line of one letter, or one ending in a lone capital, runs on into
+ * the next. Null when there is no resume, or it has no text, as a scan.
+ */
+export async function resumeText(path: string): Promise<string | null> {
+  if (!existsSync(path)) return null
+  try {
+    const { stdout } = await execFileAsync('osascript', ['-l', 'JavaScript', '-e', PDF_TEXT, path], { timeout: 15_000, maxBuffer: 4 * 1024 * 1024 })
+    const text = stdout
+      .replace(/(^|\n)(\S)\n(?=\S)/g, '$1$2')
+      .replace(/(^|[\s(])([A-Z])\n(?=[A-Za-z])/g, '$1$2')
+      .trim()
+    return text || null
+  } catch {
+    return null
   }
 }

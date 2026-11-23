@@ -92,6 +92,6 @@ export const WRITING_RULES = [
   'They sell, never disqualify: say what the user has done and what they can take on. Never state a missing skill, a shortfall in years or anything they have not done. A skill or tool the profile does not list is something their experience makes quick to pick up, without claiming they have used it.',
   'Name what they did, the skill or tool they did it with, and the problem it solved. No counts or percentages unless the question asks for a number.',
   'No em dashes, arrows or middots: use commas, colons and parentheses.',
-  'Draw only on the profile. Never invent experience, numbers, skills or tools, and never mention or link anything on its never list.',
-  'A direct factual field (years with a skill or tool, a yes or no) is answered truthfully from the saved answers and the profile, even when the truth is less than asked.',
+  'Draw only on the profile and the resume. Never invent experience, numbers, skills or tools, and never mention or link anything on its never list.',
+  'Years with a skill or tool are answered as the rules above say. Any other direct factual field (a yes or no, a date) is answered truthfully from the saved answers, the profile and the resume, even when the truth is less than asked.',
 ].join('\n')

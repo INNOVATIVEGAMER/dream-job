@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { AT_ONCE, DISCARD_REASONS, PORTALS } from '../../shared/types'
 import { cleanLink, isPortalLink } from '../../shared/links'
+import { experienceMonths } from '../../shared/profile'
 import type { Job, Portal } from '../../shared/types'
 import { browserTools, guarded, refuse, REFUSE, say } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
@@ -77,8 +78,11 @@ function howToApply(portal: Portal | null, row: Job): string[] {
   }
 }
 
-function system(store: Store, row: Job): string {
+function system(store: Store, row: Job, resumeText: string | null): string {
   const prefs = store.settings.preferences()
+  // Years with any one skill: the user's whole experience, rounded up to a whole year.
+  const months = experienceMonths(store.settings.profile())
+  const skillYears = months === null ? null : Math.ceil(months / 12)
   const resume = store.settings.resume()
   const portal = portalOf(row)
   const jobId = portal ? portalIdOf(portal, row.portalLink) : null
@@ -100,8 +104,16 @@ function system(store: Store, row: Job): string {
     ...howToApply(portal, row),
     '- On a company\'s own site: fill the form with type_text, choose_option, click and upload_resume, and send it with submit_form.',
     '- Closed, or no longer taking applications: finish with outcome "closed". Already applied: finish with "already-applied".',
-    '- Facts come from the saved answers and the profile below. A question neither answers: ask_user, once, with every such question the form has.',
-    '- Free-text answers in the user\'s voice are written answers. Write them from the profile; the user sees each before it is sent.',
+    '- Facts come from the saved answers, the profile and the resume below. Answer from what they say or plainly follow from, without asking:',
+    skillYears === null
+      ? '  years with a skill or tool: the roles have no dates to count from, so ask;'
+      : `  years with any skill, tool or technology, whichever it is: ${skillYears}, the user\'s total experience rounded up to a whole year, as a whole number. This holds over a saved answer that gives other years for one skill;`,
+    '  education (degree, field, institution, years, grade) and anything else the resume states, such as contact details and links;',
+    '  a yes or no the resume settles, such as whether they hold a degree it does not list;',
+    '  a choice whose options word a saved answer differently: the option that means the same;',
+    '  dates that follow from the roles, such as when a role that has ended ended.',
+    '- Ask only what none of them states or settles, such as pay, notice period, or a personal detail the resume leaves out: ask_user, once, with every such question the form has.',
+    '- Free-text answers in the user\'s voice are written answers. Write them from the profile and the resume; the user sees each before it is sent.',
     `- The resume: ${resume ? `upload_resume wherever a form asks for one.${portal === 'linkedin' ? ` On LinkedIn's resume page, keep a listed resume named "${resume.fileName}" when it is already selected; otherwise upload.` : ''}` : 'the user has not added one. Where a form requires it, hand that step to the user.'}`,
     '- A cover letter asked for as a file: hand_to_user.',
     '- A consent checkbox that gates the submit is part of applying: tick it. Agree to nothing else a page asks.',
@@ -115,8 +127,14 @@ function system(store: Store, row: Job): string {
     'What the user wants:',
     preferencesText(prefs),
     '',
-    'The user\'s profile, the only source for anything written about them:',
+    'The user\'s profile, with the resume below the only source for anything written about them:',
     profileText(store.settings.profile()),
+    '',
+    resume
+      ? resumeText
+        ? `The user's resume, "${resume.fileName}", as read from the PDF (a word may break across two lines). It holds what the profile may not, such as education:\n${resumeText}`
+        : 'The user\'s resume has no text that could be read: go by the profile.'
+      : '',
     '',
     'Saved form answers:',
     answersText(store.settings.answers()),
@@ -214,7 +232,7 @@ function finish(store: Store, row: Job, record: ApplyRecord, answer: Answer, ctx
   }
 }
 
-export function applySpec(store: Store, row: Job): FlowSpec<Answer> {
+export function applySpec(store: Store, row: Job, resumeText: string | null): FlowSpec<Answer> {
   const record: ApplyRecord = { written: [], edited: false, facts: [], sent: null, posting: null }
   const portal = portalOf(row)
   return {
@@ -225,7 +243,7 @@ export function applySpec(store: Store, row: Job): FlowSpec<Answer> {
     portal: row.portal,
     playbooks: portal ? [portal] : [],
     jobId: row.id,
-    system: system(store, row),
+    system: system(store, row, resumeText),
     prompt: 'Apply to this posting.',
     tools: ctx => [
       ...(portal ? applyTools(ctx, portal, record) : []),
@@ -248,8 +266,8 @@ export function applySpec(store: Store, row: Job): FlowSpec<Answer> {
 }
 
 /** Applies to rows: one session per row, 5 at a time, each in its own tab. */
-export function applyPlan(store: Store, rows: Job[]): RunPlan {
-  const sessions = rows.map(row => applySpec(store, row))
+export function applyPlan(store: Store, rows: Job[], resumeText: string | null): RunPlan {
+  const sessions = rows.map(row => applySpec(store, row, resumeText))
   if (sessions.length === 1) return onePlan(sessions[0]!)
   return {
     flow: 'apply',

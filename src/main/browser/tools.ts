@@ -361,7 +361,7 @@ export function browserTools(
     ),
     defineTool(
       'ask_user',
-      'Ask the user for facts the form needs that their profile and saved answers do not hold. Ask every such question at once. Never use this for written answers: write those from the profile and submit them for approval.',
+      'Ask the user for facts the form needs that their saved answers, profile and resume neither state nor settle. Ask every such question at once. Never use this for written answers: write those from the profile and resume and submit them for approval.',
       {
         questions: z
           .array(z.object({ question: z.string().describe('The question as the form asks it'), hint: z.string().describe('What the form expects, such as a whole number') }))
