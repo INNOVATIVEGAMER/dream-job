@@ -126,6 +126,8 @@ export type JobAppApi = {
     stop: () => Promise<void>
     /** Shows one session's tab in Chrome: by its lane key, or by a card it waits on. */
     showTab: (key: string) => Promise<void>
+    /** Leaves one session by its lane key while the others carry on: for an application, its job is discarded unless it was already sent. */
+    leave: (key: string) => Promise<void>
     /** The jobs a run added: what a hunt found. */
     jobs: (runId: number) => Promise<JobRow[]>
     /** The jobs a run ruled out, with the line and reason for each, whatever their status now. */
@@ -227,6 +229,7 @@ export const CHANNELS = [
   'runs:answer',
   'runs:stop',
   'runs:showTab',
+  'runs:leave',
   'runs:jobs',
   'runs:discarded',
   'flows:hunt',

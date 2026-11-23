@@ -60,6 +60,7 @@ const api: JobAppApi = {
     answer: call('runs:answer'),
     stop: call('runs:stop'),
     showTab: call('runs:showTab'),
+    leave: call('runs:leave'),
     jobs: call('runs:jobs'),
     discarded: call('runs:discarded'),
   },

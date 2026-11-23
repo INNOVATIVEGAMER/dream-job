@@ -144,6 +144,7 @@ export function registerIpc(deps: IpcDeps): void {
     'runs:answer': (cardId, answer) => deps.engine.answer(short().parse(cardId), CardAnswerSchema.parse(answer)),
     'runs:stop': () => deps.engine.stop(),
     'runs:showTab': key => deps.engine.showTab(short().parse(key)),
+    'runs:leave': key => deps.engine.leave(short().parse(key)),
     'runs:jobs': runId => store.jobs.byRun(id.parse(runId)),
     'runs:discarded': runId => store.jobs.discardedByRun(id.parse(runId)),
 

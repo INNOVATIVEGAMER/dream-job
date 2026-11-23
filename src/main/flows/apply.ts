@@ -234,6 +234,15 @@ export function applySpec(store: Store, row: Job): FlowSpec<Answer> {
     ],
     output: Output,
     finish: (answer, ctx) => finish(store, row, record, answer, ctx),
+    // Worked out once the session has stopped: an application the app saw go out stands, whatever the button said.
+    leave: runId => {
+      if (record.sent) {
+        store.jobs.markApplied(row.id, noteOf(record, 'It went out just before you discarded it.'), runId)
+        return 'Already sent when you discarded it, so the job stays applied.'
+      }
+      store.jobs.discard(row.id, 'You discarded it while it was being applied to', 'other', runId)
+      return 'Discarded by you, not applied.'
+    },
     maxTurns: 120,
   }
 }
@@ -254,11 +263,14 @@ export function applyPlan(store: Store, rows: Job[]): RunPlan {
       const statuses = rows.map(row => store.jobs.row(row.id)?.status)
       const applied = statuses.filter(status => status === 'applied').length
       const dead = statuses.filter(status => status === 'dead').length
-      const unfinished = outcomes.filter(outcome => outcome.status !== 'done').length
-      const rest = rows.length - applied - dead
+      const discarded = statuses.filter(status => status === 'discarded').length
+      // Sessions are in the rows' order: one that did not finish counts only if its job is still waiting.
+      const unfinished = outcomes.filter((outcome, i) => outcome.status !== 'done' && !['applied', 'dead', 'discarded'].includes(statuses[i] ?? '')).length
+      const rest = rows.length - applied - dead - discarded
       return [
         `${applied} of ${rows.length} applied.`,
         dead ? `${dead} no longer taking applications.` : '',
+        discarded ? `${discarded} discarded.` : '',
         rest ? `${rest} not applied${unfinished ? `, ${unfinished} of them because the session did not finish` : ''}: each session's line below says why.` : '',
       ]
         .filter(Boolean)

@@ -13,6 +13,7 @@ import {
   PaperPlaneTiltIcon,
   SquaresFourIcon,
   StopIcon,
+  TrashIcon,
   TableIcon,
   UserPlusIcon,
   WarningIcon,
@@ -345,6 +346,26 @@ function EndedBanner({ run, presentation = 'banner' }: { run: RunState; presenta
 
 const showTab = (key: string): Promise<void | undefined> => attempt(() => api.runs.showTab(key))
 
+/**
+ * For one application in a run: discards its job and leaves its session,
+ * while the rest carry on. There while it waits its turn, works or waits on
+ * you. An application already sent stays applied.
+ */
+function DiscardAndLeave({ run, lane }: { run: RunState; lane: RunLane }): JSX.Element | null {
+  const [isLeaving, setIsLeaving] = useState(false)
+  if (run.flow !== 'apply' || !lane.jobId || !(isActive(lane.status) || lane.status === 'queued')) return null
+  const leave = async (): Promise<void> => {
+    setIsLeaving(true)
+    await attempt(() => api.runs.leave(lane.key), `Discarding ${lane.title}`)
+    setIsLeaving(false)
+  }
+  return (
+    <Button variant="outline" size="sm" startIcon={<TrashIcon />} disabled={isLeaving} onClick={() => void leave()}>
+      {isLeaving ? 'Leaving...' : 'Discard and leave'}
+    </Button>
+  )
+}
+
 /** A run of one session: its card or what it is doing, its steps beside it. */
 function OneSession({ run }: { run: RunState }): JSX.Element {
   const lane = run.lanes[0]!
@@ -507,11 +528,14 @@ function ManySessions({ run }: { run: RunState }): JSX.Element {
                   )}
                   <Numbers items={[lane.jobId ? lane.title : lane.subtitle, lane.portal ? portalName(lane.portal) || lane.portal : null].filter(Boolean) as string[]} />
                 </div>
-                {isActive(lane.status) && (
-                  <Button variant="ghost" size="sm" startIcon={<BrowserIcon />} onClick={() => void showTab(lane.key)}>
-                    Show tab
-                  </Button>
-                )}
+                <div className="nx:flex nx:items-center nx:gap-2 nx:shrink-0">
+                  {isActive(lane.status) && (
+                    <Button variant="ghost" size="sm" startIcon={<BrowserIcon />} onClick={() => void showTab(lane.key)}>
+                      Show tab
+                    </Button>
+                  )}
+                  <DiscardAndLeave key={lane.key} run={run} lane={lane} />
+                </div>
               </div>
               {lane.card ? (
                 <RunCardView card={lane.card} />
@@ -578,6 +602,7 @@ export function RunScreen(): JSX.Element {
                 Show tab
               </Button>
             )}
+            {!isMany && run.lanes[0] && <DiscardAndLeave run={run} lane={run.lanes[0]} />}
             <Button variant="outline" size="sm" startIcon={<StopIcon />} onClick={() => void attempt(() => api.runs.stop())}>
               {isMany ? 'Stop all' : 'Stop'}
             </Button>

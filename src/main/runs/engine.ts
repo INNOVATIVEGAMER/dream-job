@@ -101,6 +101,12 @@ export type FlowSpec<T> = {
   output: z.ZodType<T>
   /** Puts the answer to use and says, in one line, how the session ended. */
   finish: (answer: T, ctx: RunContext) => string | Promise<string>
+  /**
+   * What leaving this session at the user's word means, once it has stopped,
+   * such as discarding its job; says in one line how it ended. A session
+   * without it can only end with the whole run.
+   */
+  leave?: (runId: number) => string
   maxTurns?: number
 }
 
@@ -200,6 +206,10 @@ type Lane = {
   tab: Tab | null
   /** Usage of turns so far, until the session's result gives the totals. */
   turns: number
+  /** The user left this session: it ends at once, and the others carry on. */
+  leaving: boolean
+  /** How leaving it ended, once worked out: its flow's line, worked out only once. */
+  leftWith: string | null
 }
 
 /** A card on screen and every session waiting on it. */
@@ -220,6 +230,7 @@ export class RunEngine {
   private cards = new Map<string, OpenCard>()
   private isStopping = false
   private haltReason: string | null = null
+  private plan: RunPlan | null = null
 
   constructor(private readonly deps: EngineDeps) {}
 
@@ -241,6 +252,7 @@ export class RunEngine {
     const atOnce = Math.max(1, Math.min(plan.atOnce ?? 1, plan.sessions.length))
     const runId = this.deps.store.runs.start(plan.flow, plan.title, plan.portal, plan.jobId ?? null, plan.subtitle ?? null, atOnce)
     this.isStopping = false
+    this.plan = plan
     this.haltReason = null
     this.cards.clear()
     this.lanes = plan.sessions.map((spec, i) => ({
@@ -249,6 +261,8 @@ export class RunEngine {
       end: null,
       tab: null,
       turns: 0,
+      leaving: false,
+      leftWith: null,
       state: {
         key: String(i),
         title: spec.laneTitle ?? spec.title,
@@ -311,6 +325,28 @@ export class RunEngine {
     for (const lane of this.lanes) lane.end?.abort()
   }
 
+  /**
+   * Leaves one session at the user's word while the others carry on. One not
+   * started never starts; one at work is interrupted where it is. Once it has
+   * stopped, its flow says what leaving means, such as discarding its job.
+   */
+  async leave(key: string): Promise<void> {
+    const lane = this.lanes.find(one => one.state.key === key)
+    const plan = this.plan
+    if (!lane || !plan || !this.isBusy() || !(isActive(lane.state.status) || lane.state.status === 'queued')) throw new Error('That session is no longer running.')
+    if (!lane.spec.leave) throw new Error("This session can't be left on its own. Stop the run instead.")
+    if (lane.leaving) return
+    lane.leaving = true
+    if (lane.state.status === 'queued') {
+      this.endLane(plan, lane, 'stopped', this.leftLine(lane))
+      return
+    }
+    this.log(lane, 'step', 'You left this one: stopping it.')
+    this.cancelCards(waiter => waiter === lane)
+    await lane.session?.interrupt().catch(() => undefined)
+    lane.end?.abort()
+  }
+
   /** Shows one session's tab in Chrome: by its key, or by a card it waits on. Without one, the tab Chrome follows. */
   async showTab(key: string): Promise<void> {
     const lane = this.lanes.find(one => one.state.key === key || one.state.card?.id === key)
@@ -331,6 +367,8 @@ export class RunEngine {
       await sleep(slot * STAGGER_MS)
       while (!this.isStopping && !this.haltReason && next < this.lanes.length) {
         const lane = this.lanes[next++]!
+        // Left before its turn came.
+        if (lane.state.status !== 'queued') continue
         await this.runLane(plan, lane, path, runId, ownTabs)
       }
     }
@@ -358,9 +396,9 @@ export class RunEngine {
         return
       }
     }
-    // Stopped while its tab was opening: it never starts.
-    if (this.isStopping) {
-      this.endLane(plan, lane, 'stopped', 'Stopped by you.')
+    // Stopped or left while its tab was opening: it never starts.
+    if (this.isStopping || lane.leaving) {
+      this.endLane(plan, lane, 'stopped', lane.leaving ? this.leftLine(lane) : 'Stopped by you.')
       await lane.tab?.close().catch(() => undefined)
       lane.tab = null
       return
@@ -392,21 +430,11 @@ export class RunEngine {
     lane.session = session
     lane.end = end
 
-    const stopped = (): string => (this.haltReason ? `Stopped: ${this.haltReason}.` : 'Stopped by you.')
     try {
       for await (const message of session) await this.take(plan, message, lane, ctx)
-      if (isActive(lane.state.status)) {
-        this.endLane(plan, lane, this.isStopping ? 'stopped' : 'failed', this.isStopping ? stopped() : 'The session ended without an answer.')
-      }
+      if (isActive(lane.state.status)) this.endEarly(plan, lane, 'The session ended without an answer.')
     } catch (error) {
-      if (isActive(lane.state.status)) {
-        this.endLane(
-          plan,
-          lane,
-          this.isStopping ? 'stopped' : 'failed',
-          this.isStopping ? stopped() : `The session failed: ${error instanceof Error ? error.message : String(error)}`,
-        )
-      }
+      if (isActive(lane.state.status)) this.endEarly(plan, lane, `The session failed: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       this.cancelCards(waiter => waiter === lane)
       end.abort()
@@ -453,7 +481,7 @@ export class RunEngine {
    * session on the site carry on.
    */
   private ask(plan: RunPlan, lane: Lane, input: CardInput): Promise<CardAnswer> {
-    if (this.isStopping) return Promise.resolve({ kind: 'cancel' })
+    if (this.isStopping || lane.leaving) return Promise.resolve({ kind: 'cancel' })
     const share = input.kind === 'handover' && input.what === 'sign-in' ? `sign-in:${lane.state.portal ?? ''}` : null
     return new Promise<CardAnswer>(resolve => {
       const joined = share ? [...this.cards.values()].find(open => open.share === share) : undefined
@@ -519,9 +547,8 @@ export class RunEngine {
       this.setLane(lane, { usage })
       this.refresh(plan)
       this.deps.store.runs.setUsage(ctx.runId, this.state!.usage)
-      if (message.subtype !== 'success') {
-        const why = this.haltReason ? `Stopped: ${this.haltReason}.` : 'Stopped by you.'
-        this.endLane(plan, lane, this.isStopping ? 'stopped' : 'failed', this.isStopping ? why : `The session stopped: ${message.subtype}`)
+      if (message.subtype !== 'success' || lane.leaving) {
+        this.endEarly(plan, lane, `The session stopped: ${message.subtype}`)
       } else {
         const parsed = lane.spec.output.safeParse(message.structured_output)
         if (!parsed.success) this.endLane(plan, lane, 'failed', 'Claude answered in a shape the app does not accept.')
@@ -541,6 +568,26 @@ export class RunEngine {
     this.log(lane, status === 'done' ? 'good' : status === 'failed' ? 'error' : 'step', text)
     this.setLane(lane, { status, result: text, card: null, progress: null, ended: new Date().toISOString() })
     this.refresh(plan)
+  }
+
+  /** A session that ended before its answer: left by the user, stopped with the run, or failed. */
+  private endEarly(plan: RunPlan, lane: Lane, failure: string): void {
+    if (lane.leaving) this.endLane(plan, lane, 'stopped', this.leftLine(lane))
+    else if (this.isStopping) this.endLane(plan, lane, 'stopped', this.haltReason ? `Stopped: ${this.haltReason}.` : 'Stopped by you.')
+    else this.endLane(plan, lane, 'failed', failure)
+  }
+
+  /** What leaving a session came to, in its flow's words: worked out once, after it has stopped. */
+  private leftLine(lane: Lane): string {
+    if (lane.leftWith === null) {
+      try {
+        lane.leftWith = lane.spec.leave?.(this.state!.id) ?? 'Left by you.'
+      } catch (error) {
+        lane.leftWith = `Left by you, but saving that failed: ${error instanceof Error ? error.message : String(error)}`
+      }
+      this.deps.onData(['jobs'])
+    }
+    return lane.leftWith
   }
 
   /** Ends the run once every session has: one session's line, or the plan's line for all of them. */
