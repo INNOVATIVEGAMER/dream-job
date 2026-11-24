@@ -22,12 +22,19 @@ import { clickPoint, markSite, portalTool, refuse, SCROLL_TO_END, sleep, waitFor
  * - A profile's Message is a link to /messaging/compose/. The message box
  *   opens in an open shadow root (#interop-outlet): a contenteditable
  *   .msg-form__contenteditable, a hidden file input that takes PDFs, and Send.
+ *   A press that lands before the profile's script has taken the link goes
+ *   through as a plain link, to the full page /messaging/thread/new/, whose
+ *   box is in the page itself. Boxes left open stay open from page to page.
  */
 
 const SIGNED_OUT = `/\\/(login|authwall|checkpoint|uas)\\b/.test(location.pathname)`
 
-/** The message overlay's root: LinkedIn draws it in a shadow root, or in the page on the older layout. */
-const ROOT = `((document.querySelector('#interop-outlet') && document.querySelector('#interop-outlet').shadowRoot) || document)`
+/**
+ * Where message boxes are, as a list: the overlay's shadow root, plus the
+ * page itself on LinkedIn's full messaging page. On the older layout, which
+ * has no shadow root, the page alone.
+ */
+const ROOTS = `(() => { const host = document.querySelector('#interop-outlet'); const overlay = host && host.shadowRoot; if (!overlay) return [document]; return location.pathname.startsWith('/messaging/') ? [document, overlay] : [overlay]; })()`
 
 const vanityOf = (profile: string): string | null => {
   try {
@@ -126,9 +133,9 @@ export const PROFILE_SCRIPT = String.raw`(() => {
   const words = b => clean(b.getAttribute('aria-label') || b.innerText);
   const message = controls.find(b => b.tagName === 'A' && /\/messaging\/compose\//.test(b.getAttribute('href') || '') && /^(Message|Send a message)/i.test(words(b)));
   let point = null;
-  if (message) { message.scrollIntoView({ block: 'center' }); const box = message.getBoundingClientRect(); point = { x: box.left + box.width / 2, y: box.top + box.height / 2 }; }
+  if (message) { message.scrollIntoView({ block: 'center', behavior: 'instant' }); const box = message.getBoundingClientRect(); point = { x: box.left + box.width / 2, y: box.top + box.height / 2 }; }
   return {
-    name: document.title.replace(/ \| LinkedIn$/, '').replace(/^\(\d+\)\s*/, ''),
+    name: document.title.replace(/ \| LinkedIn$/, '').replace(/^\(\d+\+?\)\s*/, ''),
     degree: degreeAt >= 0 ? lines[degreeAt].replace(/^·\s*/, '') : '',
     headline: degreeAt >= 0 ? lines[degreeAt + 1] || '' : '',
     pending: controls.some(b => /^Pending|withdraw invitation/i.test(words(b))),
@@ -219,12 +226,18 @@ export const CONNECTIONS_SCRIPT = String.raw`(() => {
   return { people, signedOut: ${SIGNED_OUT} };
 })()`
 
-/** Tags the message box for this person: the one whose conversation names them. Answers what it holds. */
+/**
+ * Tags the message box for this person: the one whose conversation names
+ * them. Answers what it holds, or, when there is none, the page and how many
+ * other boxes are open.
+ */
 export const EDITOR_SCRIPT = (name: string): string => String.raw`(() => {
-  const root = ${ROOT};
   const shown = e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
-  root.querySelectorAll('[data-jobapp-editor]').forEach(e => e.removeAttribute('data-jobapp-editor'));
-  const editors = [...root.querySelectorAll('.msg-form__contenteditable[contenteditable="true"], [contenteditable="true"][aria-label^="Write a message"]')].filter(shown);
+  const editors = [];
+  for (const root of ${ROOTS}) {
+    root.querySelectorAll('[data-jobapp-editor]').forEach(e => e.removeAttribute('data-jobapp-editor'));
+    editors.push(...[...root.querySelectorAll('.msg-form__contenteditable[contenteditable="true"], [contenteditable="true"][aria-label^="Write a message"]')].filter(shown));
+  }
   const wanted = ${JSON.stringify(name)};
   for (const editor of editors) {
     let box = editor;
@@ -234,18 +247,35 @@ export const EDITOR_SCRIPT = (name: string): string => String.raw`(() => {
     editor.setAttribute('data-jobapp-editor', '1');
     return { found: true, text: editor.innerText.replace(/\u00a0/g, ' ') };
   }
-  return { found: false, open: editors.length };
+  return { found: false, open: editors.length, path: location.pathname };
 })()`
+
+type Editor = { found: boolean; text?: string; open?: number; path?: string }
 
 /**
  * The tagged box's compose form (the smallest part holding a file input and
  * Send), as an expression for the page. The conversation and its close
- * button sit above the form.
+ * button sit above the form, in the same root.
  */
-export const BOX = `(() => { const root = ${ROOT}; const ed = root.querySelector('[data-jobapp-editor="1"]'); let box = ed; while (box && !(box.querySelector && box.querySelector('input[type="file"]') && [...box.querySelectorAll('button')].some(b => (b.innerText || '').trim() === 'Send'))) box = box.parentElement; return { root, ed, box } })()`
+export const BOX = `(() => { const ed = ${ROOTS}.map(root => root.querySelector('[data-jobapp-editor="1"]')).find(Boolean) || null; const root = ed ? ed.getRootNode() : null; let box = ed; while (box && !(box.querySelector && box.querySelector('input[type="file"]') && [...box.querySelectorAll('button')].some(b => (b.innerText || '').trim() === 'Send'))) box = box.parentElement; return { root, ed, box } })()`
 
-/** All the text the message overlay shows: a shadow root has no innerText of its own. */
-export const OVERLAY_TEXT = `(() => { const root = ${ROOT}; return root === document ? document.body.innerText : [...root.children].map(c => c.innerText || '').join('\\n'); })()`
+/** All the text where message boxes are: a shadow root has no innerText of its own. */
+export const OVERLAY_TEXT = `${ROOTS}.map(root => root === document ? document.body.innerText : [...root.children].map(c => c.innerText || '').join('\\n')).join('\\n')`
+
+/**
+ * One open conversation box that holds no draft, by its close button: a box
+ * left from an earlier person, cleared away before the next one opens. A box
+ * with a draft is the user's and stays.
+ */
+export const LEFTOVER_CLOSE_SCRIPT = String.raw`(() => {
+  const shown = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const label = b => (b.getAttribute('aria-label') || b.innerText || '').trim();
+  for (const root of ${ROOTS}) {
+    const close = [...root.querySelectorAll('button')].filter(shown).find(b => /^Close your conversation/i.test(label(b)));
+    if (close) { const r = close.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+  }
+  return null;
+})()`
 
 export const BOX_SCRIPT = String.raw`(() => {
   const { root, ed, box } = ${BOX};
@@ -278,6 +308,49 @@ async function clearBox(ctx: RunContext): Promise<void> {
   await ctx.chrome
     .evaluate(`(() => { const { ed } = ${BOX}; if (!ed) return; ed.focus(); document.execCommand('selectAll'); document.execCommand('delete'); })()`, true)
     .catch(() => undefined)
+}
+
+/** Closes the conversation boxes left open with no draft, one at a time: each close moves the rest. */
+async function closeLeftoverBoxes(ctx: RunContext): Promise<void> {
+  for (let i = 0; i < 6; i++) {
+    const close = await ctx.chrome.evaluate<{ x: number; y: number } | null>(LEFTOVER_CLOSE_SCRIPT, true).catch(() => null)
+    if (!close) return
+    await clickPoint(ctx, close)
+    await sleep(500)
+  }
+}
+
+/**
+ * The profile, read until its Message button holds still: LinkedIn is still
+ * filling the top card in after load, and a press on a moving button misses.
+ */
+async function steadyProfile(ctx: RunContext): Promise<Profile> {
+  let page = await ctx.chrome.evaluate<Profile>(PROFILE_SCRIPT)
+  for (let i = 0; i < 5 && page.message; i++) {
+    await sleep(400)
+    const again = await ctx.chrome.evaluate<Profile>(PROFILE_SCRIPT)
+    const still = !!again.message && !!page.message && Math.abs(again.message.x - page.message.x) < 2 && Math.abs(again.message.y - page.message.y) < 2
+    page = again
+    if (still) break
+  }
+  return page
+}
+
+/**
+ * Waits for this person's box after Message was pressed, in the overlay or on
+ * the full messaging page. A box for anyone else doesn't count. When none has
+ * opened after a while and the profile is still showing, Message is pressed
+ * once more: a second press only brings an open box forward.
+ */
+async function openBox(ctx: RunContext, shownFirst: string): Promise<boolean> {
+  const theirs = `(${EDITOR_SCRIPT(shownFirst)}).found`
+  if (await waitFor(ctx, theirs, 6000)) return true
+  const onProfile = await ctx.chrome.evaluate<boolean>(`location.pathname.startsWith('/in/')`, true).catch(() => false)
+  if (onProfile) {
+    const page = await steadyProfile(ctx)
+    if (page.message) await clickPoint(ctx, page.message)
+  }
+  return waitFor(ctx, theirs, 12_000)
 }
 
 /** The company's LinkedIn slug: from its saved page, or LinkedIn's company search by name, which is then saved. */
@@ -623,19 +696,25 @@ export function linkedinNetworkTools(ctx: RunContext, which: { connect?: Company
           const vanity = vanityOf(person.profileUrl)
           if (!vanity) return refuse(`${person.name}'s profile link is not a LinkedIn profile.`)
           await ctx.chrome.openPage(profileUrl(vanity))
-          const page = await ctx.chrome.evaluate<Profile>(PROFILE_SCRIPT)
+          // Boxes left from earlier people go first, so only this person's can open.
+          await closeLeftoverBoxes(ctx)
+          const page = await steadyProfile(ctx)
           if (page.signedOut) return refuse('LinkedIn is signed out in the app\'s Chrome. Call hand_to_user with what "sign-in", then try again.')
           if (page.degree !== '1st') return refuse(`${person.name} is not a 1st-degree connection on LinkedIn (${page.degree || 'unknown'}). Skipped.`)
           if (!page.message) return refuse(`${person.name}'s profile has no Message button. Skipped.`)
           const shownName = page.name || person.name
+          const shownFirst = shownName.split(' ')[0] ?? shownName
 
           await clickPoint(ctx, page.message)
-          if (!(await waitFor(ctx, `${ROOT}.querySelector('.msg-form__contenteditable, [contenteditable="true"][aria-label^="Write a message"]')`, 10_000))) {
-            return refuse('The message box did not open. Skipped.')
+          if (!(await openBox(ctx, shownFirst))) {
+            const seen = await ctx.chrome.evaluate<Editor>(EDITOR_SCRIPT(shownFirst)).catch(() => null)
+            const others = seen?.open ? `${seen.open} other box${seen.open === 1 ? '' : 'es'}` : 'no other box'
+            const where = seen ? ` (page ${seen.path}, ${others} open)` : ''
+            return refuse(`No message box to ${person.name} opened${where}. Skipped.`)
           }
           await sleep(800)
-          const editor = await ctx.chrome.evaluate<{ found: boolean; text?: string }>(EDITOR_SCRIPT(shownName.split(' ')[0] ?? shownName))
-          if (!editor.found) return refuse(`No message box to ${person.name} opened. Skipped.`)
+          const editor = await ctx.chrome.evaluate<Editor>(EDITOR_SCRIPT(shownFirst))
+          if (!editor.found) return refuse(`The message box to ${person.name} closed before the message went in. Skipped.`)
           if (linesOf(editor.text ?? '').length) return refuse(`There is an unsent draft to ${person.name} in LinkedIn. It is the user's: left as it is, and skipped.`)
 
           // Type it as written: each line, with Shift+Enter between lines so nothing sends early.
