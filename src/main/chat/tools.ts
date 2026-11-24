@@ -76,7 +76,7 @@ function readTools(deps: ChatToolDeps): AnyTool[] {
     ),
     defineTool(
       'search_tracker',
-      'The tracker, company first: each company with its jobs in the view (id, role, status, score, portal, work mode, years asked, starred, last change). Filter by view, company sizes, portals, work modes, starred, and a search over company and role. Up to 80 companies.',
+      'The tracker, company first: each company with its jobs in the view (id, role, status, score, portal, work mode, years asked, starred, last change). Filter by view, company sizes, portals, work modes, starred, a lowest score, and a search over company and role. Up to 80 companies.',
       {
         view: z.enum(TRACKER_VIEWS).optional().describe('Which jobs: a status view, "closed" (rejected and dead), "discarded", or "all" (everything but discarded, the default)'),
         stages: z.array(z.enum(STAGES)).optional().describe('Company sizes to keep; none means every size'),
@@ -89,6 +89,7 @@ function readTools(deps: ChatToolDeps): AnyTool[] {
           .optional()
           .describe('"within": asks no more than a year past the user\'s experience; "above": asks more, so no referral asks; "not-stated"; none means all'),
         starred: z.boolean().optional().describe('true: only jobs the user starred; false: only jobs not starred; leave out for both'),
+        min_score: z.number().int().min(1).max(10).optional().describe('Only jobs that scored at least this (1-10); jobs with no score are left out'),
       },
       args =>
         guarded(async () => {
@@ -101,6 +102,7 @@ function readTools(deps: ChatToolDeps): AnyTool[] {
             employers: args.employers ?? [],
             experience: args.experience ?? [],
             starred: args.starred ?? null,
+            minScore: args.min_score ?? null,
           })
           const list = store.trackerList(query)
           const companies = list.companies.slice(0, 80).map(company => ({

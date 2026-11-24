@@ -21,6 +21,7 @@ export const CompanyQuery = z.object({
   employers: z.array(z.enum(EMPLOYERS)).max(EMPLOYERS.length).default([]),
   experience: z.array(z.enum(EXPERIENCE_FITS)).max(EXPERIENCE_FITS.length).default([]),
   starred: z.boolean().nullable().default(null),
+  minScore: z.number().int().min(1).max(10).nullable().default(null),
 })
 export const RunQuery = z.object({ flow: short(), portal: short(), page })
 export const httpsLink = z.string().trim().url('Enter the link to the posting or the apply page.').max(2000).refine(url => /^https?:\/\//i.test(url), 'Use an https link.')

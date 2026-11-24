@@ -183,6 +183,10 @@ export class Store {
       params.push(...modes)
     }
     if (query.starred !== null) where.push(`j.starred = ${query.starred ? 1 : 0}`)
+    if (query.minScore !== null) {
+      where.push('j.score >= ?')
+      params.push(query.minScore)
+    }
     const search = query.search.trim().toLowerCase()
     if (search) {
       where.push('(lower(c.name) LIKE ? OR lower(j.role) LIKE ?)')

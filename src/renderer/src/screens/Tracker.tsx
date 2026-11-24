@@ -105,6 +105,9 @@ import { AddJobDialog } from './AddJob'
 
 const HOVER = 'nx:opacity-0 nx:group-hover:opacity-100 nx:focus-within:opacity-100 nx:transition-opacity'
 
+/** The lowest scores the Score filter offers: a job keeps its place when it scored that or more. */
+const SCORES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
+
 /** Statuses the picked jobs can be set to; discarding has its own button, on Found. */
 const SET_STATUSES = STATUSES.filter(status => status !== 'discarded')
 
@@ -496,7 +499,7 @@ const FILTERS_KEY = 'dream-job:tracker-filters'
 /** The filters, the search and the Discarded reason, as the tracker last had them. Modes null follow the preferences. */
 type SavedFilters = { filters: Filters; modes: WorkMode[] | null; reason: DiscardReason | 'all' }
 
-const NO_FILTERS: SavedFilters = { filters: { stages: [], portals: [], search: '', employers: [], experience: [], starred: null }, modes: null, reason: 'all' }
+const NO_FILTERS: SavedFilters = { filters: { stages: [], portals: [], search: '', employers: [], experience: [], starred: null, minScore: null }, modes: null, reason: 'all' }
 
 /** The values of `all` a saved list still holds; a choice the app no longer has is dropped. */
 const kept = <T extends string>(all: readonly T[], saved: unknown): T[] => (Array.isArray(saved) ? all.filter(one => saved.includes(one)) : [])
@@ -516,6 +519,7 @@ function savedFilters(): SavedFilters {
         employers: kept(EMPLOYERS, filters['employers']),
         experience: kept(EXPERIENCE_FITS, filters['experience']),
         starred: typeof filters['starred'] === 'boolean' ? filters['starred'] : null,
+        minScore: SCORES.find(one => one === filters['minScore']) ?? null,
       },
       modes: Array.isArray(saved.modes) ? kept(WORK_MODES, saved.modes) : null,
       reason: reason ?? 'all',
@@ -555,8 +559,9 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
   const [reason, setReason] = useState<DiscardReason | 'all'>(saved.reason)
   // Opens on the modes the user prefers, until they pick their own.
   const modes = pickedModes ?? defaultModes ?? []
-  // Discarded jobs show no star, so the star filter waits there.
-  const shown: CompanyQuery = { ...filters, view, modes, starred: view === 'discarded' ? null : filters.starred }
+  // Discarded jobs show no star and carry no score, so those filters wait there.
+  const isDiscardedView = view === 'discarded'
+  const shown: CompanyQuery = { ...filters, view, modes, starred: isDiscardedView ? null : filters.starred, minScore: isDiscardedView ? null : filters.minScore }
   const [search, setSearch] = useState(saved.filters.search)
   const [open, setOpen] = useState<Set<number>>(new Set())
   const [closed, setClosed] = useState<Set<number>>(new Set())
@@ -691,6 +696,18 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
             chosen: filters.starred === null ? [] : [filters.starred ? 'starred' : 'unstarred'],
             choose: (value: string) => setFilters(current => ({ ...current, starred: value === 'starred' })),
             clear: () => setFilters(current => ({ ...current, starred: null })),
+          },
+          {
+            key: 'score',
+            name: 'Score',
+            isOn: filters.minScore !== null,
+            value: filters.minScore === null ? '' : `${filters.minScore} and above`,
+            short: filters.minScore === null ? '' : filters.minScore === 10 ? '10' : `${filters.minScore}+`,
+            isMulti: false,
+            choices: SCORES.map(score => ({ value: String(score), label: score === 10 ? '10' : `${score} and above` })),
+            chosen: filters.minScore === null ? [] : [String(filters.minScore)],
+            choose: (value: string) => setFilters(current => ({ ...current, minScore: Number(value) })),
+            clear: () => setFilters(current => ({ ...current, minScore: null })),
           },
         ]),
     {

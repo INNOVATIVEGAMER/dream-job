@@ -341,6 +341,8 @@ export type CompanyQuery = {
   experience: ExperienceFit[]
   /** True keeps starred jobs only, false the rest; null both. */
   starred: boolean | null
+  /** Keeps jobs that scored at least this, 1 to 10; null every score, and jobs with none. */
+  minScore: number | null
 }
 
 export type CompanyList = {
