@@ -491,6 +491,40 @@ function lastTab(): TrackerTab {
   }
 }
 
+const FILTERS_KEY = 'dream-job:tracker-filters'
+
+/** The filters, the search and the Discarded reason, as the tracker last had them. Modes null follow the preferences. */
+type SavedFilters = { filters: Filters; modes: WorkMode[] | null; reason: DiscardReason | 'all' }
+
+const NO_FILTERS: SavedFilters = { filters: { stages: [], portals: [], search: '', employers: [], experience: [], starred: null }, modes: null, reason: 'all' }
+
+/** The values of `all` a saved list still holds; a choice the app no longer has is dropped. */
+const kept = <T extends string>(all: readonly T[], saved: unknown): T[] => (Array.isArray(saved) ? all.filter(one => saved.includes(one)) : [])
+
+/** The filters the tracker last had, remembered between screens and launches like its tab; none the first time. */
+function savedFilters(): SavedFilters {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTERS_KEY) ?? 'null') as { filters?: Record<string, unknown>; modes?: unknown; reason?: unknown } | null
+    if (!saved || typeof saved !== 'object') return NO_FILTERS
+    const filters = saved.filters ?? {}
+    const reason = DISCARD_REASONS.find(one => one === saved.reason)
+    return {
+      filters: {
+        stages: kept(STAGES, filters['stages']),
+        portals: kept(SOURCES, filters['portals']),
+        search: typeof filters['search'] === 'string' ? filters['search'] : '',
+        employers: kept(EMPLOYERS, filters['employers']),
+        experience: kept(EXPERIENCE_FITS, filters['experience']),
+        starred: typeof filters['starred'] === 'boolean' ? filters['starred'] : null,
+      },
+      modes: Array.isArray(saved.modes) ? kept(WORK_MODES, saved.modes) : null,
+      reason: reason ?? 'all',
+    }
+  } catch {
+    return NO_FILTERS
+  }
+}
+
 /**
  * The tracker at its address. `/tracker/applied` opens Applied and remembers it;
  * `/tracker` opens the tab last open, and the address follows so it names the tab.
@@ -514,14 +548,16 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
   const settings = useData(() => api.settings.get(), [], ['settings'])
   const months = settings.data ? experienceMonths(settings.data.profile) : null
   const defaultModes = settings.data ? preferredModes(settings.data.preferences) : null
-  const [filters, setFilters] = useState<Filters>({ stages: [], portals: [], search: '', employers: [], experience: [], starred: null })
-  const [pickedModes, setPickedModes] = useState<WorkMode[] | null>(null)
-  const [reason, setReason] = useState<DiscardReason | 'all'>('all')
+  // Each screen is drawn afresh, so the filters come back from where they were saved.
+  const [saved] = useState(savedFilters)
+  const [filters, setFilters] = useState<Filters>(saved.filters)
+  const [pickedModes, setPickedModes] = useState<WorkMode[] | null>(saved.modes)
+  const [reason, setReason] = useState<DiscardReason | 'all'>(saved.reason)
   // Opens on the modes the user prefers, until they pick their own.
   const modes = pickedModes ?? defaultModes ?? []
   // Discarded jobs show no star, so the star filter waits there.
   const shown: CompanyQuery = { ...filters, view, modes, starred: view === 'discarded' ? null : filters.starred }
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(saved.filters.search)
   const [open, setOpen] = useState<Set<number>>(new Set())
   const [closed, setClosed] = useState<Set<number>>(new Set())
   const [picked, setPicked] = useState<Set<number>>(new Set())
@@ -533,6 +569,14 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
     const timer = setTimeout(() => setFilters(current => (current.search === search ? current : { ...current, search })), 200)
     return () => clearTimeout(timer)
   }, [search])
+  // The search as typed, so leaving before it applies keeps it too.
+  useEffect(() => {
+    try {
+      localStorage.setItem(FILTERS_KEY, JSON.stringify({ filters: { ...filters, search }, modes: pickedModes, reason }))
+    } catch {
+      // not remembered; the tracker opens with no filters next time
+    }
+  }, [filters, search, pickedModes, reason])
   useEffect(() => setAdding(adding), [adding])
   // A pick belongs to the view it was made in.
   useEffect(() => setPicked(new Set()), [view])
