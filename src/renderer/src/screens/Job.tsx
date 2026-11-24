@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { JSX } from 'react'
 
-import { ArrowRightIcon, ArrowSquareOutIcon, ChatTextIcon, CheckIcon, DotsThreeIcon, PaperPlaneTiltIcon, WarningIcon } from '@phosphor-icons/react'
+import { ArrowRightIcon, ArrowSquareOutIcon, ChatTextIcon, CheckIcon, DotsThreeIcon, PaperPlaneTiltIcon, StarIcon, WarningIcon } from '@phosphor-icons/react'
 
 import { isPortalLink } from '../../../shared/links'
 import { askBlock } from '../../../shared/profile'
@@ -164,6 +164,17 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
       layout="bare"
       actions={
         <>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={job.starred ? 'Unstar this job' : 'Star this job'}
+            aria-pressed={job.starred}
+            title={job.starred ? 'Starred' : 'Star'}
+            className={job.starred ? 'nx:text-warning-background' : undefined}
+            onClick={() => void attempt(() => api.tracker.setStarred([job.id], !job.starred))}
+          >
+            <StarIcon weight={job.starred ? 'fill' : 'regular'} />
+          </Button>
           {opens && (
             <Button variant="ghost" size="sm" endIcon={<ArrowSquareOutIcon />} onClick={() => void attempt(() => api.chrome.openUrl(opens))}>
               {isExternal ? 'Apply page' : 'Posting'}

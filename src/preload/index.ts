@@ -39,6 +39,7 @@ const api: JobAppApi = {
     edit: call('tracker:edit'),
     add: call('tracker:add'),
     restore: call('tracker:restore'),
+    setStarred: call('tracker:setStarred'),
   },
   companies: {
     get: call('companies:get'),

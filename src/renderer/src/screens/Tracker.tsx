@@ -15,6 +15,8 @@ import {
   MagnifyingGlassIcon,
   PaperPlaneTiltIcon,
   PlusIcon,
+  StarHalfIcon,
+  StarIcon,
   UserPlusIcon,
   WarningIcon,
   XCircleIcon,
@@ -176,6 +178,30 @@ function People({ row }: { row: CompanyRow }): JSX.Element {
       {connected > 0 && requested > 0 && <span className="nx:text-muted-foreground"> · </span>}
       {requested > 0 && <span className="nx:text-muted-foreground">{requested} sent</span>}
     </span>
+  )
+}
+
+/**
+ * The star on a job, or on a company for its jobs in the view: filled when
+ * every one is starred, half when some are. A click stars them all, or takes
+ * the star off when all have it.
+ */
+function StarButton({ jobs, label }: { jobs: JobRow[]; label: string }): JSX.Element {
+  const starred = jobs.filter(job => job.starred).length
+  const isAll = starred > 0 && starred === jobs.length
+  const isSome = starred > 0 && !isAll
+  const look = starred > 0 ? 'nx:text-warning-background' : 'nx:text-muted-foreground'
+  return (
+    <button
+      type="button"
+      aria-label={isAll ? `Unstar ${label}` : `Star ${label}`}
+      aria-pressed={isAll ? true : isSome ? 'mixed' : false}
+      title={isAll ? 'Starred' : isSome ? `${starred} of ${jobs.length} starred` : 'Star'}
+      className={`nx:flex nx:size-7 nx:items-center nx:justify-center nx:p-0 nx:border-0 nx:rounded-md nx:bg-transparent nx:hover:bg-background-hover nx:cursor-pointer ${look}`}
+      onClick={() => void attempt(() => api.tracker.setStarred(jobs.map(job => job.id), !isAll))}
+    >
+      {isSome ? <StarHalfIcon size={16} weight="fill" /> : <StarIcon size={16} weight={isAll ? 'fill' : 'regular'} />}
+    </button>
   )
 }
 
@@ -488,12 +514,13 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
   const settings = useData(() => api.settings.get(), [], ['settings'])
   const months = settings.data ? experienceMonths(settings.data.profile) : null
   const defaultModes = settings.data ? preferredModes(settings.data.preferences) : null
-  const [filters, setFilters] = useState<Filters>({ stages: [], portals: [], search: '', employers: [], experience: [] })
+  const [filters, setFilters] = useState<Filters>({ stages: [], portals: [], search: '', employers: [], experience: [], starred: null })
   const [pickedModes, setPickedModes] = useState<WorkMode[] | null>(null)
   const [reason, setReason] = useState<DiscardReason | 'all'>('all')
   // Opens on the modes the user prefers, until they pick their own.
   const modes = pickedModes ?? defaultModes ?? []
-  const shown: CompanyQuery = { ...filters, view, modes }
+  // Discarded jobs show no star, so the star filter waits there.
+  const shown: CompanyQuery = { ...filters, view, modes, starred: view === 'discarded' ? null : filters.starred }
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState<Set<number>>(new Set())
   const [closed, setClosed] = useState<Set<number>>(new Set())
@@ -567,6 +594,12 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
     const runId = await attempt(() => api.flows.refreshPeople(pickedRows.map(row => row.id)), `Reading your LinkedIn connections at ${n === 1 ? pickedRows[0]!.name : `${n} companies`}`)
     if (runId) clear()
   }
+  const isAllStarred = pickedJobs.length > 0 && pickedJobs.every(job => job.starred)
+  const starPicked = async (): Promise<void> => {
+    const next = !isAllStarred
+    await attempt(() => api.tracker.setStarred(pickedJobs.map(job => job.id), next), `${plural(pickedJobs.length, 'job')} ${next ? 'starred' : 'unstarred'}`)
+    clear()
+  }
   const setStatusOf = async (jobs: JobRow[], next: Status, done: string): Promise<void> => {
     await attempt(async () => {
       for (const job of jobs) await api.tracker.setStatus(job.id, next)
@@ -578,6 +611,7 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
   const portalNames = filters.portals.map(portal => SOURCE_NAMES[portal])
   const employerNames = filters.employers.map(one => EMPLOYER_NAMES[one])
   const fitNames = filters.experience.map(one => EXPERIENCE_FIT_NAMES[one])
+  const starName = filters.starred === null ? '' : filters.starred ? 'Starred' : 'Not starred'
   // The choices carry the years that split them, by the same rule as referral asks: up to a year past the user's.
   const most = maxAskableYears(months)
   const fitLabel = (fit: ExperienceFit): string =>
@@ -598,7 +632,23 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
             clear: () => setReason('all'),
           },
         ]
-      : []),
+      : [
+          {
+            key: 'star',
+            name: 'Star',
+            isOn: filters.starred !== null,
+            value: starName,
+            short: starName,
+            isMulti: false,
+            choices: [
+              { value: 'starred', label: 'Starred' },
+              { value: 'unstarred', label: 'Not starred' },
+            ],
+            chosen: filters.starred === null ? [] : [filters.starred ? 'starred' : 'unstarred'],
+            choose: (value: string) => setFilters(current => ({ ...current, starred: value === 'starred' })),
+            clear: () => setFilters(current => ({ ...current, starred: null })),
+          },
+        ]),
     {
       key: 'mode',
       name: 'Mode',
@@ -733,6 +783,9 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
                         onCheckedChange={on => pick(allIds, on === true)}
                       />
                     </TableSelectionHead>
+                    <TableHead className="nx:w-0 nx:pe-0">
+                      <Hidden>Star</Hidden>
+                    </TableHead>
                     <TableHead>Company</TableHead>
                     <TableHead>Mode</TableHead>
                     <TableHead className="nx:text-end">Min exp</TableHead>
@@ -756,6 +809,9 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
                         <TableSelectionCell>
                           <Checkbox aria-label={`Pick ${row.name}`} checked={n === 0 ? false : n === ids.length ? true : 'indeterminate'} onCheckedChange={on => pick(ids, on === true)} />
                         </TableSelectionCell>
+                        <TableCell className="nx:w-0 nx:pe-0">
+                          <StarButton jobs={row.jobs} label={row.jobs.length === 1 ? `${row.jobs[0]!.role} at ${row.name}` : `the ${plural(row.jobs.length, 'job')} at ${row.name}`} />
+                        </TableCell>
                         <TableCell>
                           <div className="nx:flex nx:items-center nx:gap-1 nx:min-w-0">
                             <Button variant="ghost" size="icon-sm" aria-label={expanded ? `Hide jobs at ${row.name}` : `Show jobs at ${row.name}`} onClick={() => toggleOpen(row)}>
@@ -792,6 +848,9 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
                               <TableSelectionCell>
                                 <Checkbox aria-label={`Pick ${job.role}`} checked={picked.has(job.id)} onCheckedChange={on => pick([job.id], on === true)} />
                               </TableSelectionCell>
+                              <TableCell className="nx:w-0 nx:pe-0">
+                                <StarButton jobs={[job]} label={`${job.role} at ${job.company}`} />
+                              </TableCell>
                               <TableCell>
                                 <button
                                   type="button"
@@ -895,6 +954,10 @@ function Tracker({ adding = false, view }: { adding?: boolean; view: TrackerTab 
                   <span>Check {pickedCheckable.length}</span>
                 </ToolbarButton>
               )}
+              <ToolbarButton size="sm" variant="ghost" onClick={() => void starPicked()}>
+                <StarIcon weight={isAllStarred ? 'regular' : 'fill'} />
+                <span>{isAllStarred ? 'Unstar' : 'Star'}</span>
+              </ToolbarButton>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <ToolbarButton size="sm" variant="ghost">

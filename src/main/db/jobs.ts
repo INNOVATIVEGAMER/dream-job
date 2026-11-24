@@ -11,7 +11,7 @@ import { companyKey, now, today } from './database'
 /** A job as the tracker's rows show it, its company's name joined in and its newest activity as `updated`. */
 export const JOB_ROW = `j.id, j.company_id AS companyId, c.name AS company, j.role, j.status, j.portal, j.link, j.portal_link AS portalLink,
   j.posting_state AS postingState, j.work_mode AS workMode, j.min_years AS minYears, j.score,
-  j.discard_reason AS discardReason, j.discard_line AS discardLine,
+  j.discard_reason AS discardReason, j.discard_line AS discardLine, j.starred,
   COALESCE((SELECT MAX(a.at) FROM activity a WHERE a.job_id = j.id), j.updated_at, j.found) AS updated`
 
 export const JOB_FROM = 'jobs j JOIN companies c ON c.id = j.company_id'
@@ -29,7 +29,11 @@ function parseReasons(value: unknown): string[] {
   }
 }
 
-const toRow = (row: unknown): JobRow => ({ ...(row as JobRow) })
+/** A row of JOB_ROW as a JobRow: SQLite gives the star as 0 or 1. */
+export const toRow = (row: unknown): JobRow => {
+  const job = row as Omit<JobRow, 'starred'> & { starred: unknown }
+  return { ...job, starred: Boolean(job.starred) }
+}
 
 /** A posting a hunt adds as found. */
 export type FoundJob = {
@@ -85,7 +89,7 @@ export class Jobs {
   get(id: number): Job | null {
     const row = this.db.prepare(`SELECT ${FULL} FROM ${JOB_FROM} WHERE j.id = ?`).get(id) as Record<string, unknown> | undefined
     if (!row) return null
-    return { ...(row as unknown as Job), reqId: (row['reqId'] as string | null) || null, scoreReasons: parseReasons(row['scoreReasons']) }
+    return { ...(row as unknown as Job), starred: Boolean(row['starred']), reqId: (row['reqId'] as string | null) || null, scoreReasons: parseReasons(row['scoreReasons']) }
   }
 
   row(id: number): JobRow | null {
@@ -281,6 +285,20 @@ export class Jobs {
     if (!job) throw new Error(`no job with id ${id}`)
     if (job.status !== 'discarded') throw new Error('Only a discarded job can be restored.')
     this.setStatus(id, 'found', { text: `Restored by you. It had been ruled out by: "${job.discardLine ?? ''}"` })
+  }
+
+  /**
+   * Stars jobs or takes the star off, to come back to them. A mark for the
+   * user only: no history line, and the jobs keep their place in the list.
+   * Answers the ids that were found.
+   */
+  setStarred(ids: readonly number[], starred: boolean): number[] {
+    const unique = [...new Set(ids)]
+    if (unique.length === 0) return []
+    const marks = unique.map(() => '?').join(', ')
+    this.db.prepare(`UPDATE jobs SET starred = ? WHERE id IN (${marks})`).run(starred ? 1 : 0, ...unique)
+    const found = new Set(this.db.prepare(`SELECT id FROM jobs WHERE id IN (${marks})`).all(...unique).map(row => Number((row as { id: number }).id)))
+    return unique.filter(one => found.has(one))
   }
 
   setNotes(id: number, notes: string): void {

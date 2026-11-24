@@ -102,6 +102,10 @@ export function registerIpc(deps: IpcDeps): void {
       store.jobs.restore(id.parse(jobId))
       deps.sendData(['jobs'])
     },
+    'tracker:setStarred': (jobIds, starred) => {
+      store.jobs.setStarred(z.array(id).max(5000).parse(jobIds), z.boolean().parse(starred))
+      deps.sendData(['jobs'])
+    },
 
     'companies:get': companyId => store.companyDetail(id.parse(companyId)),
     'companies:names': () => store.companies.names(),

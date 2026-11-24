@@ -101,6 +101,8 @@ export type JobAppApi = {
     add: (input: NewJob) => Promise<number>
     /** A discarded job back to found. */
     restore: (id: number) => Promise<void>
+    /** Stars jobs, or takes the star off. */
+    setStarred: (ids: number[], starred: boolean) => Promise<void>
   }
   companies: {
     get: (id: number) => Promise<CompanyDetail | null>
@@ -214,6 +216,7 @@ export const CHANNELS = [
   'tracker:edit',
   'tracker:add',
   'tracker:restore',
+  'tracker:setStarred',
   'companies:get',
   'companies:names',
   'companies:setStage',

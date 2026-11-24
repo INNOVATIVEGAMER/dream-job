@@ -76,7 +76,7 @@ function readTools(deps: ChatToolDeps): AnyTool[] {
     ),
     defineTool(
       'search_tracker',
-      'The tracker, company first: each company with its jobs in the view (id, role, status, score, portal, work mode, years asked, last change). Filter by view, company sizes, portals, work modes and a search over company and role. Up to 80 companies.',
+      'The tracker, company first: each company with its jobs in the view (id, role, status, score, portal, work mode, years asked, starred, last change). Filter by view, company sizes, portals, work modes, starred, and a search over company and role. Up to 80 companies.',
       {
         view: z.enum(TRACKER_VIEWS).optional().describe('Which jobs: a status view, "closed" (rejected and dead), "discarded", or "all" (everything but discarded, the default)'),
         stages: z.array(z.enum(STAGES)).optional().describe('Company sizes to keep; none means every size'),
@@ -88,6 +88,7 @@ function readTools(deps: ChatToolDeps): AnyTool[] {
           .array(z.enum(EXPERIENCE_FITS))
           .optional()
           .describe('"within": asks no more than a year past the user\'s experience; "above": asks more, so no referral asks; "not-stated"; none means all'),
+        starred: z.boolean().optional().describe('true: only jobs the user starred; false: only jobs not starred; leave out for both'),
       },
       args =>
         guarded(async () => {
@@ -99,6 +100,7 @@ function readTools(deps: ChatToolDeps): AnyTool[] {
             modes: args.modes ?? [],
             employers: args.employers ?? [],
             experience: args.experience ?? [],
+            starred: args.starred ?? null,
           })
           const list = store.trackerList(query)
           const companies = list.companies.slice(0, 80).map(company => ({
@@ -108,7 +110,7 @@ function readTools(deps: ChatToolDeps): AnyTool[] {
             status: company.status,
             people: company.people,
             neverShow: company.neverShow,
-            jobs: company.jobs.map(job => ({ id: job.id, role: job.role, status: job.status, score: job.score, portal: job.portal, workMode: job.workMode, minYears: job.minYears, updated: job.updated })),
+            jobs: company.jobs.map(job => ({ id: job.id, role: job.role, status: job.status, score: job.score, portal: job.portal, workMode: job.workMode, minYears: job.minYears, starred: job.starred, updated: job.updated })),
           }))
           return json({ shown: companies.length, matching: list.companies.length, counts: list.counts, totalJobs: list.totalJobs, companies })
         }),
@@ -217,6 +219,21 @@ function editTools(deps: ChatToolDeps): AnyTool[] {
             }
           }
           changed('jobs')
+          return say(lines.join('\n'))
+        }),
+    ),
+    defineTool(
+      'star_jobs',
+      'Star one or more jobs, or take the star off (starred: false). A star is the user\'s own mark for jobs to come back to: the tracker filters by it, and search_tracker takes starred: true to list them. It changes nothing else.',
+      { job_ids: z.array(id).min(1).max(200), starred: z.boolean().describe('true stars them, false unstars them') },
+      ({ job_ids, starred }) =>
+        guarded(async () => {
+          const wanted = [...new Set(job_ids)]
+          const done = store.jobs.setStarred(wanted, starred)
+          changed('jobs')
+          const missing = wanted.filter(one => !done.includes(one))
+          const lines = done.map(jobId => `${jobName(jobId)}: ${starred ? 'starred' : 'unstarred'}`)
+          if (missing.length) lines.push(`No job ${missing.join(', ')}: nothing changed there.`)
           return say(lines.join('\n'))
         }),
     ),

@@ -217,6 +217,8 @@ export type JobRow = {
   discardReason: DiscardReason | null
   /** The posting's own words that ruled it out, quoted exactly. */
   discardLine: string | null
+  /** The user starred it, to come back to it. */
+  starred: boolean
   /** When anything last happened to it: its newest Activity row. */
   updated: string
 }
@@ -337,6 +339,8 @@ export type CompanyQuery = {
   modes: WorkMode[]
   employers: Employer[]
   experience: ExperienceFit[]
+  /** True keeps starred jobs only, false the rest; null both. */
+  starred: boolean | null
 }
 
 export type CompanyList = {

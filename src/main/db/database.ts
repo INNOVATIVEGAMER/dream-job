@@ -388,6 +388,9 @@ const MIGRATIONS: Migration[] = [
     addColumns(db, 'runs', { subtitle: 'TEXT', at_once: 'INTEGER NOT NULL DEFAULT 1' })
     backfillHuntLanes(db)
   },
+
+  // A star the user puts on a job, to come back to it.
+  db => addColumns(db, 'jobs', { starred: 'INTEGER NOT NULL DEFAULT 0' }),
 ]
 
 type StepRow = { id: number; at: string; kind: string; text: string }

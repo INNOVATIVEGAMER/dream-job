@@ -26,7 +26,7 @@ import { Chats } from './chats'
 import { Companies, furthest, NeverShow } from './companies'
 import { openDatabase } from './database'
 import { Emails } from './emails'
-import { changeLine, JOB_FROM, JOB_ROW, Jobs } from './jobs'
+import { changeLine, JOB_FROM, JOB_ROW, Jobs, toRow } from './jobs'
 import { OutreachStore } from './outreach'
 import { People } from './people'
 import { Runs } from './runs'
@@ -182,6 +182,7 @@ export class Store {
       where.push(`j.work_mode IN (${modes.map(() => '?').join(', ')})`)
       params.push(...modes)
     }
+    if (query.starred !== null) where.push(`j.starred = ${query.starred ? 1 : 0}`)
     const search = query.search.trim().toLowerCase()
     if (search) {
       where.push('(lower(c.name) LIKE ? OR lower(j.role) LIKE ?)')
@@ -194,7 +195,7 @@ export class Store {
     const shown = this.db
       .prepare(`SELECT ${JOB_ROW} FROM ${JOB_FROM} WHERE ${where.join(' AND ')} ORDER BY updated DESC, j.id DESC`)
       .all(...params)
-      .map(row => ({ ...row }) as JobRow)
+      .map(toRow)
       .filter(job => !employers.length || employers.includes(isUndisclosed(job.company) ? 'undisclosed' : 'named'))
       .filter(job => !fits.length || fits.includes(experienceFit(job.minYears, months)))
 
@@ -204,7 +205,7 @@ export class Store {
     const all = new Map<number, JobRow[]>()
     if (ids.length) {
       for (const row of this.db.prepare(`SELECT ${JOB_ROW} FROM ${JOB_FROM} WHERE j.company_id IN (${ids.map(() => '?').join(', ')})`).all(...ids)) {
-        const job = { ...row } as JobRow
+        const job = toRow(row)
         all.set(job.companyId, [...(all.get(job.companyId) ?? []), job])
       }
     }
