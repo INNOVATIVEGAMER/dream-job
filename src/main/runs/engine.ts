@@ -14,9 +14,11 @@ import { z } from 'zod'
 import { PLAYBOOKS } from '../../shared/playbooks'
 import { PORTAL_NAMES, PORTALS } from '../../shared/types'
 import type {
+  ApplicationForm,
   CardAnswer,
   DataTopic,
   Flow,
+  FormField,
   LaneStatus,
   Portal,
   PortalSetting,
@@ -30,6 +32,7 @@ import type {
   ToolSite,
 } from '../../shared/types'
 import type { ChromeController, PageDriver, Tab } from '../browser/chrome'
+import { LiveForm } from '../browser/form'
 import { claudeEnv, findClaude, modelOption } from '../claude'
 import type { Store } from '../db/store'
 
@@ -41,6 +44,8 @@ const MAX_LANE_EVENTS = 80
 const SAVED_LANE_FIELDS: (keyof RunLane)[] = ['status', 'started', 'ended', 'result', 'usage']
 /** Sessions start this far apart, so five Claude Code processes don't all boot at once. */
 const STAGGER_MS = 2000
+/** How often a form is read again while its session waits on the user, who may be typing in Chrome. */
+const FORM_WATCH_MS = 2000
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 export type CardInput = DistributiveOmit<RunCard, 'id'>
@@ -61,6 +66,8 @@ export function defineTool<S extends Parameters<typeof tool>[2]>(
 /** What a flow's tools can do while their session lasts. */
 export type RunContext = {
   runId: number
+  /** The session's key within its run; "" outside a run. */
+  lane: string
   store: Store
   /** The session's own tab: the tab Chrome shows when the run has one session, a tab of its own otherwise. */
   chrome: PageDriver
@@ -81,6 +88,8 @@ export type RunContext = {
   halt: (reason: string) => void
   /** Why the run was halted, or null. */
   halted: () => string | null
+  /** The application form the session fills, as the app follows it; null in a session that fills none. */
+  form: LiveForm | null
 }
 
 /** One session: what to ask Claude, the tools it gets, the shape of its answer, and how it ends. */
@@ -106,8 +115,22 @@ export type FlowSpec<T> = {
    * such as discarding its job; says in one line how it ended. A session
    * without it can only end with the whole run.
    */
-  leave?: (runId: number) => string
+  leave?: (runId: number, lane: string) => string
+  /** The session fills an application form: the app follows it on the page, shows it, and lets the user change its answers. */
+  followsForm?: boolean
   maxTurns?: number
+}
+
+/** A session's form, for the chat's tools: whose it is and where it stands. */
+export type OpenForm = {
+  lane: string
+  jobId: number | null
+  title: string
+  subtitle: string | null
+  status: LaneStatus
+  /** Filled and held for the user's review. */
+  isHeld: boolean
+  form: ApplicationForm
 }
 
 /** How each session ended, for the run's own line. */
@@ -210,6 +233,10 @@ type Lane = {
   leaving: boolean
   /** How leaving it ended, once worked out: its flow's line, worked out only once. */
   leftWith: string | null
+  /** Its application form, followed on the page while it runs. */
+  form: LiveForm | null
+  /** Tool calls in flight: with none, Claude is not acting in the tab. */
+  calls: number
 }
 
 /** A card on screen and every session waiting on it. */
@@ -263,6 +290,8 @@ export class RunEngine {
       turns: 0,
       leaving: false,
       leftWith: null,
+      form: null,
+      calls: 0,
       state: {
         key: String(i),
         title: spec.laneTitle ?? spec.title,
@@ -275,6 +304,7 @@ export class RunEngine {
         progress: null,
         counts: {},
         card: null,
+        form: null,
         events: [],
         last: null,
         usage: { ...NO_USAGE },
@@ -347,6 +377,32 @@ export class RunEngine {
     lane.end?.abort()
   }
 
+  /** The forms of the run going now or last run, one per session that has one. */
+  forms(): OpenForm[] {
+    return this.lanes
+      .filter(lane => lane.state.form)
+      .map(lane => ({
+        lane: lane.state.key,
+        jobId: lane.state.jobId,
+        title: lane.state.title,
+        subtitle: lane.state.subtitle,
+        status: lane.state.status,
+        isHeld: lane.state.card?.kind === 'review',
+        form: lane.state.form!,
+      }))
+  }
+
+  /**
+   * Sets one answer on a session's form, at the user's word or the chat's:
+   * theirs from then on, typed into the page by the app or set by Claude, and
+   * held to before anything is sent. Null drops their answer, and what the page holds stands.
+   */
+  async setField(key: string, field: string, value: string | null, by: 'you' | 'chat'): Promise<FormField> {
+    const lane = this.lanes.find(one => one.state.key === key)
+    if (!lane?.form || !this.isBusy() || !isActive(lane.state.status)) throw new Error('That application is no longer open.')
+    return lane.form.set(field, value, by)
+  }
+
   /** Shows one session's tab in Chrome: by its key, or by a card it waits on. Without one, the tab Chrome follows. */
   async showTab(key: string): Promise<void> {
     const lane = this.lanes.find(one => one.state.key === key || one.state.card?.id === key)
@@ -404,9 +460,19 @@ export class RunEngine {
       return
     }
 
-    const ctx = this.context(plan, runId, lane, tab)
     const spec = lane.spec
-    const tools = spec.tools(ctx)
+    if (spec.followsForm) {
+      lane.form = new LiveForm(tab, {
+        canWrite: () => lane.calls === 0 || lane.state.status === 'waiting',
+        isUsersTurn: () => lane.state.status === 'waiting',
+        onChange: form => {
+          this.setLane(lane, { form: form.fields.length || form.sent ? form : null })
+          this.push()
+        },
+      })
+    }
+    const ctx = this.context(plan, runId, lane, tab)
+    const tools = spec.tools(ctx).map(one => (lane.form ? this.followed(lane, lane.form, one) : one))
     const end = new AbortController()
     const session = query({
       prompt: oneMessage(spec.prompt, end.signal),
@@ -441,6 +507,7 @@ export class RunEngine {
       session.close()
       lane.session = null
       lane.end = null
+      lane.form = null
       if (lane.tab) {
         await lane.tab.close().catch(() => undefined)
         lane.tab = null
@@ -451,6 +518,8 @@ export class RunEngine {
   private context(plan: RunPlan, runId: number, lane: Lane, tab: PageDriver): RunContext {
     return {
       runId,
+      lane: lane.state.key,
+      form: lane.form,
       store: this.deps.store,
       chrome: tab,
       resumePath: this.deps.resumePath,
@@ -476,13 +545,40 @@ export class RunEngine {
   }
 
   /**
+   * A tool of a session that fills a form. It waits out the app's own typing
+   * in the tab; once it is done the form is read off the page again, the
+   * user's answers go back in where Claude typed over them, and Claude hears
+   * of any they changed.
+   */
+  private followed(lane: Lane, form: LiveForm, one: AnyTool): AnyTool {
+    return {
+      ...one,
+      handler: async (args, extra) => {
+        await form.idle()
+        lane.calls++
+        let result: Awaited<ReturnType<AnyTool['handler']>>
+        try {
+          result = await one.handler(args, extra)
+        } finally {
+          lane.calls--
+        }
+        const note = await form.afterStep().catch(() => null)
+        return note ? { ...result, content: [...result.content, { type: 'text' as const, text: note }] } : result
+      },
+    }
+  }
+
+  /**
    * Puts a card on screen and waits. A session that needs the same sign-in
    * as one already waiting joins that card, so signing in once lets every
-   * session on the site carry on.
+   * session on the site carry on. While it waits, its form is read again every
+   * little while: the user may be filling it in Chrome.
    */
   private ask(plan: RunPlan, lane: Lane, input: CardInput): Promise<CardAnswer> {
     if (this.isStopping || lane.leaving) return Promise.resolve({ kind: 'cancel' })
     const share = input.kind === 'handover' && input.what === 'sign-in' ? `sign-in:${lane.state.portal ?? ''}` : null
+    const form = lane.form
+    const watch = form ? setInterval(() => void form.read().catch(() => undefined), FORM_WATCH_MS) : null
     return new Promise<CardAnswer>(resolve => {
       const joined = share ? [...this.cards.values()].find(open => open.share === share) : undefined
       const open = joined ?? { card: { ...input, id: randomUUID() } as RunCard, share, waiters: [] }
@@ -492,6 +588,7 @@ export class RunEngine {
       this.refresh(plan)
       this.deps.onAttention()
     }).finally(() => {
+      if (watch) clearInterval(watch)
       if (lane.state.status === 'waiting') this.setLane(lane, { card: null, status: 'running' })
       this.refresh(plan)
     })
@@ -581,7 +678,7 @@ export class RunEngine {
   private leftLine(lane: Lane): string {
     if (lane.leftWith === null) {
       try {
-        lane.leftWith = lane.spec.leave?.(this.state!.id) ?? 'Left by you.'
+        lane.leftWith = lane.spec.leave?.(this.state!.id, lane.state.key) ?? 'Left by you.'
       } catch (error) {
         lane.leftWith = `Left by you, but saving that failed: ${error instanceof Error ? error.message : String(error)}`
       }

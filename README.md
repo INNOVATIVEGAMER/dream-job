@@ -49,7 +49,7 @@ Up to 5 at a time, from your resume and your saved answers.
 
 <img src=".github/assets/readme-apply.png" alt="The Found tab with five jobs at four companies picked, and a bar to apply to them, send connection requests, refresh connections, check the postings, set a status or discard them">
 
-Easy Apply, the boards' own forms, and company career sites. Anything written in your voice waits for you before it goes.
+Easy Apply, the boards' own forms, and company career sites. Each filled form shows in the app, whole: change any answer there, then press Submit. What went out is kept with the job.
 
 ## A referral path at every company.
 
@@ -73,11 +73,11 @@ Ask about your search, or have it do the work.
 
 <img src=".github/assets/readme-chat.png" alt="The chat beside a company page: asked why some jobs are undisclosed, Claude searches the tracker, opens the postings in Chrome and explains that a recruiting firm posted them for a client it does not name">
 
-Cmd J opens a chat on any screen. It reads your tracker, changes statuses and notes, starts runs, and works in Chrome in a tab of its own. Anything that sends waits on a card for you. Pick the model in Settings.
+Cmd J opens a chat on any screen. It reads your tracker, changes statuses and notes, starts runs, redrafts an answer on an application you are reviewing, and works in Chrome in a tab of its own. Anything that sends waits on a card for you. Pick the model in Settings.
 
 ## You stay in charge.
 
-- Anything written in your voice waits for your approval before it is sent.
+- No application goes out until you have read its filled form and pressed Submit.
 - Passwords, one-time codes, CAPTCHAs, payment details and IDs: the run stops and hands Chrome to you.
 - Claude never writes to anyone beyond your saved referral message.
 

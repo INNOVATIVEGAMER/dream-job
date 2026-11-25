@@ -19,9 +19,11 @@ import type {
   NeedsYou,
   OutreachState,
   PersonState,
+  RunState,
   TrackerView,
 } from '../../shared/types'
 import { ActivityLog } from './activity'
+import { Applications } from './applications'
 import { Chats } from './chats'
 import { Companies, furthest, NeverShow } from './companies'
 import { openDatabase } from './database'
@@ -48,6 +50,7 @@ export class Store {
   readonly settings: SettingsStore
   readonly neverShow: NeverShow
   readonly chats: Chats
+  readonly applications: Applications
 
   private constructor(private readonly db: DatabaseSync) {
     this.companies = new Companies(db)
@@ -60,6 +63,7 @@ export class Store {
     this.settings = new SettingsStore(db)
     this.neverShow = new NeverShow(this.companies)
     this.chats = new Chats(db)
+    this.applications = new Applications(db)
   }
 
   static open(path: string): Store {
@@ -262,7 +266,7 @@ export class Store {
     return { company, jobs: this.jobs.forCompany(id), people, activity: this.activity.forCompany(id) }
   }
 
-  /** One job's page: the job, its company, its history, and who was asked about it. */
+  /** One job's page: the job, its company, its history, who was asked about it, and what was sent when applying. */
   jobDetail(id: number): JobDetail | null {
     const job = this.jobs.get(id)
     if (!job) return null
@@ -275,7 +279,16 @@ export class Store {
       people: this.people.counts([company.id]).get(company.id) ?? { connected: 0, requested: 0 },
       activity: this.activity.forJob(id),
       outreach: this.outreach.forJob(id),
+      applications: this.applications.forJob(id),
     }
+  }
+
+  /** A past run as its screen showed it, each session with the application form it sent. */
+  runState(id: number): RunState | null {
+    const state = this.runs.state(id)
+    if (!state) return null
+    const forms = this.applications.forRun(id)
+    return forms.size ? { ...state, lanes: state.lanes.map(lane => ({ ...lane, form: forms.get(lane.key) ?? null })) } : state
   }
 
   /* ---------------------------------------------------------------- outreach */

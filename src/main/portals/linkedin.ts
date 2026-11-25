@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import { HUNT_WINDOW_NAMES } from '../../shared/types'
 import type { HuntWindow, WrittenAnswer } from '../../shared/types'
-import { approveWritten, readPage, setField } from '../browser/tools'
+import { fixFirst, readPage, reviewForm, sentNow, setField } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
 import { clickPoint, markSite, portalTool, refuse, say, sleep, stageLine, waitFor } from './common'
@@ -319,8 +319,9 @@ export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; appl
         [
           'Work the Easy Apply form, one page at a time. Called with no values, it opens the form on the posting (if it is not open) and reads the page: its fields come numbered.',
           'Called with values, it sets each field by its number, then by default presses Next or Review and reads the page that follows, with any error LinkedIn shows.',
-          'Mark each value "fact" (from the profile or saved answers: names, numbers, yes or no, a choice) or "written" (free text you composed in the user\'s voice). Written values are shown to the user first, who may edit them or decline; declining closes the form unsent.',
+          'Mark each value "fact" (from the profile or saved answers: names, numbers, yes or no, a choice) or "written" (free text you composed in the user\'s voice). The user reads every answer on the filled form before it is sent, and may change any.',
           'For a radio, give the number of the option to pick; for a checkbox, "checked" or "unchecked"; for a type-ahead field, the text, and the closest suggestion is picked. It never presses Submit: use linkedin_easy_apply_submit on the review page.',
+          'To change an answer on an earlier page, call it with then "back" until that page shows, set the value, and move on again.',
         ].join(' '),
         {
           job_id: z.string().regex(/^\d+$/).describe('The posting\'s job id'),
@@ -336,9 +337,9 @@ export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; appl
             .max(30)
             .optional(),
           then: z
-            .enum(['next', 'stay'])
+            .enum(['next', 'stay', 'back'])
             .optional()
-            .describe('"next" presses Next or Review; "stay" stays on this page. By default it moves on after filling values, and only reads when given none'),
+            .describe('"next" presses Next or Review; "stay" stays on this page; "back" presses Back, to the page before. By default it moves on after filling values, and only reads when given none'),
         },
         async ({ job_id, values, then }) => {
           const isOpen = await ctx.chrome.evaluate<boolean>(`!!(${APPLY_DIALOG})`, true)
@@ -360,30 +361,36 @@ export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; appl
 
           const done: string[] = []
           if (values?.length) {
-            const written: WrittenAnswer[] = values.filter(v => v.kind === 'written').map(v => ({ ref: v.ref, label: v.label, text: v.value }))
-            const facts = values.filter(v => v.kind === 'fact').map(v => ({ label: v.label, value: v.value }))
-            const approved = await approveWritten(ctx, written, facts, true)
-            if (!approved) {
-              await discardEasyApply(ctx)
-              return refuse('The user chose not to send this application, and the form was closed unsent. Finish with outcome "not-applied".')
-            }
-            const textOf = new Map(approved.texts.map(answer => [answer.ref, answer.text]))
             for (const value of values) {
-              const text = value.kind === 'written' ? (textOf.get(value.ref) ?? value.value) : value.value
               try {
-                done.push(await setField(ctx, value.ref, text))
+                done.push(await setField(ctx, value.ref, value.value))
               } catch (error) {
                 done.push(`could not set ${value.ref} (${value.label}): ${error instanceof Error ? error.message : String(error)}`)
               }
             }
-            record.written.push(...approved.texts)
-            record.edited ||= approved.edited
-            record.facts.push(...facts)
+            // The page is read before it is left, since the next one no longer shows these fields, and an answer the user set themselves goes back in.
+            await ctx.form?.markWritten(values.filter(v => v.kind === 'written').map(v => v.ref))
+            await ctx.form?.settle()
+            // What Claude said it filled, the newest answer to each question: kept for the note when no form could be read.
+            const labels = new Set(values.map(v => v.label))
+            const written: WrittenAnswer[] = values.filter(v => v.kind === 'written').map(v => ({ ref: v.ref, label: v.label, text: v.value }))
+            record.written = [...record.written.filter(answer => !labels.has(answer.label)), ...written]
+            record.facts = [...record.facts.filter(fact => !labels.has(fact.label)), ...values.filter(v => v.kind === 'fact').map(v => ({ label: v.label, value: v.value }))]
             ctx.count('filled', values.length)
           }
 
           // With values it moves on unless told to stay; with none it only reads, unless told to move on.
-          if ((then ?? (values?.length ? 'next' : 'stay')) === 'next') {
+          const move = then ?? (values?.length ? 'next' : 'stay')
+          if (move === 'back') {
+            const back = await ctx.chrome.evaluate<Point>(dialogButtonScript('^Back\\b'))
+            if (back.none) return say([...done, 'There is no Back button here: this is the first page.', '', await readForm(ctx)].join('\n'))
+            const before = await ctx.chrome.evaluate<string>(`(${APPLY_DIALOG})?.innerText || ''`, true)
+            await clickPoint(ctx, back)
+            await waitFor(ctx, `((${APPLY_DIALOG})?.innerText || '') !== ${JSON.stringify(before)}`, 5000)
+            await sleep(500)
+            return say([...done, `pressed ${back.words}`, '', await readForm(ctx)].join('\n'))
+          }
+          if (move === 'next') {
             const step = await ctx.chrome.evaluate<Point>(dialogButtonScript('^(Next|Review|Continue)\\b'))
             if (step.none) {
               const submit = await ctx.chrome.evaluate<Point>(dialogButtonScript('^Submit'))
@@ -411,7 +418,7 @@ export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; appl
         ctx,
         'linkedin',
         'easy_apply_submit',
-        'On the Easy Apply review page, send the application: unticks "Follow" the company, presses Submit application, and confirms LinkedIn sent it. Call only after every page is filled.',
+        'On the Easy Apply review page, send the application: unticks "Follow" the company, holds the filled form for the user to review in the app, then presses Submit application and confirms LinkedIn sent it. Call only after every page is filled. If the user changed answers the form does not hold, it is refused with what to set first; if they decline, the form is closed unsent.',
         { job_id: z.string().regex(/^\d+$/).describe('The posting\'s job id') },
         async () => {
           const submit = await ctx.chrome.evaluate<Point>(dialogButtonScript('^Submit'))
@@ -422,6 +429,12 @@ export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; appl
             await clickPoint(ctx, follow)
             await sleep(300)
           }
+          const review = await reviewForm(ctx, 'Submit application')
+          if (review.go === 'fix') return refuse(`${fixFirst(review, 'linkedin_easy_apply_submit')} linkedin_easy_apply_fill with then "back" goes to the page before.`)
+          if (review.go === 'cancel') {
+            await discardEasyApply(ctx)
+            return refuse('The user chose not to send this application, and the form was closed unsent. Finish with outcome "not-applied".')
+          }
           const again = await ctx.chrome.evaluate<Point>(dialogButtonScript('^Submit'))
           await ctx.chrome.allowSubmit()
           await clickPoint(ctx, again.none ? submit : again)
@@ -429,14 +442,14 @@ export function linkedinTools(ctx: RunContext, options: { hunt?: HuntHooks; appl
           if (!sent) {
             return refuse(`LinkedIn did not confirm the application. What the form shows now:\n${await readPage(ctx, 'auto', 3000)}`)
           }
-          record.sent = { route: 'easy-apply', written: record.written, edited: record.edited, facts: record.facts, byUser: false }
+          record.sent = sentNow(ctx, 'easy-apply', false, record)
           ctx.log('good', 'LinkedIn says the application was sent')
           return say('Sent: LinkedIn confirmed the application. Finish with outcome "applied".')
         },
         {
           steps: () => ['Check the review page of the Easy Apply form in Chrome', 'Press Submit application', 'Come back here and press Continue'],
           afterUser: async () => {
-            record.sent = { route: 'easy-apply', written: record.written, edited: record.edited, facts: record.facts, byUser: true }
+            record.sent = sentNow(ctx, 'easy-apply', true, record)
             return say('The user submitted the application themselves. Finish with outcome "applied".')
           },
         },

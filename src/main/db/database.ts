@@ -391,6 +391,25 @@ const MIGRATIONS: Migration[] = [
 
   // A star the user puts on a job, to come back to it.
   db => addColumns(db, 'jobs', { starred: 'INTEGER NOT NULL DEFAULT 0' }),
+
+  // Each application that went out, with its form as it was sent: every question and the answer it held.
+  db =>
+    db.exec(`
+      CREATE TABLE applications (
+        id INTEGER PRIMARY KEY,
+        job_id INTEGER NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+        run_id INTEGER,
+        lane TEXT,
+        sent TEXT NOT NULL,
+        route TEXT NOT NULL,
+        by_user INTEGER NOT NULL DEFAULT 0,
+        url TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        fields TEXT NOT NULL DEFAULT '[]'
+      );
+      CREATE INDEX applications_job ON applications (job_id);
+      CREATE INDEX applications_run ON applications (run_id);
+    `),
 ]
 
 type StepRow = { id: number; at: string; kind: string; text: string }

@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import { HUNT_WINDOW_NAMES } from '../../shared/types'
 import type { HuntWindow, WrittenAnswer } from '../../shared/types'
-import { approveWritten, readPage, setField } from '../browser/tools'
+import { fixFirst, readPage, reviewForm, sentNow, setField } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
 import { clickPoint, isKnown, markSite, portalTool, refuse, say, SCROLL_TO_END, sleep, stageLine, waitFor } from './common'
@@ -330,8 +330,8 @@ export function wellfoundTools(ctx: RunContext, options: { hunt?: WellfoundHunt;
         'apply',
         [
           'Apply to a Wellfound posting. Called with no answers, it opens the application form and reads it: the posting\'s facts, the note to the company ("What interests you about working for this company?") and any other questions, numbered.',
-          'Called with answers, it fills each by its number and sends the application. Mark each answer "fact" (from the profile or saved answers) or "written" (free text you composed in the user\'s voice). The note is a written answer: always write one.',
-          'Written answers are shown to the user first, who may edit them or decline; declining leaves it unsent.',
+          'Called with answers, it fills each by its number, holds the filled form for the user to review in the app, then sends the application. Mark each answer "fact" (from the profile or saved answers) or "written" (free text you composed in the user\'s voice). The note is a written answer: always write one.',
+          'The user may change any answer before it goes, or decline, which leaves it unsent.',
         ].join(' '),
         {
           link: z.string().describe('The posting\'s link'),
@@ -368,19 +368,22 @@ export function wellfoundTools(ctx: RunContext, options: { hunt?: WellfoundHunt;
 
           const written: WrittenAnswer[] = (answers ?? []).filter(a => a.kind === 'written').map(a => ({ ref: a.ref, label: a.label, text: a.value }))
           const facts = (answers ?? []).filter(a => a.kind === 'fact').map(a => ({ label: a.label, value: a.value }))
-          const approved = await approveWritten(ctx, written, facts)
-          if (!approved) return refuse('The user chose not to send this application. Leave it unsent and finish with outcome "not-applied".')
-          const textOf = new Map(approved.texts.map(answer => [answer.ref, answer.text]))
           const problems: string[] = []
           for (const answer of answers ?? []) {
             try {
-              await setField(ctx, answer.ref, answer.kind === 'written' ? (textOf.get(answer.ref) ?? answer.value) : answer.value)
+              await setField(ctx, answer.ref, answer.value)
             } catch (error) {
               problems.push(`${answer.label}: ${error instanceof Error ? error.message : String(error)}`)
             }
           }
           if (problems.length) return refuse(`Not sent: some answers could not be filled.\n${problems.join('\n')}\nRead the form again and retry.`)
+          await ctx.form?.markWritten(written.map(answer => answer.ref))
           ctx.count('filled', (answers ?? []).length)
+
+          // The filled form waits for the user; an answer they set themselves stands over the one given here.
+          const review = await reviewForm(ctx, 'Send application')
+          if (review.go === 'fix') return refuse(fixFirst(review, 'wellfound_apply'))
+          if (review.go === 'cancel') return refuse('The user chose not to send this application. Leave it unsent and finish with outcome "not-applied".')
 
           const send = await ctx.chrome.evaluate<Point>(SEND_BUTTON)
           if (send.none) return refuse('The Send application button is gone. Read the page.')
@@ -388,14 +391,14 @@ export function wellfoundTools(ctx: RunContext, options: { hunt?: WellfoundHunt;
           await clickPoint(ctx, send)
           const closed = await waitFor(ctx, `!(${APPLY_DIALOG})`, 12_000)
           if (!closed) return refuse(`Wellfound did not send it. The form shows:\n${await readPage(ctx, 'auto', 3000)}`)
-          record.sent = { route: 'wellfound', written: approved.texts, edited: approved.edited, facts, byUser: false }
+          record.sent = sentNow(ctx, 'wellfound', false, { written, facts })
           ctx.log('good', 'Sent the application on Wellfound')
           return say('Sent: Wellfound closed the form. Finish with outcome "applied".')
         },
         {
           steps: () => ['In Chrome, press Apply on this posting', 'Write your note and answer any questions', 'Press Send application, then come back here and press Continue'],
           afterUser: async () => {
-            record.sent = { route: 'wellfound', written: [], edited: false, facts: [], byUser: true }
+            record.sent = sentNow(ctx, 'wellfound', true)
             return say('The user sent the application themselves. Finish with outcome "applied".')
           },
         },

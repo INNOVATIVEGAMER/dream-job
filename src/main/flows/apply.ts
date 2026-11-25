@@ -87,7 +87,7 @@ function system(store: Store, row: Job, resumeText: string | null): string {
   const portal = portalOf(row)
   const jobId = portal ? portalIdOf(portal, row.portalLink) : null
   return [
-    'This run applies to one posting for the user and submits the application. Applications are submitted directly; no one confirms each one.',
+    'This run applies to one posting for the user. You fill the application; the user reviews the whole filled form in the app and submits it there. The tools that send hold it for them, so call them as soon as the form is filled.',
     '',
     'The posting:',
     `Company: ${row.company}`,
@@ -113,8 +113,10 @@ function system(store: Store, row: Job, resumeText: string | null): string {
     '  a choice whose options word a saved answer differently: the option that means the same;',
     '  dates that follow from the roles, such as when a role that has ended ended.',
     '- Ask only what none of them states or settles, such as pay, notice period, or a personal detail the resume leaves out: ask_user, once, with every such question the form has.',
-    '- Free-text answers in the user\'s voice are written answers. Write them from the profile and the resume; the user sees each before it is sent.',
+    '- Free-text answers in the user\'s voice are written answers. Write them from the profile and the resume; the user reads each on the filled form before it is sent.',
+    '- The user sees the form as you fill it and may change any answer in the app. A tool result may end with a note from the app on answers they changed: theirs stand. Leave the ones it says are on the page, set the ones it says are not (back a page if need be), and never change one back.',
     `- The resume: ${resume ? `upload_resume wherever a form asks for one.${portal === 'linkedin' ? ` On LinkedIn's resume page, keep a listed resume named "${resume.fileName}" when it is already selected; otherwise upload.` : ''}` : 'the user has not added one. Where a form requires it, hand that step to the user.'}`,
+    '- The button that sends the application, whatever it is called (Submit, Apply, Send, Finish, Complete), is pressed only by submit_form or the portal\'s own submit tool, never with click: those hold the form for the user first.',
     '- A cover letter asked for as a file: hand_to_user.',
     '- A consent checkbox that gates the submit is part of applying: tick it. Agree to nothing else a page asks.',
     '- A pay band below the floor, or a requirement that plainly contradicts what the user wants: check_with_user before going on.',
@@ -179,18 +181,32 @@ const ROUTE_WORDS: Record<NonNullable<ApplyRecord['sent']>['route'], string> = {
   weekday: 'on Weekday',
 }
 
-/** What went in the application, for the job's notes. */
+/**
+ * The line for the job's notes. The answers themselves are kept with the
+ * application, as its form; only when no form could be read off the page do
+ * the notes carry what Claude said it filled.
+ */
 function noteOf(record: ApplyRecord, summary: string): string {
   const sent = record.sent!
+  const hasForm = !!sent.form?.fields.length
   return [
-    `Applied ${ROUTE_WORDS[sent.route]}${sent.byUser ? ', submitted by you' : ''}. ${summary}`,
-    sent.written.length ? `Written answers, approved by you${sent.edited ? ' with your edits' : ''}:` : '',
-    ...sent.written.map(answer => `- ${answer.label}: ${answer.text}`),
-    sent.facts.length ? 'Facts filled:' : '',
-    ...sent.facts.map(fact => `- ${fact.label}: ${fact.value}`),
+    `Applied ${ROUTE_WORDS[sent.route]}${sent.byUser ? ', submitted by you' : sent.edited ? ', with your changes' : ''}. ${summary}`,
+    !hasForm && sent.written.length ? 'Written answers:' : '',
+    ...(hasForm ? [] : sent.written.map(answer => `- ${answer.label}: ${answer.text}`)),
+    !hasForm && sent.facts.length ? 'Facts filled:' : '',
+    ...(hasForm ? [] : sent.facts.map(fact => `- ${fact.label}: ${fact.value}`)),
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+/** Marks the job applied and keeps the application: its form as it went out. */
+function keep(store: Store, row: Job, record: ApplyRecord, summary: string, runId: number, lane: string): void {
+  const sent = record.sent!
+  store.transaction(() => {
+    store.jobs.markApplied(row.id, noteOf(record, summary), runId)
+    store.applications.add({ jobId: row.id, runId, lane, route: sent.route, byUser: sent.byUser, form: sent.form })
+  })
 }
 
 function finish(store: Store, row: Job, record: ApplyRecord, answer: Answer, ctx: RunContext): string {
@@ -206,7 +222,7 @@ function finish(store: Store, row: Job, record: ApplyRecord, answer: Answer, ctx
 
   // A submit the app saw go through settles it, whatever the answer says.
   if (record.sent) {
-    rows.markApplied(row.id, noteOf(record, answer.summary), ctx.runId)
+    keep(store, row, record, answer.summary, ctx.runId, ctx.lane)
     return `Applied to ${row.company}${record.sent.byUser ? ': you pressed submit' : ''}.`
   }
   switch (answer.outcome) {
@@ -233,7 +249,7 @@ function finish(store: Store, row: Job, record: ApplyRecord, answer: Answer, ctx
 }
 
 export function applySpec(store: Store, row: Job, resumeText: string | null): FlowSpec<Answer> {
-  const record: ApplyRecord = { written: [], edited: false, facts: [], sent: null, posting: null }
+  const record: ApplyRecord = { written: [], facts: [], sent: null, posting: null }
   const portal = portalOf(row)
   return {
     flow: 'apply',
@@ -253,14 +269,15 @@ export function applySpec(store: Store, row: Job, resumeText: string | null): Fl
     output: Output,
     finish: (answer, ctx) => finish(store, row, record, answer, ctx),
     // Worked out once the session has stopped: an application the app saw go out stands, whatever the button said.
-    leave: runId => {
+    leave: (runId, lane) => {
       if (record.sent) {
-        store.jobs.markApplied(row.id, noteOf(record, 'It went out just before you discarded it.'), runId)
+        keep(store, row, record, 'It went out just before you discarded it.', runId, lane)
         return 'Already sent when you discarded it, so the job stays applied.'
       }
       store.jobs.discard(row.id, 'You discarded it while it was being applied to', 'other', runId)
       return 'Discarded by you, not applied.'
     },
+    followsForm: true,
     maxTurns: 120,
   }
 }

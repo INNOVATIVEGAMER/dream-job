@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { readPage } from '../browser/tools'
+import { readPage, reviewForm, sentNow } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
 import { clickPoint, isKnown, markSite, portalTool, refuse, say, sleep, stageLine, waitFor, yearsFieldOf } from './common'
@@ -242,7 +242,7 @@ export function instahyreTools(ctx: RunContext, options: { hunt?: { onSearch: (s
         ctx,
         'instahyre',
         'apply',
-        'Apply to an Instahyre posting in one step: it sends the user\'s Instahyre profile to the company. There is nothing to write. Answers whether Instahyre shows it as applied.',
+        'Apply to an Instahyre posting in one step: once the user says yes in the app, it sends their Instahyre profile to the company. There is nothing to write. Answers whether Instahyre shows it as applied.',
         { job_id: z.string().regex(/^\d+$/) },
         async ({ job_id }) => {
           const posting = await openPosting(ctx, job_id)
@@ -251,6 +251,8 @@ export function instahyreTools(ctx: RunContext, options: { hunt?: { onSearch: (s
           if (posting.applied) return refuse('Instahyre shows this posting as already applied to. Finish with outcome "already-applied".')
           const button = await ctx.chrome.evaluate<Point>(APPLY_BUTTON)
           if (button.none) return refuse('There is no Apply button on this posting. Read the page to see why.')
+          const review = await reviewForm(ctx, 'Apply on Instahyre', 'There is no form to fill: Instahyre sends your profile there as it is.')
+          if (review.go !== 'send') return refuse('The user chose not to apply. Finish with outcome "not-applied".')
           await ctx.chrome.allowSubmit()
           await clickPoint(ctx, button)
           let after = { applied: false, asks: false }
@@ -260,7 +262,7 @@ export function instahyreTools(ctx: RunContext, options: { hunt?: { onSearch: (s
             after = await ctx.chrome.evaluate<{ applied: boolean; asks: boolean }>(AFTER_APPLY, true).catch(() => after)
           }
           if (after.applied) {
-            record.sent = { route: 'instahyre', written: [], edited: false, facts: [], byUser: false }
+            record.sent = sentNow(ctx, 'instahyre', false)
             ctx.log('good', 'Applied on Instahyre')
             return say('Applied: Instahyre shows it as applied. Finish with outcome "applied".')
           }
@@ -270,7 +272,7 @@ export function instahyreTools(ctx: RunContext, options: { hunt?: { onSearch: (s
         {
           steps: () => ['In Chrome, press Apply now on this posting', 'Come back here and press Continue'],
           afterUser: async () => {
-            record.sent = { route: 'instahyre', written: [], edited: false, facts: [], byUser: true }
+            record.sent = sentNow(ctx, 'instahyre', true)
             return say('The user applied themselves. Finish with outcome "applied".')
           },
         },

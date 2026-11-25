@@ -1,5 +1,6 @@
 import type {
   Activity,
+  Application,
   AppStatus,
   BrowserInfo,
   CardAnswer,
@@ -41,8 +42,8 @@ import type {
   WorkMode,
 } from './types'
 
-/** One job's page: the job, its company, its history, and who was asked about it. */
-export type JobDetail = { job: Job; company: Company; companyJobs: number; people: PeopleCount; activity: Activity[]; outreach: JobOutreach[] }
+/** One job's page: the job, its company, its history, who was asked about it, and the applications sent for it, each with its form as it went. */
+export type JobDetail = { job: Job; company: Company; companyJobs: number; people: PeopleCount; activity: Activity[]; outreach: JobOutreach[]; applications: Application[] }
 
 /** A past run: its line in history, every step, and, when its sessions were saved, the run as its screen showed it. */
 export type RunDetail = { summary: RunSummary; events: RunEvent[]; state: RunState | null }
@@ -130,6 +131,8 @@ export type JobAppApi = {
     showTab: (key: string) => Promise<void>
     /** Leaves one session by its lane key while the others carry on: for an application, its job is discarded unless it was already sent. */
     leave: (key: string) => Promise<void>
+    /** Sets one answer on a session's application form, by the field's key; null drops yours, and what the page holds stands. */
+    setField: (key: string, field: string, value: string | null) => Promise<void>
     /** The jobs a run added: what a hunt found. */
     jobs: (runId: number) => Promise<JobRow[]>
     /** The jobs a run ruled out, with the line and reason for each, whatever their status now. */
@@ -233,6 +236,7 @@ export const CHANNELS = [
   'runs:stop',
   'runs:showTab',
   'runs:leave',
+  'runs:setField',
   'runs:jobs',
   'runs:discarded',
   'flows:hunt',

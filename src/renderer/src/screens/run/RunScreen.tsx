@@ -51,6 +51,7 @@ import {
   TableRow,
 } from '../../ui/nx'
 import { RunCardView } from './Cards'
+import { FormView } from './Form'
 
 const isActive = (status: LaneStatus | RunState['status']): boolean => status === 'running' || status === 'waiting'
 
@@ -121,6 +122,21 @@ function Now({ lane }: { lane: RunLane }): JSX.Element {
       </div>
       {lane.progress && <Progress aria-label={lane.progress.label} value={lane.progress.total ? Math.round((lane.progress.done / lane.progress.total) * 100) : 0} />}
     </div>
+  )
+}
+
+/**
+ * The application form a session fills, whole, under whatever it waits on:
+ * every answer as the page in Chrome holds it, yours to change until it is sent.
+ */
+function LaneForm({ lane }: { lane: RunLane }): JSX.Element | null {
+  const form = lane.form
+  if (!form) return null
+  const canEdit = isActive(lane.status) && !form.sent
+  return (
+    <Group title={form.sent ? 'Application, as sent' : 'Application form'}>
+      <FormView key={lane.key} fields={form.fields} laneKey={lane.key} canEdit={canEdit} shownPage={form.page} />
+    </Group>
   )
 }
 
@@ -377,7 +393,8 @@ function OneSession({ run }: { run: RunState }): JSX.Element {
       wide={isHunt}
       main={
         <>
-          {run.card ? <RunCardView card={run.card} /> : busy ? <Now lane={lane} /> : <EndedBanner run={run} presentation="card" />}
+          {run.card ? <RunCardView card={run.card} form={lane.form} /> : busy ? <Now lane={lane} /> : <EndedBanner run={run} presentation="card" />}
+          <LaneForm lane={lane} />
           {isHunt && <HuntTables jobs={jobs} portal={lane.portal} live={busy} />}
         </>
       }
@@ -423,7 +440,7 @@ const GROUPS: { title: string; has: (lane: RunLane) => boolean }[] = [
 
 function laneLine(lane: RunLane): string {
   if (lane.status === 'queued') return 'Starts when a session frees up'
-  if (lane.status === 'waiting') return lane.card?.kind === 'approve' ? 'Approve your answers' : 'Needs you'
+  if (lane.status === 'waiting') return lane.card?.kind === 'review' ? 'Review and submit' : lane.card?.kind === 'approve' ? 'Approve your answers' : 'Needs you'
   if (isActive(lane.status)) return lane.progress ? `${lane.progress.label}, ${lane.progress.done} of ${lane.progress.total}` : (lane.last ?? 'Starting')
   return lane.result ?? lane.last ?? ''
 }
@@ -538,12 +555,13 @@ function ManySessions({ run }: { run: RunState }): JSX.Element {
                 </div>
               </div>
               {lane.card ? (
-                <RunCardView card={lane.card} />
+                <RunCardView card={lane.card} form={lane.form} />
               ) : isActive(lane.status) ? (
                 <Now lane={lane} />
               ) : (
                 <span className="nx:typography-body-default">{lane.status === 'queued' ? 'Starts when a session frees up.' : lane.result}</span>
               )}
+              <LaneForm lane={lane} />
               {isHunt && <HuntTables jobs={jobs} portal={lane.portal} live={isActive(lane.status)} />}
               <Group title="Steps">
                 <Steps events={lane.events} busy={isActive(lane.status)} waiting={lane.status === 'waiting'} />

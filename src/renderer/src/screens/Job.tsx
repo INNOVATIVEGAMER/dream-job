@@ -1,18 +1,18 @@
 import { useState } from 'react'
 import type { JSX } from 'react'
 
-import { ArrowRightIcon, ArrowSquareOutIcon, ChatTextIcon, CheckIcon, DotsThreeIcon, PaperPlaneTiltIcon, StarIcon, WarningIcon } from '@phosphor-icons/react'
+import { ArrowRightIcon, ArrowSquareOutIcon, CaretDownIcon, ChatTextIcon, CheckIcon, DotsThreeIcon, PaperPlaneTiltIcon, StarIcon, WarningIcon } from '@phosphor-icons/react'
 
 import { isPortalLink } from '../../../shared/links'
 import { askBlock } from '../../../shared/profile'
 import { isUndisclosed, UNDISCLOSED_WHY } from '../../../shared/referral'
 import type { JobEdit } from '../../../shared/api'
-import { ACTIVE_STATUSES, OUTREACH_STATE_NAMES, OUTREACH_STATES, SOURCE_NAMES, SOURCES, STATUS_NAMES, STATUSES, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
-import type { JobOutreach, OutreachState, PeopleCount, Source, WorkMode } from '../../../shared/types'
+import { ACTIVE_STATUSES, APPLY_ROUTE_NAMES, OUTREACH_STATE_NAMES, OUTREACH_STATES, SOURCE_NAMES, SOURCES, STATUS_NAMES, STATUSES, WORK_MODE_NAMES, WORK_MODES } from '../../../shared/types'
+import type { Application, JobOutreach, OutreachState, PeopleCount, Source, WorkMode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { useExperience } from '../lib/experience'
-import { capitalize, day, initials } from '../lib/format'
+import { capitalize, day, initials, plural } from '../lib/format'
 import { go } from '../lib/router'
 import { useAppStatus } from '../lib/status'
 import { ActivityTimeline } from '../ui/activity'
@@ -24,6 +24,9 @@ import {
   Avatar,
   AvatarFallback,
   Button,
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -40,6 +43,7 @@ import {
   TableRow,
 } from '../ui/nx'
 import { AskReferralDialog } from './AskReferral'
+import { FormView } from './run/Form'
 
 /** Where an application on the portal itself goes, by route. */
 const ON_PORTAL: Record<string, string> = { 'easy-apply': 'Easy Apply', wellfound: 'On Wellfound', instahyre: 'On Instahyre' }
@@ -98,7 +102,46 @@ function AskRow({ ask }: { ask: JobOutreach }): JSX.Element {
   )
 }
 
-/** One job: the role and why it fits, who was asked about it, notes and history, with its status and company beside them. */
+/** One application that went out: when, where, who pressed the last button, and its form as it was sent, a click away. */
+function SentApplication({ application }: { application: Application }): JSX.Element {
+  const count = application.fields.length
+  return (
+    <div className="nx:flex nx:flex-col nx:gap-1">
+      <Numbers
+        items={[
+          day(application.sent),
+          APPLY_ROUTE_NAMES[application.route] ?? application.route,
+          application.byUser ? 'You pressed submit in Chrome' : 'Sent after your review',
+          ...(application.runId
+            ? [
+                <button key="run" type="button" className="nx:bg-transparent nx:border-0 nx:p-0 nx:cursor-pointer nx:typography-body-small nx:text-muted-foreground nx:underline" onClick={() => go(`/runs/${application.runId}`)}>
+                  Run {application.runId}
+                </button>,
+              ]
+            : []),
+        ]}
+      />
+      {count === 0 ? (
+        <span className="nx:typography-body-small nx:text-muted-foreground">No form was read for this one.</span>
+      ) : (
+        <Collapsible>
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" endIcon={<CaretDownIcon />} className="nx:self-start nx:px-0">
+              {plural(count, 'answer')} as sent
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="nx:pt-3">
+              <FormView fields={application.fields} />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+    </div>
+  )
+}
+
+/** One job: the role and why it fits, who was asked about it, what was sent when applying, notes and history, with its status and company beside them. */
 export function JobScreen({ id }: { id: number }): JSX.Element {
   const status = useAppStatus()
   const detail = useData(() => api.tracker.get(id), [id], ['jobs', 'people'])
@@ -117,7 +160,7 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
     )
   }
 
-  const { company, people, outreach, activity, companyJobs } = detail.data
+  const { company, people, outreach, activity, companyJobs, applications } = detail.data
   const companyTo = `/company/${company.id}`
   const isActive = ACTIVE_STATUSES.includes(job.status)
   const save = (change: JobEdit): Promise<void> => api.tracker.edit(job.id, change)
@@ -274,6 +317,15 @@ export function JobScreen({ id }: { id: number }): JSX.Element {
               >
                 <span className="nx:typography-body-small">{capitalize(peopleLine(people))}</span>
                 {job.status === 'found' && <span className="nx:typography-body-small nx:text-muted-foreground">You can ask them for a referral once you have applied.</span>}
+              </Group>
+            )}
+            {applications.length > 0 && (
+              <Group title={applications.length === 1 ? 'Application' : 'Applications'}>
+                <div className="nx:flex nx:flex-col nx:gap-4">
+                  {applications.map(application => (
+                    <SentApplication key={application.id} application={application} />
+                  ))}
+                </div>
               </Group>
             )}
             <Group title="Notes">

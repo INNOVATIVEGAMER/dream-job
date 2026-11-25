@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import type { ApplyRecord } from '../browser/tools'
-import { readPage } from '../browser/tools'
+import { readPage, sentNow } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
 import { clickPoint, isKnown, markSite, portalTool, refuse, say, SCROLL_TO_END, sleep, stageLine, waitFor, yearsFieldOf } from './common'
 import type { OnRead } from './common'
@@ -255,7 +255,7 @@ export function workatastartupTools(ctx: RunContext, options: { hunt?: { onSearc
         ctx,
         'workatastartup',
         'open_apply',
-        "Open a posting's Apply form and read it: the message to the founders and the company's own questions, numbered. Fill it with type_text and choose_option, then send it with submit_form, which shows the user every written answer first.",
+        "Open a posting's Apply form and read it: the message to the founders and the company's own questions, numbered. Fill it with type_text and choose_option, then send it with submit_form, which holds the filled form for the user to review first.",
         { job_id: z.string().regex(/^\d+$/) },
         async ({ job_id }) => {
           const posting = await openPosting(ctx, job_id)
@@ -272,7 +272,7 @@ export function workatastartupTools(ctx: RunContext, options: { hunt?: { onSearc
         {
           steps: () => ['In Chrome, press Apply on this posting, write to the founders and answer their questions', 'Send it, then come back here and press Continue'],
           afterUser: async () => {
-            if (options.apply) options.apply.sent = { route: 'workatastartup', written: [], edited: false, facts: [], byUser: true }
+            if (options.apply) options.apply.sent = sentNow(ctx, 'workatastartup', true)
             return say('The user applied themselves. Finish with outcome "applied".')
           },
         },

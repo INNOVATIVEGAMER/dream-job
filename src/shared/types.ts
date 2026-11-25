@@ -587,9 +587,14 @@ export const PORTAL_TOOLS: Record<Portal, PortalToolInfo[]> = {
       label: 'Fill Easy Apply forms',
       detail: 'Open the form, fill each page, go to the next',
       group: 'apply',
-      asksFirst: 'Shows you written answers before typing them',
     },
-    { name: 'easy_apply_submit', label: 'Submit Easy Apply', detail: 'Press Submit application on the review page', group: 'apply' },
+    {
+      name: 'easy_apply_submit',
+      label: 'Submit Easy Apply',
+      detail: 'Press Submit application on the review page',
+      group: 'apply',
+      asksFirst: 'Holds the filled form for you to review',
+    },
     { name: 'find_people', label: 'Find people at a company', detail: 'In your field, and the hiring team', group: 'connect' },
     { name: 'send_blank_request', label: 'Send blank connection requests', detail: 'Never with a note', group: 'connect' },
     { name: 'list_new_connections', label: 'Check who accepted', detail: 'Reads your newest connections', group: 'connect' },
@@ -610,13 +615,13 @@ export const PORTAL_TOOLS: Record<Portal, PortalToolInfo[]> = {
       label: 'Apply',
       detail: 'Send the application with a note to the company',
       group: 'apply',
-      asksFirst: 'Asks you first: the note is a written answer',
+      asksFirst: 'Holds the filled form for you to review',
     },
   ],
   instahyre: [
     { name: 'list_matches', label: 'List matched jobs', detail: 'The jobs Instahyre matched to your profile', group: 'find' },
     { name: 'read_job', label: 'Read a posting', detail: 'Pay, experience, description', group: 'find' },
-    { name: 'apply', label: 'Apply', detail: 'In one step, with your Instahyre profile', group: 'apply' },
+    { name: 'apply', label: 'Apply', detail: 'In one step, with your Instahyre profile', group: 'apply', asksFirst: 'Asks you before it sends your profile' },
   ],
   jsgurujobs: [
     { name: 'search_jobs', label: 'Search jobs', detail: 'By country and work mode, newest first', group: 'find' },
@@ -634,7 +639,7 @@ export const PORTAL_TOOLS: Record<Portal, PortalToolInfo[]> = {
       label: 'Open the application',
       detail: "Opens the posting's Apply form and reads its fields",
       group: 'apply',
-      asksFirst: 'Your message to the founders and written answers wait for you',
+      asksFirst: 'The filled form waits for you before it is sent',
     },
   ],
   weekday: [
@@ -702,8 +707,88 @@ export type WrittenAnswer = { ref: number; label: string; text: string }
 /** A fact filled from Settings, shown on the approval card for reference. */
 export type FilledFact = { label: string; value: string }
 
+/** The control a form field is, as the app shows it and sets it. A checkbox holds "Yes" or "No". */
+export type FormFieldKind = 'text' | 'longtext' | 'select' | 'radio' | 'checkbox' | 'combobox' | 'file'
+
+/** Who last set a field: the site filled it in, Claude in the run, you, or Claude in the chat. */
+export type FormFieldBy = 'site' | 'claude' | 'you' | 'chat'
+
+/** One question of an application form, as read off the page in Chrome. */
+export type FormField = {
+  /** The same each time the form is read, unlike the numbers Claude works with. */
+  key: string
+  /** The page it sits on in a form of several pages, from 1. */
+  page: number
+  label: string
+  kind: FormFieldKind
+  /** The choices of a select or a set of radio buttons; null for anything typed. */
+  options: string[] | null
+  isRequired: boolean
+  /** The page won't let it be changed. */
+  isReadOnly: boolean
+  /** What the page holds, as last read. */
+  value: string
+  /** The answer you or the chat set, kept until it is changed again; null when neither did. */
+  wanted: string | null
+  by: FormFieldBy
+  /** Free text written in your voice, not a fact. */
+  isWritten: boolean
+  /** On the page Chrome shows now, so the app can set it itself. */
+  isOnPage: boolean
+  /** Claude was asked to set your answer, and the page still holds another. */
+  isStuck: boolean
+}
+
+/** An application's form as the app follows it: every field seen so far, over every page. */
+export type ApplicationForm = {
+  url: string
+  title: string
+  /** The page Chrome shows now, from 1; 0 before any field was seen. */
+  page: number
+  fields: FormField[]
+  /** When it went out; null while it can still change. */
+  sent: string | null
+}
+
+/** Where an application went, by its route, in words. */
+export const APPLY_ROUTE_NAMES: Record<string, string> = {
+  'easy-apply': 'LinkedIn Easy Apply',
+  'company-site': "The company's site",
+  wellfound: 'Wellfound',
+  instahyre: 'Instahyre',
+  workatastartup: 'Work at a Startup',
+  weekday: 'Weekday',
+}
+
+/** An application that went out, with the form as it was sent. */
+export type Application = {
+  id: number
+  jobId: number
+  runId: number | null
+  sent: string
+  /** Where it went, such as easy-apply or company-site. */
+  route: string
+  /** You pressed the last button yourself in Chrome. */
+  byUser: boolean
+  url: string
+  title: string
+  /** Empty when there was no form, as with a profile sent in one press. */
+  fields: FormField[]
+}
+
 /** What a run is waiting on the user for. */
 export type RunCard =
+  | {
+      /** An application filled and held: nothing goes until the user submits it. The form itself is on its session. */
+      kind: 'review'
+      id: string
+      url: string
+      title: string
+      /** The button's words, such as "Submit application". */
+      sends: string
+      /** A line for an application with no form to show, or null. */
+      note: string | null
+    }
   | {
       kind: 'approve'
       id: string
@@ -751,6 +836,8 @@ export type RunCard =
 /** The answer the user gives a card. */
 export type CardAnswer =
   | { kind: 'approve'; texts: string[] }
+  /** Send the application under review, as its form now stands. */
+  | { kind: 'submit' }
   | { kind: 'cancel' }
   | { kind: 'resume' }
   | { kind: 'choose'; option: string }
@@ -784,6 +871,8 @@ export type RunLane = {
   counts: RunCounts
   /** What it waits on the user for. Sessions waiting on the same sign-in share one card. */
   card: RunCard | null
+  /** The application form it is filling, or filled; null until a field is seen, and for sessions that fill none. */
+  form: ApplicationForm | null
   events: RunEvent[]
   /** The last thing it did, for its tile. */
   last: string | null

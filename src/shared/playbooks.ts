@@ -12,7 +12,7 @@ export const PLAYBOOKS: Record<Portal, string[]> = {
     'Cards show pay only when the employer gives it. "Viewed" means the user opened it before, not that they applied.',
     'A posting\'s company size sits under About the company; read_job turns it into the stage bucket.',
     'A posting without Easy Apply has "Apply on company website". read_job gives that link: open it with open_page in the same tab and carry on there with the general tools and submit_form.',
-    'Easy Apply is a form of several pages ("1/5 pages"): contact info filled from the LinkedIn profile, the resume, questions, then a review page. Fill each with easy_apply_fill and send from the review page with easy_apply_submit.',
+    'Easy Apply is a form of several pages ("1/5 pages"): contact info filled from the LinkedIn profile, the resume, questions, then a review page. Fill each with easy_apply_fill and send from the review page with easy_apply_submit, which holds the filled form for the user to review first.',
     'Contact info comes filled from the LinkedIn profile. Keep it unless a saved answer says otherwise.',
     'An Easy Apply question LinkedIn marks with * is required, and Next shows an error until it is answered.',
     'Closing the Easy Apply form asks whether to save it: the app discards it.',
@@ -35,7 +35,7 @@ export const PLAYBOOKS: Record<Portal, string[]> = {
     'list_matches reads the jobs Instahyre recommends for the user\'s Instahyre profile, at most a page of them. Instahyre picks them; the app does not search.',
     'Instahyre shows no posting dates and rarely pay: neither is a reason to discard.',
     'A posting\'s page gives the experience asked ("4-8 Years"), company facts with headcount, skills and the description.',
-    'Applying is one step and sends the user\'s Instahyre profile: there is nothing to write.',
+    'Applying is one step and sends the user\'s Instahyre profile: there is nothing to write. The user says yes in the app before it goes.',
   ],
   jsgurujobs: [
     'A board of JavaScript and TypeScript roles that mirrors employers\' own postings. search_jobs filters by country (postings open to it, remote and local) and work mode, ten a page, newest first.',
@@ -52,7 +52,7 @@ export const PLAYBOOKS: Record<Portal, string[]> = {
     'YC startups. search_jobs lists one kind of role (engineering, design, product, sales and so on), newest first; postings show no dates, so the newest few dozen stand in for the window.',
     'read_job gives the location, experience asked ("3+ years"), salary, visa sponsorship, the company with its YC batch and size, and whether the user already applied there.',
     'Work at a Startup may say the user\'s location is not eligible for a role: that is a location discard.',
-    'Applying happens on Work at a Startup: open_apply opens a form with a message to the founders and the company\'s own questions. Write them from the profile; submit_form shows the user every written answer before it goes.',
+    'Applying happens on Work at a Startup: open_apply opens a form with a message to the founders and the company\'s own questions. Write them from the profile; submit_form holds the filled form for the user to review before it goes.',
   ],
   weekday: [
     'search_jobs reads the filters saved on the user\'s Weekday account: the roles, seniority and places are set on Weekday, and the app only lists them.',

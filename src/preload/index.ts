@@ -62,6 +62,7 @@ const api: JobAppApi = {
     stop: call('runs:stop'),
     showTab: call('runs:showTab'),
     leave: call('runs:leave'),
+    setField: call('runs:setField'),
     jobs: call('runs:jobs'),
     discarded: call('runs:discarded'),
   },

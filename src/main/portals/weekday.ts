@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type { HuntWindow } from '../../shared/types'
+import { sentNow } from '../browser/tools'
 import type { ApplyRecord } from '../browser/tools'
 import type { AnyTool, RunContext } from '../runs/engine'
 import { isKnown, markSite, portalTool, refuse, say, SCROLL_TO_END, sleep, waitFor } from './common'
@@ -267,7 +268,7 @@ export function weekdayTools(ctx: RunContext, options: { hunt?: { window: HuntWi
           if (reply.kind !== 'resume') return refuse('The user stopped the run. Finish now without doing anything more.')
           const after = await openPosting(ctx, url)
           if (!after.applied) return refuse('Weekday does not show this posting as applied. Read the page to see what happened, or finish with outcome "not-applied".')
-          record.sent = { route: 'weekday', written: [], edited: false, facts: [], byUser: true }
+          record.sent = sentNow(ctx, 'weekday', true)
           ctx.log('good', 'Applied on Weekday')
           return say('Applied: Weekday shows it as applied. Finish with outcome "applied".')
         },

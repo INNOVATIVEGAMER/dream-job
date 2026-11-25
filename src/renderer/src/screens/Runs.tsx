@@ -25,6 +25,7 @@ import { go } from '../lib/router'
 import { ErrorNote, Group, Hidden, Loading, Numbers, Page, RunStatusBadge } from '../ui/common'
 import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs, TabsList, TabsTrigger } from '../ui/nx'
 import { useAppStatus } from '../lib/status'
+import { FormView } from './run/Form'
 import { RunView } from './run/RunScreen'
 
 const FLOW_ICON: Record<string, ReactNode> = {
@@ -69,6 +70,8 @@ function RunPage({ id }: { id: number }): JSX.Element {
     )
   }
   const steps = events.filter(event => event.kind !== 'claude' && event.kind !== 'tool')
+  // An application's form as it went out, when the run sent one.
+  const form = state?.lanes[0]?.form ?? null
   return (
     <Page
       title={summary.title}
@@ -100,6 +103,11 @@ function RunPage({ id }: { id: number }): JSX.Element {
           ...(summary.usage.inputTokens ? [`${tokens(summary.usage.inputTokens)} tokens`] : []),
         ]}
       />
+      {form && (
+        <Group title="Application, as sent">
+          <FormView fields={form.fields} />
+        </Group>
+      )}
       <Group title="Steps">
         {(steps.length ? steps : events).length === 0 ? (
           <span className="nx:typography-body-small nx:text-muted-foreground">Nothing was recorded.</span>

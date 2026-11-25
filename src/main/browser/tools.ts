@@ -3,21 +3,15 @@ import { basename, dirname, join } from 'node:path'
 
 import { z } from 'zod'
 
+import { sameAnswer } from '../../shared/form'
 import { TOOL_SITE_NAMES } from '../../shared/types'
-import type { Portal, ToolSite, WrittenAnswer } from '../../shared/types'
+import type { ApplicationForm, Portal, ToolSite, WrittenAnswer } from '../../shared/types'
 import { defineTool } from '../runs/engine'
 import type { AnyTool, RunContext } from '../runs/engine'
-import {
-  chooseScript,
-  clickScript,
-  fieldScript,
-  fileInputScript,
-  focusScript,
-  pointScript,
-  readScript,
-  suggestionScript,
-} from './page-scripts'
-import type { FieldKind } from './page-scripts'
+import { pressRef, setField, typeInto } from './actions'
+import { chooseScript, clickScript, fileInputScript, invalidScript, readScript } from './page-scripts'
+
+export { pressRef, setField, typeInto }
 
 /** Words a flow never lets `click` press: sending goes through the app's own tools. */
 export const REFUSE = {
@@ -109,30 +103,26 @@ export async function readPage(ctx: RunContext, scope: 'auto' | 'page' = 'auto',
   ].join('\n')
 }
 
-/** Clicks element `ref` at its centre, with no checks: for the app's own tools, after their own checks. */
-export async function pressRef(ctx: RunContext, ref: number): Promise<void> {
-  const point = await ctx.chrome.evaluate<Point>(pointScript(ref))
-  if (point.error) throw new Error(point.error)
-  if (point.x === undefined || point.y === undefined) throw new Error('The element has no position on screen.')
-  await ctx.chrome.clickAt(point.x, point.y)
-}
-
-/** Replaces what text field `ref` holds with `text`, as typing. */
-export async function typeInto(ctx: RunContext, ref: number, text: string): Promise<void> {
-  const focus = await ctx.chrome.evaluate<{ ok?: boolean; error?: string }>(focusScript(ref))
-  if (focus.error) throw new Error(focus.error)
-  await ctx.chrome.insertText(text)
-}
-
 type Fact = { label: string; value: string }
 
-/** What a flow hears when a form is sent: where, which written answers went, and whether the user pressed it. */
-export type Sent = { route: 'easy-apply' | 'company-site' | 'wellfound' | 'instahyre' | 'workatastartup' | 'weekday'; written: WrittenAnswer[]; edited: boolean; facts: Fact[]; byUser: boolean }
+/**
+ * What a flow hears when an application goes out: where, whether the user
+ * pressed the last button, and the form as it was sent. `written` and `facts`
+ * are what Claude said it filled, kept for the note when no form could be read.
+ */
+export type Sent = {
+  route: 'easy-apply' | 'company-site' | 'wellfound' | 'instahyre' | 'workatastartup' | 'weekday'
+  written: WrittenAnswer[]
+  /** The user changed an answer on the form before it went. */
+  edited: boolean
+  facts: Fact[]
+  byUser: boolean
+  form: ApplicationForm | null
+}
 
 /** What an apply run's tools saw and sent, for the flow to save on the job. */
 export type ApplyRecord = {
   written: WrittenAnswer[]
-  edited: boolean
   facts: Fact[]
   sent: Sent | null
   posting: { closed: boolean; route: string; applyUrl: string | null } | null
@@ -158,66 +148,72 @@ export async function approveWritten(ctx: RunContext, answers: WrittenAnswer[], 
   return { texts, edited }
 }
 
-/**
- * Sends a form the user's way: written answers wait on the approval card,
- * where the user may edit them; a form of facts alone goes straight through.
- * Approved text is typed into each field before the button is pressed, and
- * the guard is opened for this one submit only.
- */
-export async function submitWithApproval(
-  ctx: RunContext,
-  press: () => Promise<void>,
-  answers: WrittenAnswer[],
-  facts: Fact[],
-): Promise<{ sent: boolean; edited: boolean; texts: WrittenAnswer[] }> {
-  const approved = await approveWritten(ctx, answers, facts)
-  if (!approved) return { sent: false, edited: false, texts: answers }
-  for (const answer of approved.texts) await typeInto(ctx, answer.ref, answer.text)
-  await ctx.chrome.allowSubmit()
-  await press()
-  await ctx.chrome.settle()
-  return { sent: true, edited: approved.edited, texts: approved.texts }
-}
+/** How the user's review of a filled application came out. */
+export type Review =
+  | { go: 'send' }
+  | { go: 'cancel' }
+  /** Answers of theirs the page does not hold: Claude sets them, then asks again. */
+  | { go: 'fix'; text: string }
 
 /**
- * Sets field `ref` from the last read to `value`, the way a person would:
- * types into a text field (and picks the matching suggestion of a type-ahead),
- * chooses a select's option, and ticks or unticks a radio or checkbox, where
- * "yes", "true" or "checked" ticks it.
+ * Holds a filled application for the user. The whole form is on the Run
+ * screen, where they change what they like; nothing goes until they submit.
+ * The answers they set are typed into the page by the app where it can; the
+ * rest go back to Claude to set, and once the page holds them it is sent
+ * without asking twice. `sends` is the button's words; `note` a line for an
+ * application with no form to show.
  */
-export async function setField(ctx: RunContext, ref: number, value: string): Promise<string> {
-  const field = await ctx.chrome.evaluate<{ kind?: FieldKind; checked?: boolean; x?: number; y?: number; error?: string }>(fieldScript(ref))
-  if (field.error || !field.kind) throw new Error(field.error ?? `No element ${ref}.`)
-  switch (field.kind) {
-    case 'text':
-      await typeInto(ctx, ref, value)
-      return `typed into ${ref}`
-    case 'combobox': {
-      await typeInto(ctx, ref, value)
-      await new Promise(resolve => setTimeout(resolve, 900))
-      const option = await ctx.chrome.evaluate<{ x?: number; y?: number; text?: string; none?: boolean }>(suggestionScript(value))
-      if (option.none || option.x === undefined || option.y === undefined) return `typed into ${ref}; no suggestion showed`
-      await ctx.chrome.clickAt(option.x, option.y)
-      return `typed into ${ref} and picked "${option.text}"`
+export async function reviewForm(ctx: RunContext, sends: string, note: string | null = null): Promise<Review> {
+  const form = ctx.form
+  let isApproved = false
+  // Asked to send again after a send: the first did not finish, and whatever changed since is reviewed again.
+  form?.reopen()
+  for (;;) {
+    await form?.settle()
+    const back = form?.sendBack() ?? null
+    if (back) {
+      ctx.log('step', 'Setting the answers you changed')
+      return { go: 'fix', text: back }
     }
-    case 'select': {
-      const result = await ctx.chrome.evaluate<{ chosen?: string; error?: string }>(chooseScript(ref, value))
-      if (result.error) throw new Error(result.error)
-      return `chose "${result.chosen}" in ${ref}`
+    if (form ? form.isApproved() : isApproved) return { go: 'send' }
+    const page = await ctx.chrome.page().catch(() => ({ url: '', title: '' }))
+    ctx.log('warn', 'Holding the application for you')
+    const reply = await ctx.ask({ kind: 'review', url: page.url, title: page.title, sends, note })
+    if (reply.kind !== 'submit') {
+      ctx.log('step', 'Not sent: you chose not to send it')
+      return { go: 'cancel' }
     }
-    case 'radio':
-    case 'checkbox': {
-      const want = field.kind === 'radio' || /^(yes|true|checked|check|on|tick)$/i.test(value.trim())
-      if (field.checked === want) return `${ref} was already ${want ? 'ticked' : 'unticked'}`
-      if (field.x === undefined || field.y === undefined) throw new Error(`Element ${ref} has no position on screen.`)
-      await ctx.chrome.clickAt(field.x, field.y)
-      return `${want ? 'ticked' : 'unticked'} ${ref}`
-    }
-    case 'file':
-      throw new Error(`Element ${ref} is a file field: use upload_resume.`)
-    default:
-      throw new Error(`Element ${ref} is not a field. Read the page again and give a field's number.`)
+    ctx.log('step', 'You approved it')
+    // Whatever they typed last goes into the page before it is counted as approved.
+    await form?.settle()
+    form?.approve()
+    isApproved = true
   }
+}
+
+/** Why a submit tool did not send, for Claude: what the user changed, and what to do once it is set. */
+export const fixFirst = (review: Extract<Review, { go: 'fix' }>, tool: string): string => `Not sent yet.\n${review.text}\nThen call ${tool} again.`
+
+/**
+ * Types Claude's written answers into their fields ahead of the review, so
+ * the form the user reads holds them. An answer the user set themselves
+ * stands, and one the field already holds is not typed twice.
+ */
+export async function typeWritten(ctx: RunContext, answers: WrittenAnswer[]): Promise<void> {
+  const refs = answers.map(answer => answer.ref)
+  const fields = ctx.form ? await ctx.form.fieldsOf(refs) : []
+  for (const [i, answer] of answers.entries()) {
+    const field = fields[i]
+    if (field && (field.wanted !== null || sameAnswer(field, field.value, answer.text))) continue
+    await typeInto(ctx, answer.ref, answer.text)
+  }
+  await ctx.form?.markWritten(refs)
+}
+
+/** What a flow keeps of an application that went out: the form as it was sent, and what Claude said it filled. */
+export function sentNow(ctx: RunContext, route: Sent['route'], byUser: boolean, said: { written: WrittenAnswer[]; facts: Fact[] } = { written: [], facts: [] }): Sent {
+  const form = ctx.form?.freeze() ?? null
+  return { route, byUser, written: said.written, facts: said.facts, edited: !!form?.fields.some(field => field.wanted !== null), form }
 }
 
 const WrittenAnswerSchema = z.object({
@@ -390,7 +386,7 @@ export function browserTools(
     tools.push(
       defineTool(
         'submit_form',
-        "Send a form on a company's career site. Give the submit button's number, every free-text answer you wrote (field number, the question as worded, your text), and the facts you filled. Written answers are shown to the user first and may be edited; a form of facts alone is sent straight away. If the user declines, nothing is sent and this call is refused.",
+        "Send a form on a company's career site, once every field is filled. Give the submit button's number, every free-text answer you wrote (field number, the question as worded, your text), and the facts you filled. The user reviews the whole filled form in the app first and may change any answer; nothing is sent until they submit it there. If they changed answers the page does not hold, this call is refused with what to set first. If they decline, nothing is sent and this call is refused.",
         {
           ref: z.number().int().positive().describe('The number of the submit button from read_page'),
           written_answers: z.array(WrittenAnswerSchema).max(10).describe('Free-text answers you wrote; empty when there are none'),
@@ -398,9 +394,24 @@ export function browserTools(
         },
         ({ ref, written_answers, facts }) =>
           guarded(async () => {
-            const result = await submitWithApproval(ctx, () => pressRef(ctx, ref), written_answers, facts)
-            if (!result.sent) return refuse('The user chose not to submit. Leave the form as it is and finish.')
-            options.onSent?.({ route: 'company-site', written: result.texts, edited: result.edited, facts, byUser: false })
+            await typeWritten(ctx, written_answers)
+            // A form the browser itself would refuse is not put before the user, and never counted as sent.
+            const invalid = async (): Promise<string | null> => {
+              const lines = await ctx.chrome.evaluate<string[]>(invalidScript(ref), true).catch(() => [])
+              return lines.length ? `Not sent: the browser would refuse this form. Fix these, then call submit_form again:\n${lines.map(line => `- ${line}`).join('\n')}` : null
+            }
+            const before = await invalid()
+            if (before) return refuse(before)
+            const review = await reviewForm(ctx, 'Submit application')
+            if (review.go === 'fix') return refuse(fixFirst(review, 'submit_form'))
+            if (review.go === 'cancel') return refuse('The user chose not to submit. Leave the form as it is and finish.')
+            // What the user changed in review may have emptied something required.
+            const after = await invalid()
+            if (after) return refuse(after)
+            await ctx.chrome.allowSubmit()
+            await pressRef(ctx, ref)
+            await ctx.chrome.settle()
+            options.onSent?.(sentNow(ctx, 'company-site', false, { written: written_answers, facts }))
             ctx.log('good', 'Submitted the form')
             const page = await ctx.chrome.page()
             return say(`Submitted. Now at ${page.url} (${page.title}). Read the page to confirm it went through.`)

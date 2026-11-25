@@ -52,6 +52,7 @@ export const NewJob = z.object({
 })
 export const CardAnswerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('approve'), texts: z.array(z.string().max(20_000)).max(20) }),
+  z.object({ kind: z.literal('submit') }),
   z.object({ kind: z.literal('cancel') }),
   z.object({ kind: z.literal('resume') }),
   z.object({ kind: z.literal('choose'), option: short() }),

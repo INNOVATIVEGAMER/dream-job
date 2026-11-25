@@ -127,6 +127,7 @@ export class Runs {
         progress: null,
         counts: {},
         card: null,
+        form: null,
         events,
         last: said[said.length - 1]?.text ?? null,
         usage: { turns: Number(row['turns']), inputTokens: Number(row['input_tokens']), outputTokens: Number(row['output_tokens']), ms: Number(row['ms']) },

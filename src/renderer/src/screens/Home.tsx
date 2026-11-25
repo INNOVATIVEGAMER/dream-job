@@ -151,7 +151,7 @@ export function Home(): JSX.Element {
             key="run"
             icon={NEED_ICON.hand}
             title={`${run.title} needs you`}
-            body={run.card?.kind === 'approve' ? 'Approve your answers' : 'A card is waiting'}
+            body={run.card?.kind === 'review' ? 'An application is filled and waits for you to submit it' : run.card?.kind === 'approve' ? 'Approve your answers' : 'A card is waiting'}
             action={
               <Button variant="outline" size="sm" onClick={() => go('/run')}>
                 Review

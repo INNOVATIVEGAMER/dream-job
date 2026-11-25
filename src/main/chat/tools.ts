@@ -17,13 +17,14 @@ import {
   TRACKER_VIEWS,
   WORK_MODES,
 } from '../../shared/types'
-import type { DataTopic, FilledFact, RunState, WrittenAnswer } from '../../shared/types'
+import { answerOf, isMissing, isPending } from '../../shared/form'
+import type { DataTopic, FilledFact, FormField, RunState, WrittenAnswer } from '../../shared/types'
 import { approveWritten, browserTools, guarded, pressRef, refuse, REFUSE, say, typeInto } from '../browser/tools'
 import type { Store } from '../db/store'
 import { PreferencesSchema, ProfileSchema } from '../db/settings'
 import type { Flows } from '../flows'
 import { cut, defineTool } from '../runs/engine'
-import type { AnyTool, RunContext, RunEngine } from '../runs/engine'
+import type { AnyTool, OpenForm, RunContext, RunEngine } from '../runs/engine'
 import { CompanyEdit, CompanyQuery, httpsLink, id, JobEdit, NewJob } from '../schemas'
 
 /** What the chat's tools reach: the tracker, the runs, the screens, and a Chrome tab of the chat's own. */
@@ -59,7 +60,7 @@ function runBrief(run: RunState | null): unknown {
     progress: run.progress,
     counts: run.counts,
     waitingOnUser: run.card ? run.card.kind : null,
-    sessions: run.lanes.map(lane => ({ title: lane.title, status: lane.status, last: lane.last, result: lane.result })),
+    sessions: run.lanes.map(lane => ({ title: lane.title, jobId: lane.jobId, status: lane.status, waitingOnUser: lane.card?.kind ?? null, last: lane.last, result: lane.result })),
     recent: run.events.slice(-15).map(event => `${event.kind}: ${event.text}`),
     result: run.result,
   }
@@ -498,7 +499,7 @@ function runTools(deps: ChatToolDeps): AnyTool[] {
     ),
     defineTool(
       'start_apply',
-      'Apply to found jobs: one session per job, 5 at a time, from the resume and saved answers. Written answers still wait for the user on the Run screen. The user confirms on a card first.',
+      'Apply to found jobs: one session per job, 5 at a time, from the resume and saved answers. Each filled application then waits on the Run screen, where the user reviews its form and submits it. The user confirms on a card first.',
       { job_ids: z.array(id).min(1).max(50) },
       ({ job_ids }) =>
         guarded(async () => {
@@ -658,7 +659,125 @@ function chromeTools(deps: ChatToolDeps): AnyTool[] {
   return tools
 }
 
+/** A form field as the chat reads it: the question, the answer it goes out with, and where it stands. */
+const fieldBrief = (field: FormField): Record<string, unknown> => ({
+  key: field.key,
+  ...(field.page > 1 ? { page: field.page } : {}),
+  question: field.label,
+  kind: field.kind,
+  ...(field.options ? { options: field.options.slice(0, 60) } : {}),
+  answer: answerOf(field),
+  ...(field.isRequired ? { required: true, ...(isMissing(field) ? { empty: true } : {}) } : {}),
+  ...(field.isWritten ? { writtenAnswer: true } : {}),
+  ...(field.isReadOnly || field.kind === 'file' ? { cannotBeSetHere: true } : {}),
+  setBy: field.by,
+  ...(isPending(field) ? { notOnThePageYet: true, pageHolds: field.value } : {}),
+  ...(field.isStuck ? { theFormWouldNotTakeIt: true } : {}),
+})
+
+/**
+ * The application forms of the run going now: the chat reads the one on
+ * screen and sets answers on it for the user, as they would on the Run
+ * screen. It never sends one; and the applications already sent, with their answers.
+ */
+function formTools(deps: ChatToolDeps): AnyTool[] {
+  const { store, engine } = deps
+  const nameOf = (one: OpenForm): string => [one.title, one.subtitle].filter(Boolean).join(': ')
+  const standing = (one: OpenForm): string =>
+    one.form.sent ? 'sent' : one.isHeld ? 'filled, and waiting for the user to review and submit it' : one.status === 'running' || one.status === 'waiting' ? 'Claude is still filling it' : 'not sent: its session ended'
+  /** The form a tool means: the job's, or the only one it could be. */
+  const pick = (jobId: number | undefined, mustBeOpen: boolean): OpenForm | string => {
+    const all = engine.forms()
+    const open = all.filter(one => !one.form.sent && (one.status === 'running' || one.status === 'waiting'))
+    const pool = mustBeOpen ? open : all
+    if (jobId) return pool.find(one => one.jobId === jobId) ?? `Job ${jobId} has no ${mustBeOpen ? 'open ' : ''}application form in this run.`
+    const held = pool.filter(one => one.isHeld)
+    const only = held.length === 1 ? held[0] : pool.length === 1 ? pool[0] : null
+    if (only) return only
+    if (pool.length === 0) return mustBeOpen ? 'No application form is open. One opens when an apply run fills it.' : 'No run has an application form now.'
+    return `Several application forms are open. Give job_id: ${pool.map(one => `${one.jobId} (${nameOf(one)}, ${standing(one)})`).join('; ')}`
+  }
+
+  return [
+    defineTool(
+      'get_application_form',
+      "The application form of the run going now, as the Run screen shows it, read off the page in Chrome: each field's key, question, kind, choices, the answer it goes out with, who set it, and whether the page holds it yet. With several applications open, give the job_id; without one it is the application waiting for the user's review.",
+      { job_id: id.optional() },
+      ({ job_id }) =>
+        guarded(async () => {
+          const one = pick(job_id, false)
+          if (typeof one === 'string') return refuse(one)
+          return json({ jobId: one.jobId, application: nameOf(one), standing: standing(one), page: one.form.url, fields: one.form.fields.map(fieldBrief) })
+        }),
+    ),
+    defineTool(
+      'set_form_answers',
+      "Set answers on an open application form, by the field keys get_application_form gives: for when the user asks you to redraft a written answer or change a fact. Each becomes the user's answer: the app types it into the page, or Claude in the run sets it, and nothing is sent until the page holds it. A choice takes one of its options word for word; a checkbox takes Yes or No. This never sends the application: the user submits it on the Run screen.",
+      {
+        job_id: id.optional(),
+        answers: z
+          .array(z.object({ key: z.string().max(200).describe('The field key from get_application_form'), value: z.string().max(20_000).describe('The new answer') }))
+          .min(1)
+          .max(40),
+      },
+      ({ job_id, answers }) =>
+        guarded(async () => {
+          const one = pick(job_id, true)
+          if (typeof one === 'string') return refuse(one)
+          const lines: string[] = []
+          for (const answer of answers) {
+            try {
+              const field = await engine.setField(one.lane, answer.key, answer.value, 'chat')
+              lines.push(`${field.label}: ${isPending(field) ? 'kept as their answer; it goes into the page before the application is sent' : 'set on the page'}`)
+            } catch (error) {
+              lines.push(`${answer.key}: not set, ${error instanceof Error ? error.message : String(error)}`)
+            }
+          }
+          return say([`${nameOf(one)}:`, ...lines, 'Nothing was sent. The user reviews the form and submits it on the Run screen.'].join('\n'))
+        }),
+    ),
+    defineTool(
+      'get_applications',
+      'The applications sent for one job, newest first, each with its form as it went out: every question and the answer it held, which were written answers, and which the user changed.',
+      { job_id: id },
+      ({ job_id }) =>
+        guarded(async () => {
+          const job = store.jobs.row(job_id)
+          if (!job) return refuse(`No job ${job_id}.`)
+          const sent = store.applications.forJob(job_id)
+          if (sent.length === 0) return say(`No application is kept for ${job.role} at ${job.company}: none went out through the app since it began keeping them.`)
+          return json(
+            sent.map(one => ({
+              sent: one.sent,
+              route: one.route,
+              submittedBy: one.byUser ? 'the user, in Chrome' : 'the app, after the user approved',
+              runId: one.runId,
+              page: one.url,
+              answers: one.fields.map(field => ({ question: field.label, answer: field.value, ...(field.isWritten ? { writtenAnswer: true } : {}), ...(field.wanted !== null ? { changedBy: field.by } : {}) })),
+            })),
+          )
+        }),
+    ),
+    defineTool(
+      'search_past_answers',
+      'How earlier applications answered a question, newest first: give words from the question, such as "notice period" or "expected salary". For reusing an answer, or checking what the user told a company.',
+      { words: z.string().trim().min(2).max(100) },
+      ({ words }) =>
+        guarded(async () => {
+          const found = store.applications.answers(words)
+          if (found.length === 0) return say(`No sent application has a question with "${words}" in it.`)
+          return json(
+            found.map(one => {
+              const job = store.jobs.row(one.jobId)
+              return { company: job?.company ?? null, role: job?.role ?? null, jobId: one.jobId, sent: one.sent, question: one.question, answer: one.answer, ...(one.isWritten ? { writtenAnswer: true } : {}) }
+            }),
+          )
+        }),
+    ),
+  ]
+}
+
 /** Every tool the chat gets, by area. */
 export function chatTools(deps: ChatToolDeps): AnyTool[] {
-  return [...readTools(deps), ...editTools(deps), ...runTools(deps), ...chromeTools(deps)]
+  return [...readTools(deps), ...editTools(deps), ...runTools(deps), ...formTools(deps), ...chromeTools(deps)]
 }
