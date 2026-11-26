@@ -38,6 +38,8 @@ export function readSignIns(profileDir: string): Partial<Record<SignInSite, Site
     const db = new DatabaseSync(copy, { readOnly: true })
     try {
       const find = db.prepare("SELECT expires_utc FROM cookies WHERE (host_key = ? OR host_key LIKE '%.' || ?) AND name = ?")
+      // Chrome's expiry (microseconds since 1601) is past Number.MAX_SAFE_INTEGER.
+      find.setReadBigInts(true)
       const found: Partial<Record<SignInSite, SiteState['state']>> = {}
       for (const [site, cookie] of Object.entries(SESSION_COOKIES) as [SignInSite, (typeof SESSION_COOKIES)[SignInSite]][]) {
         if (!cookie) continue
